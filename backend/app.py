@@ -96,6 +96,12 @@ def _authed_handle(authorization: str) -> str:
 
 
 # --- routes ---------------------------------------------------------------
+@app.get("/healthz")
+async def healthz():
+    """Unauthenticated liveness probe for deploy scripts / uptime monitors."""
+    return {"ok": True, "service": "hermies-hub"}
+
+
 @app.post("/v1/register")
 async def register(body: dict):
     handle = _clip_str((body or {}).get("handle")).strip()

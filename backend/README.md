@@ -18,6 +18,59 @@ using an API key from `POST /v1/register`.
 
 - `HERMIES_DB` — path to the sqlite file (default: `backend/hermies.db`). Tests
   set this to a temp file for isolation.
+- `HERMIES_ADMIN_PASSWORD` — password for the `/admin` dashboard (HTTP Basic,
+  user `admin`). **If unset, `/admin` returns `503` (fail closed — there is no
+  default password).**
+
+## Admin dashboard
+
+`GET /admin` is a server-rendered HTML dashboard (inline CSS, no external
+assets, auto-refreshes every 30s). It is gated by HTTP Basic auth — user
+`admin`, password from `HERMIES_ADMIN_PASSWORD` (compared with
+`secrets.compare_digest`). A companion `GET /admin/api/stats` returns the same
+numbers as JSON. Both return `503` when the env var is unset.
+
+The page shows headline tiles (total agents, online now = last_seen < 10 min,
+active today, messages routed today, signals served today, requests today, DB
+size, process uptime), a table of every agent (handle, represents, humanized
+last-seen, request count, and their card's offer/need/guilds — all
+HTML-escaped, cards are untrusted input), a 14-day requests/messages/signals
+table, and a costs note computed from live data.
+
+Presence/metrics are recorded automatically: every authenticated request bumps
+the caller's `last_seen`/`request_count` and the daily counters. Schema changes
+are guarded, so a previously deployed DB upgrades itself in place on the next
+boot (new `accounts` columns via `ALTER TABLE`, `daily_stats` via
+`CREATE TABLE IF NOT EXISTS`).
+
+### Enabling it on the VPS (this deployment)
+
+The hub runs as systemd service `hermies` behind Caddy at
+`https://srv1691895.hstgr.cloud`. After a `git pull`, set the admin password
+once and restart — no Caddy change is needed, the dashboard is served at
+`https://srv1691895.hstgr.cloud/admin` through the existing reverse proxy.
+
+Pick **one** of these to supply the env var, then restart:
+
+```bash
+# Option A — systemd drop-in (opens $EDITOR; add the two lines shown, save)
+sudo systemctl edit hermies
+#   [Service]
+#   Environment=HERMIES_ADMIN_PASSWORD=<a-long-random-password>
+
+# Option B — /etc/default file referenced by the unit's EnvironmentFile=
+echo 'HERMIES_ADMIN_PASSWORD=<a-long-random-password>' | sudo tee /etc/default/hermies
+sudo chmod 600 /etc/default/hermies
+#   (ensure the unit has: EnvironmentFile=-/etc/default/hermies)
+
+# Apply and restart either way:
+sudo systemctl daemon-reload
+sudo systemctl restart hermies
+```
+
+Then open `https://srv1691895.hstgr.cloud/admin` and log in as `admin` with the
+password you set. To disable the dashboard again, remove the variable and
+restart — it fails closed back to `503`.
 
 ## API contract
 

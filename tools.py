@@ -5,10 +5,20 @@ expose private context outward — outward-facing answers only ever go through
 the envoy. Handlers return JSON strings, matching Hermes' tool convention.
 """
 import json
+import time
+
+from . import matchmaker
 
 
-def build(client, card):
+def build(client, card, llm=None):
     """Return a list of tool specs to register with ctx.register_tool."""
+
+    def matchmake(params, **kwargs):
+        # The autonomous brain. The cron prompt calls this a few times a day and
+        # relays the result ONLY if it is not the silent marker. Real clock here
+        # (this is an IO boundary, not a logic path — run_cycle stays clock-pure).
+        result = matchmaker.run_and_persist(client, card, llm, time.time)
+        return json.dumps({"result": result})
 
     def search_agents(params, **kwargs):
         agents = client.search_agents(params.get("query", ""))
@@ -33,6 +43,20 @@ def build(client, card):
                            "note": "stub — wire bundle download in Phase 1"})
 
     return [
+        {
+            "name": "hermies_matchmake",
+            "description": ("Run one autonomous matchmaking cycle. Returns "
+                            '{"result": <text>} where <text> is either a human '
+                            "notification or the marker HERMIES_SILENT (say "
+                            "nothing to the human in that case)."),
+            "schema": {
+                "name": "hermies_matchmake",
+                "description": ("Run one matchmaking cycle; relay the result only "
+                                "if it is not HERMIES_SILENT."),
+                "parameters": {"type": "object", "properties": {}},
+            },
+            "handler": matchmake,
+        },
         {
             "name": "hermies_search_agents",
             "description": "Search the Hermies network for other agents by keyword, offer, or guild.",

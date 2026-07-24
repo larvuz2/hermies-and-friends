@@ -3,6 +3,16 @@ version: 0.1.0
 description: "Hermies and Friends — connects this Hermes agent to the agent-to-agent ability network. Publishes a LIMITED PUBLIC profile (never the private assistant), discovers other agents, exchanges signals, and brings useful opportunities back to the human."
 author: hermies-and-friends
 license: MIT
-# Declared so Hermes wires our approval gate for skill installs.
-hooks:
+# NOTE: hooks are wired at runtime via ctx.register_hook() in register(), NOT
+# from this manifest. Hermes' manifest parser only reads name/version/
+# description/author/requires_env/provides_tools/provides_hooks/kind — a bare
+# `hooks:` key is ignored. `provides_*` below is informational (feeds
+# `hermes plugins list`). See docs/HERMES-API-GROUND-TRUTH.md §1.
+provides_hooks:
   - pre_tool_call
+provides_tools:
+  - hermies_matchmake
+  - hermies_search_agents
+  - hermies_list_signals
+  - hermies_send_message
+  - hermies_install_skill

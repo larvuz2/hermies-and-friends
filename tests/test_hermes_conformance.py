@@ -1,0 +1,251 @@
+"""Conformance tests: our register(ctx) must match the REAL Hermes plugin API.
+
+Every signature and contract asserted here was verified verbatim against the
+Hermes Agent source (see docs/HERMES-API-GROUND-TRUTH.md, with file:line refs).
+A real end-to-end load of this plugin through hermes_cli.plugins.PluginManager
+also passed during development; because that source lives outside this repo, we
+encode the same call patterns here with a spy PluginContext so the contract is
+enforced in CI without the Hermes checkout.
+
+If Hermes ever changes these signatures, these tests are the tripwire.
+"""
+import inspect
+
+import pytest
+
+import hermies
+from hermies import commands, envoy, service
+
+
+# Hook names Hermes accepts (subset of VALID_HOOKS, hermes_cli/plugins.py:135).
+# register_hook warns-but-stores unknown names, so we assert we only use real
+# ones to avoid silently-dead hooks.
+REAL_VALID_HOOKS = {
+    "pre_tool_call", "post_tool_call", "transform_terminal_output",
+    "transform_tool_result", "transform_llm_output", "pre_llm_call",
+    "post_llm_call", "pre_verify", "pre_api_request", "post_api_request",
+    "api_request_error", "on_session_start", "on_session_end",
+    "on_session_finalize", "on_session_reset", "subagent_start",
+    "subagent_stop", "pre_gateway_dispatch", "pre_approval_request",
+    "post_approval_response", "kanban_task_claimed", "kanban_task_completed",
+    "kanban_task_blocked",
+}
+
+
+class FakeLlmResult:
+    """Mimics agent.plugin_llm.PluginLlmCompleteResult — text lives on .text."""
+    def __init__(self, text):
+        self.text = text
+
+
+class FakeLlm:
+    """Mimics agent.plugin_llm.PluginLlm.complete (plugin_llm.py:622):
+    synchronous, keyword-only extras, takes OpenAI-shaped `messages`, returns
+    an object whose text is on `.text`."""
+    def __init__(self):
+        self.calls = []
+
+    def complete(self, messages, *, provider=None, model=None, temperature=None,
+                 max_tokens=None, timeout=None, agent_id=None, profile=None,
+                 purpose=None):
+        assert isinstance(messages, list), "messages must be an OpenAI-shape list"
+        for m in messages:
+            assert set(m) >= {"role", "content"}, "each message needs role+content"
+        self.calls.append(messages)
+        return FakeLlmResult("ENVOY_REPLY")
+
+
+class SpyContext:
+    """A PluginContext stand-in whose method signatures mirror the real facade
+    (hermes_cli/plugins.py). Anything our register() does that the real facade
+    would reject will blow up here too."""
+
+    def __init__(self):
+        self.tools = {}
+        self.commands = {}
+        self.hooks = {}
+        self.injected = []
+        self._llm = FakeLlm()
+
+    @property
+    def llm(self):
+        return self._llm
+
+    # Real: register_tool(name, toolset, schema, handler, check_fn=None,
+    #   requires_env=None, is_async=False, description="", emoji="", override=False)
+    def register_tool(self, name, toolset, schema, handler, check_fn=None,
+                      requires_env=None, is_async=False, description="",
+                      emoji="", override=False):
+        assert isinstance(name, str) and name
+        assert isinstance(toolset, str) and toolset
+        assert isinstance(schema, dict)
+        assert callable(handler)
+        self.tools[name] = dict(toolset=toolset, schema=schema, handler=handler,
+                                description=description)
+
+    # Real: register_command(name, handler, description="", args_hint="")
+    def register_command(self, name, handler, description="", args_hint=""):
+        assert isinstance(name, str) and name
+        assert callable(handler)
+        self.commands[name] = dict(handler=handler, description=description,
+                                   args_hint=args_hint)
+
+    # Real: register_hook(hook_name, callback)
+    def register_hook(self, hook_name, callback):
+        assert callable(callback)
+        self.hooks.setdefault(hook_name, []).append(callback)
+
+    # Real: inject_message(content, role="user") -> bool
+    def inject_message(self, content, role="user"):
+        self.injected.append((content, role))
+        return True
+
+
+@pytest.fixture
+def loaded(monkeypatch):
+    """Run our real register(ctx) against a spy, WITHOUT spawning the daemon
+    thread — capture the (client, card, inject, llm) the plugin wired instead."""
+    captured = {}
+
+    def fake_start(client, card, inject, llm, interval=90, matchmake=None,
+                   match_interval=None):
+        captured.update(client=client, card=card, inject=inject, llm=llm,
+                        matchmake=matchmake)
+        return None  # no thread
+
+    monkeypatch.setattr(service, "start", fake_start)
+    ctx = SpyContext()
+    hermies.register(ctx)
+    return ctx, captured
+
+
+# --------------------------------------------------------------------------- #
+# register() overall
+# --------------------------------------------------------------------------- #
+
+def test_register_is_sync_single_positional_ctx():
+    sig = inspect.signature(hermies.register)
+    params = list(sig.parameters.values())
+    assert len(params) == 1 and params[0].name == "ctx"
+    assert not inspect.iscoroutinefunction(hermies.register)
+
+
+def test_register_wires_expected_surface(loaded):
+    ctx, _ = loaded
+    assert set(ctx.tools) == {
+        "hermies_matchmake", "hermies_search_agents", "hermies_list_signals",
+        "hermies_send_message", "hermies_install_skill",
+    }
+    assert set(ctx.commands) == {"hermies"}
+    assert list(ctx.hooks) == ["pre_tool_call"]
+
+
+# --------------------------------------------------------------------------- #
+# register_tool conformance
+# --------------------------------------------------------------------------- #
+
+def test_tool_schema_shape_and_toolset(loaded):
+    ctx, _ = loaded
+    for name, spec in ctx.tools.items():
+        assert spec["toolset"] == "hermies"
+        schema = spec["schema"]
+        # Real shape (Spotify SPOTIFY_*_SCHEMA): {name, description, parameters}
+        assert schema.get("name") == name, "schema.name must equal the tool name"
+        assert "description" in schema
+        assert schema["parameters"]["type"] == "object"
+
+
+def test_tool_handler_convention(loaded):
+    """Real dispatch (tools/registry.py:631): handler(args: dict, **kwargs) -> str."""
+    ctx, _ = loaded
+    out = ctx.tools["hermies_search_agents"]["handler"]({"query": "video"})
+    assert isinstance(out, str)  # JSON string, normalized by the registry
+    import json
+    assert json.loads(out)["success"] is True
+
+
+# --------------------------------------------------------------------------- #
+# register_command conformance
+# --------------------------------------------------------------------------- #
+
+def test_command_handler_takes_single_raw_args_string(loaded):
+    ctx, _ = loaded
+    handler = ctx.commands["hermies"]["handler"]
+    # Real call site (cli.py:9575 / gateway/run.py:12039): handler(user_args)
+    result = handler("status")
+    assert isinstance(result, str) and result
+
+
+# --------------------------------------------------------------------------- #
+# pre_tool_call gate: the security-critical return contract
+# --------------------------------------------------------------------------- #
+
+def test_install_gate_block_contract(loaded):
+    ctx, _ = loaded
+    gate = ctx.hooks["pre_tool_call"][0]
+    # Real invocation is kwargs-only with tool_name + args
+    # (hermes_cli/plugins.py:2145).
+    directive = gate(tool_name="hermies_install_skill", args={"name": "x:y"})
+    assert directive == {
+        "action": "block",
+        "message": directive["message"],
+    }
+    assert directive["action"] == "block"
+    assert isinstance(directive["message"], str) and directive["message"]
+    # Must NOT use the imagined {"allow": ...} / {"reason": ...} shape.
+    assert "allow" not in directive and "reason" not in directive
+
+
+def test_install_gate_allows_when_approved(loaded):
+    ctx, _ = loaded
+    gate = ctx.hooks["pre_tool_call"][0]
+    assert gate(tool_name="hermies_install_skill",
+                args={"name": "x:y", "approved": True}) is None
+
+
+def test_install_gate_ignores_other_tools(loaded):
+    ctx, _ = loaded
+    gate = ctx.hooks["pre_tool_call"][0]
+    assert gate(tool_name="some_other_tool", args={"a": 1}) is None
+    # Only real kwargs supplied; must not read a legacy 'params'/'name' key.
+    assert gate(tool_name="hermies_send_message", args={}) is None
+
+
+def test_gate_hook_name_is_real(loaded):
+    ctx, _ = loaded
+    for hook_name in ctx.hooks:
+        assert hook_name in REAL_VALID_HOOKS
+
+
+# --------------------------------------------------------------------------- #
+# ctx.llm adapter conformance
+# --------------------------------------------------------------------------- #
+
+def test_llm_adapter_uses_messages_and_returns_text(loaded):
+    ctx, captured = loaded
+    llm = captured["llm"]
+    out = llm("SYSTEM PROMPT", "USER TEXT")
+    assert out == "ENVOY_REPLY"  # unwrapped from .text
+    assert len(ctx._llm.calls) == 1
+    messages = ctx._llm.calls[0]
+    assert messages[0] == {"role": "system", "content": "SYSTEM PROMPT"}
+    assert messages[1] == {"role": "user", "content": "USER TEXT"}
+
+
+def test_envoy_respond_flows_through_the_llm_adapter(loaded):
+    """End-to-end: the envoy answers using ONLY the card-derived system prompt
+    via the wired llm adapter (proves the adapter is callable as envoy expects)."""
+    ctx, captured = loaded
+    reply = envoy.respond(captured["card"], "who are you?", captured["llm"])
+    assert isinstance(reply, str) and reply
+    assert ctx._llm.calls, "envoy.respond must have driven ctx.llm.complete"
+
+
+# --------------------------------------------------------------------------- #
+# inject_message adapter conformance
+# --------------------------------------------------------------------------- #
+
+def test_inject_adapter_calls_inject_message(loaded):
+    ctx, captured = loaded
+    captured["inject"]("hello human", "user")
+    assert ctx.injected == [("hello human", "user")]

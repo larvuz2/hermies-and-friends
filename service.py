@@ -49,15 +49,40 @@ def _format_digest(signals) -> str:
     return "\n".join(lines)
 
 
-def start(client, card, inject, llm, interval: int = 90):
+def start(client, card, inject, llm, interval: int = 90, matchmake=None,
+          match_interval: int = None):
     """Spawn the daemon poll loop. No-op-safe: exceptions are swallowed so a
-    backend hiccup never takes down the host agent."""
+    backend hiccup never takes down the host agent.
+
+    FREQUENT + SILENT work (drain inbound, envoy auto-replies) runs every
+    ``interval`` seconds. ``inject_message`` is a no-op in gateway mode, so this
+    loop is NOT the notification path — that is the cron job (see matchmaker).
+
+    ``matchmake`` is only supplied in the DEGRADED fallback (no cron available):
+    a callable ``() -> str`` run every ``match_interval`` seconds; a non-SILENT
+    result is best-effort injected (works in CLI, silently dropped in gateway,
+    where the human reads it via /hermies matches instead)."""
+    from . import matchmaker
+    if match_interval is None:
+        match_interval = 4 * 3600
+    state = {"last_match": 0.0}
+
     def _loop():
         while True:
             try:
                 run_once(client, card, inject, llm)
             except Exception:
                 pass
+            if matchmake is not None:
+                now = time.time()
+                if now - state["last_match"] >= match_interval:
+                    state["last_match"] = now
+                    try:
+                        result = matchmake()
+                        if result and result != matchmaker.SILENT:
+                            inject(result, "user")
+                    except Exception:
+                        pass
             time.sleep(interval)
 
     t = threading.Thread(target=_loop, name="hermies-service", daemon=True)

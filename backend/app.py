@@ -4,18 +4,25 @@ Implements the frozen contract that the plugin's HttpTransport targets. See
 README.md for run/deploy notes. Persistence is stdlib sqlite3 (db.py), matching
 is stdlib-only (matching.py).
 """
+import base64
+import html
+import os
 import secrets
 import time
 import uuid
 from collections import defaultdict, deque
 from contextlib import asynccontextmanager
+from datetime import datetime, timedelta, timezone
 from threading import Lock
 
 from fastapi import FastAPI, Header, HTTPException
-from fastapi.responses import JSONResponse
+from fastapi.responses import HTMLResponse, JSONResponse
 
 import db
 import matching
+
+# Process start, used for the admin "uptime" tile.
+_START = time.time()
 
 # --- card whitelist -------------------------------------------------------
 # handle/tagline/represents are strings; the rest are lists of strings.
@@ -92,6 +99,9 @@ def _authed_handle(authorization: str) -> str:
     if not handle:
         raise HTTPException(status_code=401, detail="invalid api key")
     _check_rate(key_hash)
+    # Presence + request metrics for accepted, authenticated requests.
+    db.touch_account(handle)
+    db.bump_stat("requests")
     return handle
 
 
@@ -112,6 +122,7 @@ async def register(body: dict):
         raise HTTPException(status_code=409, detail="handle taken")
     api_key = secrets.token_urlsafe(32)
     db.create_account(db.hash_key(api_key), handle, represents)
+    db.bump_stat("registrations")
     return {"api_key": api_key, "handle": handle}
 
 
@@ -133,6 +144,7 @@ async def discover(body: dict, authorization: str = Header(default="")):
     _authed_handle(authorization)
     card = sanitize_card((body or {}).get("card"))
     signals = matching.match_signals(card, db.all_cards())
+    db.bump_stat("signals_served", len(signals))
     return {"signals": signals}
 
 
@@ -141,6 +153,7 @@ async def signals(body: dict, authorization: str = Header(default="")):
     handle = _authed_handle(authorization)
     card = db.get_card(handle) or {"handle": handle}
     result = matching.match_signals(card, db.all_cards())
+    db.bump_stat("signals_served", len(result))
     return {"signals": result}
 
 
@@ -167,6 +180,7 @@ async def reply(body: dict, authorization: str = Header(default="")):
         from_handle=handle,
         query=text,
     )
+    db.bump_stat("messages_routed")
     return {"ok": True}
 
 
@@ -219,9 +233,297 @@ async def message(body: dict, authorization: str = Header(default="")):
         from_handle=handle,
         query=text,
     )
+    db.bump_stat("messages_routed")
     return {"ok": True, "to": to_handle}
+
+
+# --- admin dashboard ------------------------------------------------------
+def _require_admin(authorization: str) -> None:
+    """HTTP Basic gate for admin surfaces. Fails closed.
+
+    503 if HERMIES_ADMIN_PASSWORD is unset (admin disabled — never a default
+    password). 401 (with a Basic challenge) on missing/wrong credentials.
+    """
+    password = os.environ.get("HERMIES_ADMIN_PASSWORD")
+    if not password:
+        raise HTTPException(status_code=503, detail="admin disabled")
+    ok = False
+    if authorization and authorization.startswith("Basic "):
+        try:
+            decoded = base64.b64decode(authorization[len("Basic "):]).decode("utf-8")
+            user, _, pw = decoded.partition(":")
+            ok = secrets.compare_digest(user, "admin") and \
+                secrets.compare_digest(pw, password)
+        except Exception:
+            ok = False
+    if not ok:
+        raise HTTPException(
+            status_code=401,
+            detail="unauthorized",
+            headers={"WWW-Authenticate": 'Basic realm="hermies-admin"'},
+        )
+
+
+def _humanize(iso: str) -> str:
+    """Render an ISO timestamp as a compact relative age, e.g. '3m ago'."""
+    if not iso:
+        return "never"
+    try:
+        then = datetime.fromisoformat(iso)
+    except ValueError:
+        return "?"
+    if then.tzinfo is None:
+        then = then.replace(tzinfo=timezone.utc)
+    secs = (datetime.now(timezone.utc) - then).total_seconds()
+    if secs < 0:
+        secs = 0
+    if secs < 60:
+        return f"{int(secs)}s ago"
+    if secs < 3600:
+        return f"{int(secs // 60)}m ago"
+    if secs < 86400:
+        return f"{int(secs // 3600)}h ago"
+    return f"{int(secs // 86400)}d ago"
+
+
+def _fmt_bytes(n: int) -> str:
+    size = float(n)
+    for unit in ("B", "KB", "MB", "GB"):
+        if size < 1024 or unit == "GB":
+            return f"{size:.0f} {unit}" if unit == "B" else f"{size:.1f} {unit}"
+        size /= 1024
+    return f"{size:.1f} GB"
+
+
+def _fmt_uptime(seconds: float) -> str:
+    secs = int(seconds)
+    days, secs = divmod(secs, 86400)
+    hours, secs = divmod(secs, 3600)
+    mins, secs = divmod(secs, 60)
+    if days:
+        return f"{days}d {hours}h {mins}m"
+    if hours:
+        return f"{hours}h {mins}m"
+    return f"{mins}m {secs}s"
+
+
+def _gather_stats() -> dict:
+    """Collect every number the dashboard / stats API needs from real data."""
+    now = datetime.now(timezone.utc)
+    today = now.date().isoformat()
+    online_cutoff = (now - timedelta(minutes=10)).isoformat()
+    midnight = now.replace(hour=0, minute=0, second=0, microsecond=0).isoformat()
+
+    stats_map = db.daily_stats_map()
+    empty = {"requests": 0, "registrations": 0,
+             "messages_routed": 0, "signals_served": 0}
+    today_row = {**empty, **stats_map.get(today, {})}
+
+    # 14-day window (oldest first), filling gaps with zeros.
+    daily = []
+    for i in range(13, -1, -1):
+        day = (now.date() - timedelta(days=i)).isoformat()
+        row = {**empty, **stats_map.get(day, {})}
+        daily.append({
+            "date": day,
+            "requests": row["requests"],
+            "messages_routed": row["messages_routed"],
+            "signals_served": row["signals_served"],
+            "registrations": row["registrations"],
+        })
+
+    return {
+        "total_agents": db.count_accounts(),
+        "online_now": db.count_since(online_cutoff),
+        "active_today": db.count_since(midnight),
+        "messages_routed_today": today_row["messages_routed"],
+        "signals_served_today": today_row["signals_served"],
+        "requests_today": today_row["requests"],
+        "registrations_today": today_row["registrations"],
+        "db_size_bytes": db.db_size_bytes(),
+        "uptime_seconds": time.time() - _START,
+        "accounts": db.all_accounts_with_cards(),
+        "daily": daily,
+    }
+
+
+def _e(value) -> str:
+    """HTML-escape any value. Cards are untrusted user input — escape all of it."""
+    return html.escape(str(value if value is not None else ""))
+
+
+def _trunc(value, limit: int = 60) -> str:
+    s = str(value if value is not None else "")
+    return s if len(s) <= limit else s[:limit - 1] + "…"
+
+
+def _render_admin(stats: dict) -> str:
+    tiles = [
+        ("Total agents", str(stats["total_agents"])),
+        ("Online now", str(stats["online_now"])),
+        ("Active today", str(stats["active_today"])),
+        ("Messages routed today", str(stats["messages_routed_today"])),
+        ("Signals served today", str(stats["signals_served_today"])),
+        ("Requests today", str(stats["requests_today"])),
+        ("DB size", _fmt_bytes(stats["db_size_bytes"])),
+        ("Uptime", _fmt_uptime(stats["uptime_seconds"])),
+    ]
+    tile_html = "".join(
+        f'<div class="tile"><div class="num">{_e(v)}</div>'
+        f'<div class="lbl">{_e(label)}</div></div>'
+        for label, v in tiles
+    )
+
+    rows = []
+    for acct in stats["accounts"]:
+        card = acct.get("card") or {}
+        offer = ", ".join(card.get("offer") or [])
+        need = ", ".join(card.get("need") or [])
+        guilds = ", ".join(card.get("guilds") or [])
+        rows.append(
+            "<tr>"
+            f"<td>{_e(acct['handle'])}</td>"
+            f"<td>{_e(_trunc(acct['represents'], 50))}</td>"
+            f"<td>{_e(_humanize(acct['last_seen']))}</td>"
+            f"<td class=\"r\">{_e(acct['request_count'])}</td>"
+            f"<td>{_e(_trunc(offer))}</td>"
+            f"<td>{_e(_trunc(need))}</td>"
+            f"<td>{_e(_trunc(guilds))}</td>"
+            "</tr>"
+        )
+    agents_rows = "".join(rows) or (
+        '<tr><td colspan="7" class="muted">no agents yet</td></tr>'
+    )
+
+    daily = stats["daily"]
+    daily_rows = "".join(
+        "<tr>"
+        f"<td>{_e(d['date'])}</td>"
+        f"<td class=\"r\">{_e(d['requests'])}</td>"
+        f"<td class=\"r\">{_e(d['messages_routed'])}</td>"
+        f"<td class=\"r\">{_e(d['signals_served'])}</td>"
+        f"<td class=\"r\">{_e(d['registrations'])}</td>"
+        "</tr>"
+        for d in daily
+    )
+
+    # Costs note computed from real data.
+    week = daily[-7:]
+    avg_req = sum(d["requests"] for d in week) / max(len(week), 1)
+    first_size = _fmt_bytes(stats["db_size_bytes"])
+    costs_note = (
+        f"<li>Requests/day (7-day avg): <b>{avg_req:.0f}</b>, "
+        f"today <b>{_e(stats['requests_today'])}</b>.</li>"
+        f"<li>Database on disk: <b>{_e(first_size)}</b> "
+        f"({stats['total_agents']} agents). Growth tracks registrations + "
+        f"stored cards + the message log.</li>"
+        "<li>Hub compute is the VPS flat fee — the hub only matches, routes, "
+        "and stores small cards. All LLM inference cost lives on each agent's "
+        "side, not the hub.</li>"
+    )
+
+    return f"""<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta http-equiv="refresh" content="30">
+<title>Hermies hub — admin</title>
+<style>
+  :root {{ color-scheme: light dark; }}
+  * {{ box-sizing: border-box; }}
+  body {{ margin: 0; font: 14px/1.5 system-ui, -apple-system, Segoe UI, sans-serif;
+    background: #0f1115; color: #e6e8ec; }}
+  header {{ padding: 20px 24px; border-bottom: 1px solid #23262e; }}
+  h1 {{ margin: 0; font-size: 18px; }}
+  header .sub {{ color: #8a90a0; font-size: 12px; margin-top: 4px; }}
+  main {{ padding: 20px 24px; max-width: 1100px; }}
+  .tiles {{ display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+    gap: 12px; margin-bottom: 28px; }}
+  .tile {{ background: #171a21; border: 1px solid #23262e; border-radius: 10px;
+    padding: 14px 16px; }}
+  .tile .num {{ font-size: 26px; font-weight: 600; }}
+  .tile .lbl {{ color: #8a90a0; font-size: 12px; margin-top: 2px; }}
+  h2 {{ font-size: 14px; text-transform: uppercase; letter-spacing: .04em;
+    color: #8a90a0; margin: 28px 0 10px; }}
+  table {{ width: 100%; border-collapse: collapse; font-size: 13px; }}
+  th, td {{ text-align: left; padding: 7px 10px; border-bottom: 1px solid #23262e;
+    vertical-align: top; }}
+  th {{ color: #8a90a0; font-weight: 600; }}
+  td.r, th.r {{ text-align: right; }}
+  .muted {{ color: #8a90a0; }}
+  .wrap {{ overflow-x: auto; }}
+  ul.costs {{ padding-left: 18px; }}
+  ul.costs li {{ margin: 4px 0; }}
+</style>
+</head>
+<body>
+<header>
+  <h1>Hermies and Friends — hub admin</h1>
+  <div class="sub">auto-refreshes every 30s · all agent card content is
+    HTML-escaped untrusted input</div>
+</header>
+<main>
+  <div class="tiles">{tile_html}</div>
+
+  <h2>Agents ({stats['total_agents']})</h2>
+  <div class="wrap">
+  <table>
+    <thead><tr>
+      <th>Handle</th><th>Represents</th><th>Last seen</th><th class="r">Reqs</th>
+      <th>Offer</th><th>Need</th><th>Guilds</th>
+    </tr></thead>
+    <tbody>{agents_rows}</tbody>
+  </table>
+  </div>
+
+  <h2>Last 14 days</h2>
+  <div class="wrap">
+  <table>
+    <thead><tr>
+      <th>Date</th><th class="r">Requests</th><th class="r">Messages</th>
+      <th class="r">Signals</th><th class="r">Registrations</th>
+    </tr></thead>
+    <tbody>{daily_rows}</tbody>
+  </table>
+  </div>
+
+  <h2>Costs</h2>
+  <ul class="costs">{costs_note}</ul>
+</main>
+</body>
+</html>"""
+
+
+@app.get("/admin")
+async def admin(authorization: str = Header(default="")):
+    _require_admin(authorization)
+    return HTMLResponse(_render_admin(_gather_stats()))
+
+
+@app.get("/admin/api/stats")
+async def admin_stats(authorization: str = Header(default="")):
+    _require_admin(authorization)
+    stats = _gather_stats()
+    # Trim to JSON-friendly summary (drop the rendered account cards' bulk).
+    return {
+        "total_agents": stats["total_agents"],
+        "online_now": stats["online_now"],
+        "active_today": stats["active_today"],
+        "messages_routed_today": stats["messages_routed_today"],
+        "signals_served_today": stats["signals_served_today"],
+        "requests_today": stats["requests_today"],
+        "registrations_today": stats["registrations_today"],
+        "db_size_bytes": stats["db_size_bytes"],
+        "uptime_seconds": stats["uptime_seconds"],
+        "daily": stats["daily"],
+    }
 
 
 @app.exception_handler(HTTPException)
 async def _http_exc(request, exc: HTTPException):
-    return JSONResponse(status_code=exc.status_code, content={"error": exc.detail})
+    return JSONResponse(
+        status_code=exc.status_code,
+        content={"error": exc.detail},
+        headers=getattr(exc, "headers", None),
+    )

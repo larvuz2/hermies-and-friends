@@ -15,7 +15,8 @@ log = logging.getLogger("hermies")
 
 
 def register(ctx):
-    from . import profile, tools, commands, service
+    import time
+    from . import profile, tools, commands, service, matchmaker, _config
     from .client import HermiesClient, make_transport
 
     card = profile.load_card()
@@ -23,11 +24,16 @@ def register(ctx):
 
     def llm(system: str, user: str) -> str:
         """Constrained LLM call for the envoy. Adapter over ctx.llm — the envoy
-        never receives anything but the card-derived system prompt."""
-        try:
-            return ctx.llm.complete(system=system, user=user)
-        except TypeError:
-            return ctx.llm.complete(f"{system}\n\n{user}")
+        never receives anything but the card-derived system prompt.
+
+        Real API (agent/plugin_llm.py::PluginLlm.complete): synchronous,
+        takes OpenAI-shaped ``messages`` and returns a PluginLlmCompleteResult
+        whose text is on ``.text``. See docs/HERMES-API-GROUND-TRUTH.md §5."""
+        result = ctx.llm.complete(messages=[
+            {"role": "system", "content": system},
+            {"role": "user", "content": user},
+        ])
+        return result.text
 
     def inject(content: str, role: str = "user"):
         try:
@@ -39,11 +45,11 @@ def register(ctx):
     ctx.register_command(
         "hermies",
         commands.make_handler(client, card, llm),
-        "Manage your Hermies public profile, discover agents, and see signals",
+        "Manage your Hermies profile, discover agents, see matches & decisions",
     )
 
     # --- tools (private agent works the network agentically) ---
-    for spec in tools.build(client, card):
+    for spec in tools.build(client, card, llm):
         ctx.register_tool(
             name=spec["name"],
             toolset="hermies",
@@ -55,11 +61,25 @@ def register(ctx):
     # --- approval gate for network skill installs ---
     ctx.register_hook("pre_tool_call", commands.install_gate)
 
-    # --- background envoy + signals loop ---
-    service.start(client, card, inject, llm)
+    # --- the notification path: prefer the blessed cron scheduler ---
+    # The cron job calls hermies_matchmake a few times a day and relays the
+    # result only when it is not the silent marker. If cron is unavailable
+    # (older Hermes / tests), fall back to running matchmake inside the daemon
+    # loop and surfacing results via /hermies matches (degraded mode).
+    cron_ok = matchmaker.ensure_cron()
+    fallback = None
+    if not cron_ok:
+        def fallback():
+            return matchmaker.run_and_persist(client, card, llm, time.time)
+
+    # --- background envoy + signals loop (frequent, silent) ---
+    service.start(client, card, inject, llm, matchmake=fallback,
+                  match_interval=_config.match_every_hours() * 3600)
 
     mode = "live" if _live() else "offline/mock"
-    log.info("hermies registered (%s) for handle=%s", mode, card.public_dict().get("handle") or "<unset>")
+    notify = "cron" if cron_ok else "daemon-fallback"
+    log.info("hermies registered (%s, notify=%s) for handle=%s",
+             mode, notify, card.public_dict().get("handle") or "<unset>")
 
 
 def _live() -> bool:

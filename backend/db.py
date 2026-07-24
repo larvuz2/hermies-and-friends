@@ -2,17 +2,27 @@
 
 Stdlib-only. One file DB (path overridable via env HERMIES_DB for tests).
 Tables:
-  accounts  - api key (sha256) -> handle, and the represents blurb
-  cards     - handle -> JSON public card (upsert)
-  messages  - inbound mailbox rows: id, to_handle, from_handle, query, drained
+  accounts    - api key (sha256) -> handle, the represents blurb, and presence
+                (last_seen ISO utc, request_count) for the admin dashboard
+  cards       - handle -> JSON public card (upsert)
+  messages    - inbound mailbox rows: id, to_handle, from_handle, query, drained
+  daily_stats - per-UTC-day counters: requests, registrations, messages_routed,
+                signals_served
+
+Schema changes are guarded (CREATE TABLE IF NOT EXISTS / ADD COLUMN only when
+missing) so a deployed DB upgrades itself in place on the next boot.
 """
 import hashlib
 import json
 import os
 import sqlite3
 import threading
+from datetime import datetime, timezone
 
 DEFAULT_DB = os.path.join(os.path.dirname(os.path.abspath(__file__)), "hermies.db")
+
+# daily_stats columns that bump_stat() is allowed to increment.
+STAT_FIELDS = ("requests", "registrations", "messages_routed", "signals_served")
 
 # One lock guards writes; sqlite connections are created per-call to stay
 # thread-safe under the TestClient / uvicorn worker model.
@@ -32,6 +42,11 @@ def _connect() -> sqlite3.Connection:
 
 def hash_key(api_key: str) -> str:
     return hashlib.sha256(api_key.encode("utf-8")).hexdigest()
+
+
+def _table_columns(conn, table: str) -> set:
+    rows = conn.execute(f"PRAGMA table_info({table})").fetchall()
+    return {r["name"] for r in rows}
 
 
 def init_db() -> None:
@@ -58,6 +73,32 @@ def init_db() -> None:
                 drained     INTEGER NOT NULL DEFAULT 0
             )"""
         )
+        conn.execute(
+            """CREATE TABLE IF NOT EXISTS daily_stats (
+                date            TEXT PRIMARY KEY,
+                requests        INTEGER NOT NULL DEFAULT 0,
+                registrations   INTEGER NOT NULL DEFAULT 0,
+                messages_routed INTEGER NOT NULL DEFAULT 0,
+                signals_served  INTEGER NOT NULL DEFAULT 0
+            )"""
+        )
+        # In-place upgrade: add presence columns to a pre-existing accounts
+        # table that predates them.
+        cols = _table_columns(conn, "accounts")
+        if "last_seen" not in cols:
+            conn.execute("ALTER TABLE accounts ADD COLUMN last_seen TEXT")
+        if "request_count" not in cols:
+            conn.execute(
+                "ALTER TABLE accounts ADD COLUMN request_count INTEGER NOT NULL DEFAULT 0"
+            )
+
+
+def _utcnow_iso() -> str:
+    return datetime.now(timezone.utc).isoformat()
+
+
+def _utc_today() -> str:
+    return datetime.now(timezone.utc).date().isoformat()
 
 
 # --- accounts -------------------------------------------------------------
@@ -145,3 +186,95 @@ def get_message(msg_id: str):
             (msg_id,),
         ).fetchone()
         return dict(row) if row else None
+
+
+# --- presence + metrics ---------------------------------------------------
+def touch_account(handle: str) -> None:
+    """Record activity for an authenticated caller: bump last_seen + counter.
+
+    Cheap single-row UPDATE run on every authenticated request.
+    """
+    with _LOCK, _connect() as conn:
+        conn.execute(
+            "UPDATE accounts SET last_seen = ?, request_count = request_count + 1 "
+            "WHERE handle = ?",
+            (_utcnow_iso(), handle),
+        )
+
+
+def bump_stat(field: str, n: int = 1) -> None:
+    """Increment a daily_stats counter for the current UTC day."""
+    if field not in STAT_FIELDS:
+        raise ValueError(f"unknown stat field: {field}")
+    if n == 0:
+        return
+    day = _utc_today()
+    with _LOCK, _connect() as conn:
+        conn.execute(
+            "INSERT INTO daily_stats (date) VALUES (?) ON CONFLICT(date) DO NOTHING",
+            (day,),
+        )
+        # field is whitelisted against STAT_FIELDS above, safe to interpolate.
+        conn.execute(
+            f"UPDATE daily_stats SET {field} = {field} + ? WHERE date = ?",
+            (n, day),
+        )
+
+
+def count_accounts() -> int:
+    with _connect() as conn:
+        return conn.execute("SELECT COUNT(*) AS c FROM accounts").fetchone()["c"]
+
+
+def count_since(cutoff_iso: str) -> int:
+    """Number of accounts whose last_seen is at or after cutoff_iso."""
+    with _connect() as conn:
+        row = conn.execute(
+            "SELECT COUNT(*) AS c FROM accounts "
+            "WHERE last_seen IS NOT NULL AND last_seen >= ?",
+            (cutoff_iso,),
+        ).fetchone()
+        return row["c"]
+
+
+def all_accounts_with_cards() -> list:
+    """Every account joined to its public card, for the admin table."""
+    with _connect() as conn:
+        rows = conn.execute(
+            "SELECT a.handle, a.represents, a.last_seen, a.request_count, c.card "
+            "FROM accounts a LEFT JOIN cards c ON c.handle = a.handle "
+            "ORDER BY a.handle"
+        ).fetchall()
+    out = []
+    for r in rows:
+        card = json.loads(r["card"]) if r["card"] else {}
+        out.append({
+            "handle": r["handle"],
+            "represents": r["represents"] or "",
+            "last_seen": r["last_seen"],
+            "request_count": r["request_count"] or 0,
+            "card": card,
+        })
+    return out
+
+
+def daily_stats_map() -> dict:
+    """All daily_stats rows keyed by date string."""
+    with _connect() as conn:
+        rows = conn.execute(
+            "SELECT date, requests, registrations, messages_routed, signals_served "
+            "FROM daily_stats"
+        ).fetchall()
+    return {r["date"]: dict(r) for r in rows}
+
+
+def db_size_bytes() -> int:
+    """On-disk size of the sqlite database, including WAL/SHM sidecars."""
+    total = 0
+    base = db_path()
+    for path in (base, base + "-wal", base + "-shm"):
+        try:
+            total += os.path.getsize(path)
+        except OSError:
+            pass
+    return total

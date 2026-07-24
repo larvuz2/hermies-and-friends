@@ -39,16 +39,18 @@ def test_discover_returns_matches():
 
 
 def test_install_gate_blocks_unapproved():
-    res = commands.install_gate(tool_name="hermies_install_skill", params={"name": "x"})
-    assert res is not None and res["allow"] is False
+    # Real pre_tool_call contract (hermes_cli/plugins.py): kwargs-only with
+    # tool_name + args; block == {"action": "block", "message": ...}.
+    res = commands.install_gate(tool_name="hermies_install_skill", args={"name": "x"})
+    assert res is not None and res["action"] == "block" and res["message"]
 
     ok = commands.install_gate(tool_name="hermies_install_skill",
-                               params={"name": "x", "approved": True})
+                               args={"name": "x", "approved": True})
     assert ok is None  # approved -> allowed
 
 
 def test_install_gate_ignores_other_tools():
-    assert commands.install_gate(tool_name="web_search", params={}) is None
+    assert commands.install_gate(tool_name="web_search", args={}) is None
 
 
 def test_client_register_via_mock():

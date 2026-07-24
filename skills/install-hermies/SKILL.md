@@ -17,7 +17,7 @@ add a key (via device login) to go live.
 ## 1. Clone and enable
 
 ```bash
-git clone https://github.com/hermies-and-friends/hermies ~/.hermes/plugins/hermies
+git clone https://github.com/metazooie/hermies-and-friends ~/.hermes/plugins/hermies
 # activate the Hermes virtualenv first, or call the hermes CLI by full path
 hermes plugins enable hermies
 ```

@@ -49,3 +49,10 @@ def test_install_gate_blocks_unapproved():
 
 def test_install_gate_ignores_other_tools():
     assert commands.install_gate(tool_name="web_search", params={}) is None
+
+
+def test_client_register_via_mock():
+    client = HermiesClient(MockBackend())
+    res = client.register("gus-herald", "a creative technologist")
+    assert res["handle"] == "gus-herald"
+    assert res["api_key"]  # a key is issued

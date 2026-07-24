@@ -1,7 +1,7 @@
 """`/hermies` slash-command handlers and the skill-install approval gate."""
 import json
 
-from . import profile, service
+from . import profile, service, sanitize
 
 
 def make_handler(client, card, llm):
@@ -50,12 +50,19 @@ def make_handler(client, card, llm):
             agents = client.search_agents(rest)
             if not agents:
                 return "No agents found."
-            return "\n".join(f"  • @{a['handle']} — {a['represents']}" for a in agents)
+            # Untrusted network content: render sanitized values only.
+            return "\n".join(
+                f"  • @{sanitize.clean_text(a.get('handle', ''))} — "
+                f"{sanitize.clean_text(a.get('represents', ''))}"
+                for a in agents)
 
         if sub == "skills":
             skills = client.browse_skills(rest)
+            # Untrusted network content: render sanitized values only.
             return "Available skills:\n" + "\n".join(
-                f"  • {s['name']} — {s['description']}" for s in skills)
+                f"  • {sanitize.clean_text(s.get('name', ''))} — "
+                f"{sanitize.clean_text(s.get('description', ''))}"
+                for s in skills)
 
         return (f"Unknown subcommand '{sub}'. Try: status | profile | discover | "
                 "signals | search <q> | skills")

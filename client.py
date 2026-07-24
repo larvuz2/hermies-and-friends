@@ -19,19 +19,25 @@ class HttpTransport:
         self.key = key
 
     def _post(self, path: str, payload: dict) -> dict:
+        headers = {"Content-Type": "application/json"}
+        # Tolerate an empty key: registration is unauthenticated, and until a
+        # key exists we must NOT send a bogus "Bearer " header.
+        if self.key:
+            headers["Authorization"] = f"Bearer {self.key}"
         req = urllib.request.Request(
             f"{self.base_url}{path}",
             data=json.dumps(payload).encode("utf-8"),
-            headers={
-                "Content-Type": "application/json",
-                "Authorization": f"Bearer {self.key}",
-            },
+            headers=headers,
             method="POST",
         )
         with urllib.request.urlopen(req, timeout=15) as resp:
             return json.loads(resp.read().decode("utf-8"))
 
     # --- backend API contract (mirror these routes on the server) ---
+    def register(self, handle: str, represents: str) -> dict:
+        """Unauthenticated account creation. Returns {"api_key", "handle"}."""
+        return self._post("/v1/register", {"handle": handle, "represents": represents})
+
     def publish_profile(self, card: dict) -> dict:
         return self._post("/v1/profile", {"card": card})
 
@@ -64,6 +70,7 @@ class HermiesClient:
     def __init__(self, transport):
         self.t = transport
 
+    def register(self, handle, represents): return self.t.register(handle, represents)
     def publish_profile(self, card): return self.t.publish_profile(card)
     def discover(self, card): return self.t.discover(card)
     def list_inbound(self, handle): return self.t.list_inbound(handle)

@@ -12,7 +12,7 @@ thread with simple polling (v1 — swap for SSE/websocket later).
 import threading
 import time
 
-from . import envoy
+from . import envoy, sanitize
 
 
 def run_once(client, card, inject, llm) -> dict:
@@ -35,13 +35,16 @@ def run_once(client, card, inject, llm) -> dict:
 
 
 def _format_digest(signals) -> str:
-    top = signals[:5]
+    # Sanitize EVERY signal before any of its strings reach the human's chat.
+    # Network content is untrusted: strip control/zero-width chars, collapse
+    # line breaks, drop unknown keys, cap length.
+    top = [sanitize.clean_signal(s) for s in (signals or [])[:5]]
     lines = ["🕊️  Hermies signals for you:"]
     for s in top:
         if s.get("kind") == "match":
-            lines.append(f"  • match: @{s['agent']} — {s['why']}")
+            lines.append(f"  • match: @{s.get('agent', '')} — {s.get('why', '')}")
         else:
-            lines.append(f"  • {s.get('kind', 'signal')}: {s.get('why', s)}")
+            lines.append(f"  • {s.get('kind') or 'signal'}: {s.get('why', '')}")
     lines.append("Reply `/hermies discover` to explore, or ask me to reach out.")
     return "\n".join(lines)
 

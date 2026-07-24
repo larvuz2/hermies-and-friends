@@ -50,6 +50,10 @@ class MockBackend:
         }]
         self._replies = []
 
+    def register(self, handle: str, represents: str = ""):
+        # Mirror the real backend's unauthenticated /v1/register contract.
+        return {"api_key": "mock-key", "handle": handle}
+
     def publish_profile(self, card: dict):
         self._published = card
         return {"ok": True, "handle": card.get("handle")}

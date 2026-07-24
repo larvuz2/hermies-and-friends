@@ -12,7 +12,10 @@ Design rules enforced here:
   2. `build_system_prompt()` reads through profile.PUBLIC_FIELDS only, so even a
      card dict that accidentally carries extra keys cannot leak them.
 """
-from . import profile
+from . import profile, sanitize
+
+# Inbound queries can be long, but must still be bounded to blunt flooding.
+_QUERY_MAX_LEN = 1000
 
 NONDISCLOSURE = (
     "You are a PUBLIC envoy agent representing a human on the Hermies network. "
@@ -49,7 +52,16 @@ def respond(card, query: str, llm) -> str:
 
     `llm` is a callable (system_prompt, user_prompt) -> str. In production it is
     a constrained ctx.llm call; in tests it is a fake. Either way, the only
-    context it receives is the card-derived system prompt.
+    context it receives is the card-derived system prompt plus the SANITIZED,
+    explicitly-framed inbound query.
+
+    The inbound query is hostile-by-default network content, so it is passed
+    through ``clean_text`` (strip control/zero-width chars, collapse line breaks,
+    neutralize code fences, cap length) and wrapped by ``frame_untrusted`` before
+    it ever reaches the model as the user prompt.
     """
     system = build_system_prompt(card)
-    return llm(system, query)
+    safe_query = sanitize.frame_untrusted(
+        sanitize.clean_text(query, max_len=_QUERY_MAX_LEN)
+    )
+    return llm(system, safe_query)

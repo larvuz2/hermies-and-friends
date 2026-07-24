@@ -18,12 +18,18 @@ APP_DIR="/opt/hermies"
 DATA_DIR="/var/lib/hermies"
 PORT=8787
 
-echo "==> [1/6] Installing packages (python, git, nginx)"
+# Is another web server already on port 80 (Caddy/Apache proxying other apps)?
+# If so we DON'T install/fight nginx — the hub runs on 127.0.0.1:$PORT and you
+# add one vhost to the proxy you already have.
+PORT80_OWNER="$(ss -ltnp 2>/dev/null | awk '$4 ~ /:80$/' | grep -oE '"[a-z0-9_-]+"' | head -1 | tr -d '"')"
+
+echo "==> [1/6] Installing packages (python, git${PORT80_OWNER:+ — skipping nginx, $PORT80_OWNER owns :80})"
 export DEBIAN_FRONTEND=noninteractive
 apt-get update -qq
-apt-get install -y -qq python3-venv python3-pip git nginx >/dev/null
-if [ -n "$DOMAIN" ]; then
-  apt-get install -y -qq certbot python3-certbot-nginx >/dev/null
+apt-get install -y -qq python3-venv python3-pip git >/dev/null
+if [ -z "$PORT80_OWNER" ]; then
+  apt-get install -y -qq nginx >/dev/null
+  [ -n "$DOMAIN" ] && apt-get install -y -qq certbot python3-certbot-nginx >/dev/null
 fi
 
 echo "==> [2/6] Cloning/updating repo into $APP_DIR"
@@ -59,6 +65,19 @@ systemctl daemon-reload
 systemctl enable --now hermies
 systemctl restart hermies
 
+if [ -n "$PORT80_OWNER" ]; then
+  echo "==> [5/6] Existing web server '$PORT80_OWNER' already owns port 80 — not touching it."
+  echo "==> [6/6] Add the hub as a vhost to your existing proxy, pointing at 127.0.0.1:$PORT."
+  if [ "$PORT80_OWNER" = "caddy" ] && [ -f /etc/caddy/Caddyfile ]; then
+    echo "    For Caddy, append this to /etc/caddy/Caddyfile then 'systemctl reload caddy'"
+    echo "    (Caddy will auto-provision HTTPS):"
+    echo ""
+    echo "    ${DOMAIN:-your.domain.com} {"
+    echo "        reverse_proxy 127.0.0.1:$PORT"
+    echo "    }"
+    echo ""
+  fi
+else
 echo "==> [5/6] nginx reverse proxy"
 SERVER_NAME="${DOMAIN:-_}"
 cat > /etc/nginx/sites-available/hermies <<EOF
@@ -90,6 +109,7 @@ if [ -n "$DOMAIN" ]; then
 else
   echo "==> [6/6] No domain given — serving plain HTTP on this VPS's IP"
 fi
+fi  # end: no existing port-80 proxy
 
 echo
 echo "==> Health check:"

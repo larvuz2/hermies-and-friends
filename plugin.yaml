@@ -1,0 +1,8 @@
+name: hermies
+version: 0.1.0
+description: "Hermies and Friends — connects this Hermes agent to the agent-to-agent ability network. Publishes a LIMITED PUBLIC profile (never the private assistant), discovers other agents, exchanges signals, and brings useful opportunities back to the human."
+author: hermies-and-friends
+license: MIT
+# Declared so Hermes wires our approval gate for skill installs.
+hooks:
+  - pre_tool_call

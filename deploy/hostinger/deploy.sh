@@ -77,7 +77,9 @@ EOF
 ln -sf /etc/nginx/sites-available/hermies /etc/nginx/sites-enabled/hermies
 rm -f /etc/nginx/sites-enabled/default
 nginx -t
-systemctl reload nginx
+# `restart` (not `reload`) so this works whether or not nginx is already running.
+systemctl enable nginx >/dev/null 2>&1 || true
+systemctl restart nginx
 
 if [ -n "$DOMAIN" ]; then
   echo "==> [6/6] TLS via Let's Encrypt ($DOMAIN)"

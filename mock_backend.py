@@ -56,6 +56,14 @@ class MockBackend:
         # threaded conversations: {thread_id: {...}}
         self._threads = {}
         self._thread_seq = 0
+        # Operator-paid hub inference (mock): a canned, deterministic reply so
+        # the routed llm adapter is exercisable offline and in tests. Override
+        # ``llm_reply`` for a specific reply; set ``llm_error`` to an Exception
+        # (e.g. a urllib.error.HTTPError with code 503/429) to simulate the hub
+        # being unconfigured / over budget.
+        self.llm_reply = "MOCK_HUB_LLM_REPLY"
+        self.llm_error = None
+        self.llm_calls = []
 
     def register(self, handle: str, represents: str = ""):
         # Mirror the real backend's unauthenticated /v1/register contract.
@@ -64,6 +72,23 @@ class MockBackend:
     def publish_profile(self, card: dict):
         self._published = card
         return {"ok": True, "handle": card.get("handle")}
+
+    def remove_profile(self):
+        """Mirror POST /v1/profile/remove: clear the published card (and, on the
+        real hub, the discovery vectors). The account persists — a later
+        publish_profile re-joins — so we DON'T touch seeded agents."""
+        self._published = None
+        return {"ok": True}
+
+    def llm_complete(self, messages, purpose):
+        """Mirror POST /v1/llm/complete. Deterministic canned reply by default;
+        raises ``llm_error`` (a 503/429-equivalent) when one is set so tests can
+        exercise the adapter's failure paths."""
+        self.llm_calls.append({"messages": messages, "purpose": purpose})
+        if self.llm_error is not None:
+            raise self.llm_error
+        return {"text": self.llm_reply, "model": "mock-hub-model",
+                "tokens": {"prompt": 0, "completion": 0}}
 
     def _match_signals(self, card: dict):
         want = (card.get("need") or []) + (card.get("curious") or [])

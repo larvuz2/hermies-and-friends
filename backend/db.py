@@ -15,7 +15,11 @@ Tables:
   thread_msgs - one row per thread message: thread_id, turn (1-based), sender,
                 text, ts
   daily_stats - per-UTC-day counters: requests, registrations, messages_routed,
-                signals_served, threads_opened
+                signals_served, threads_opened, llm_calls, llm_tokens,
+                profiles_removed
+  llm_usage   - operator-paid LLM metering: (handle, date_utc) -> calls,
+                prompt_tokens, completion_tokens (per-agent, per UTC day). Backs
+                daily budgets + the admin cost dashboard.
 
 Schema changes are guarded (CREATE TABLE IF NOT EXISTS / ADD COLUMN only when
 missing) so a deployed DB upgrades itself in place on the next boot.
@@ -32,7 +36,7 @@ DEFAULT_DB = os.path.join(os.path.dirname(os.path.abspath(__file__)), "hermies.d
 # daily_stats columns that bump_stat() is allowed to increment.
 STAT_FIELDS = (
     "requests", "registrations", "messages_routed", "signals_served",
-    "threads_opened",
+    "threads_opened", "llm_calls", "llm_tokens", "profiles_removed",
 )
 
 # One lock guards writes; sqlite connections are created per-call to stay
@@ -86,12 +90,27 @@ def init_db() -> None:
         )
         conn.execute(
             """CREATE TABLE IF NOT EXISTS daily_stats (
-                date            TEXT PRIMARY KEY,
-                requests        INTEGER NOT NULL DEFAULT 0,
-                registrations   INTEGER NOT NULL DEFAULT 0,
-                messages_routed INTEGER NOT NULL DEFAULT 0,
-                signals_served  INTEGER NOT NULL DEFAULT 0,
-                threads_opened  INTEGER NOT NULL DEFAULT 0
+                date             TEXT PRIMARY KEY,
+                requests         INTEGER NOT NULL DEFAULT 0,
+                registrations    INTEGER NOT NULL DEFAULT 0,
+                messages_routed  INTEGER NOT NULL DEFAULT 0,
+                signals_served   INTEGER NOT NULL DEFAULT 0,
+                threads_opened   INTEGER NOT NULL DEFAULT 0,
+                llm_calls        INTEGER NOT NULL DEFAULT 0,
+                llm_tokens       INTEGER NOT NULL DEFAULT 0,
+                profiles_removed INTEGER NOT NULL DEFAULT 0
+            )"""
+        )
+        # Operator-paid LLM metering. Guarded create so a deployment that
+        # predates the LLM proxy upgrades itself in place on the next boot.
+        conn.execute(
+            """CREATE TABLE IF NOT EXISTS llm_usage (
+                handle            TEXT NOT NULL,
+                date_utc          TEXT NOT NULL,
+                calls             INTEGER NOT NULL DEFAULT 0,
+                prompt_tokens     INTEGER NOT NULL DEFAULT 0,
+                completion_tokens INTEGER NOT NULL DEFAULT 0,
+                PRIMARY KEY (handle, date_utc)
             )"""
         )
         # Threaded agent-to-agent conversations. Guarded create so a deployment
@@ -150,6 +169,14 @@ def init_db() -> None:
                 "ALTER TABLE daily_stats ADD COLUMN threads_opened "
                 "INTEGER NOT NULL DEFAULT 0"
             )
+        # In-place upgrade: add the operator-paid-LLM counters to a daily_stats
+        # table that predates the LLM proxy.
+        for col in ("llm_calls", "llm_tokens", "profiles_removed"):
+            if col not in stat_cols:
+                conn.execute(
+                    f"ALTER TABLE daily_stats ADD COLUMN {col} "
+                    "INTEGER NOT NULL DEFAULT 0"
+                )
 
 
 def _utcnow_iso() -> str:
@@ -207,6 +234,12 @@ def all_cards() -> list:
     with _connect() as conn:
         rows = conn.execute("SELECT card FROM cards").fetchall()
         return [json.loads(r["card"]) for r in rows]
+
+
+def delete_card(handle: str) -> None:
+    """Remove an agent's public card (opt-out). Idempotent; account/key stay."""
+    with _LOCK, _connect() as conn:
+        conn.execute("DELETE FROM cards WHERE handle = ?", (handle,))
 
 
 # --- card_vectors (persisted semantic index) ------------------------------
@@ -519,9 +552,88 @@ def daily_stats_map() -> dict:
     with _connect() as conn:
         rows = conn.execute(
             "SELECT date, requests, registrations, messages_routed, signals_served, "
-            "threads_opened FROM daily_stats"
+            "threads_opened, llm_calls, llm_tokens, profiles_removed FROM daily_stats"
         ).fetchall()
     return {r["date"]: dict(r) for r in rows}
+
+
+# --- operator-paid LLM metering -------------------------------------------
+def record_llm_usage(handle: str, prompt_tokens: int, completion_tokens: int) -> None:
+    """Upsert one agent's LLM usage for the current UTC day (per successful call)."""
+    day = _utc_today()
+    with _LOCK, _connect() as conn:
+        conn.execute(
+            "INSERT INTO llm_usage (handle, date_utc, calls, prompt_tokens, "
+            "completion_tokens) VALUES (?, ?, 1, ?, ?) "
+            "ON CONFLICT(handle, date_utc) DO UPDATE SET "
+            "calls = calls + 1, "
+            "prompt_tokens = prompt_tokens + excluded.prompt_tokens, "
+            "completion_tokens = completion_tokens + excluded.completion_tokens",
+            (handle, day, int(prompt_tokens), int(completion_tokens)),
+        )
+
+
+def llm_tokens_today(handle: str) -> int:
+    """Total (prompt+completion) tokens this agent has used today (budget check)."""
+    with _connect() as conn:
+        row = conn.execute(
+            "SELECT COALESCE(SUM(prompt_tokens + completion_tokens), 0) AS t "
+            "FROM llm_usage WHERE handle = ? AND date_utc = ?",
+            (handle, _utc_today()),
+        ).fetchone()
+        return row["t"] or 0
+
+
+def llm_global_tokens_today() -> int:
+    """Total (prompt+completion) tokens the whole hub has used today."""
+    with _connect() as conn:
+        row = conn.execute(
+            "SELECT COALESCE(SUM(prompt_tokens + completion_tokens), 0) AS t "
+            "FROM llm_usage WHERE date_utc = ?",
+            (_utc_today(),),
+        ).fetchone()
+        return row["t"] or 0
+
+
+def llm_usage_today() -> dict:
+    """Aggregate LLM usage for today: {calls, prompt_tokens, completion_tokens}."""
+    with _connect() as conn:
+        row = conn.execute(
+            "SELECT COALESCE(SUM(calls), 0) AS calls, "
+            "COALESCE(SUM(prompt_tokens), 0) AS prompt_tokens, "
+            "COALESCE(SUM(completion_tokens), 0) AS completion_tokens "
+            "FROM llm_usage WHERE date_utc = ?",
+            (_utc_today(),),
+        ).fetchone()
+        return {
+            "calls": row["calls"] or 0,
+            "prompt_tokens": row["prompt_tokens"] or 0,
+            "completion_tokens": row["completion_tokens"] or 0,
+        }
+
+
+def llm_tokens_month() -> int:
+    """Total (prompt+completion) tokens used so far this UTC month (cost est.)."""
+    prefix = _utc_today()[:7] + "%"          # 'YYYY-MM%'
+    with _connect() as conn:
+        row = conn.execute(
+            "SELECT COALESCE(SUM(prompt_tokens + completion_tokens), 0) AS t "
+            "FROM llm_usage WHERE date_utc LIKE ?",
+            (prefix,),
+        ).fetchone()
+        return row["t"] or 0
+
+
+def top_llm_consumers_today(limit: int = 5) -> list:
+    """Top agents by tokens used today: [{handle, tokens}], highest first."""
+    with _connect() as conn:
+        rows = conn.execute(
+            "SELECT handle, (prompt_tokens + completion_tokens) AS tokens "
+            "FROM llm_usage WHERE date_utc = ? ORDER BY tokens DESC, handle "
+            "LIMIT ?",
+            (_utc_today(), int(limit)),
+        ).fetchall()
+    return [{"handle": r["handle"], "tokens": r["tokens"] or 0} for r in rows]
 
 
 def db_size_bytes() -> int:

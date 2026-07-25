@@ -31,6 +31,69 @@ _BEHAVIORAL_SKILLS = [
 ]
 
 
+def _result_text(res) -> str:
+    """Pull the reply text off a hub llm_complete result (frozen contract:
+    {"text", "model", "tokens"}), tolerating an object with a ``.text`` attr."""
+    if isinstance(res, dict):
+        return res.get("text", "") or ""
+    return getattr(res, "text", res) or ""
+
+
+def make_llm(ctx, client):
+    """Build the routed LLM callable the plugin hands to the envoy, matchmaker,
+    and service. It decides — per ``_config.llm_mode()`` — whether the network's
+    thinking runs on operator-paid HUB inference or on the user's own ctx.llm.
+
+    Signature: ``llm(system, user, *, purpose="envoy") -> str``. ``system``/
+    ``user`` stay positional (so every existing call site + test keeps working);
+    ``purpose`` ("envoy" | "judge" | "refresh") is a keyword-only label that
+    rides along to the hub so the operator can meter/route by call kind.
+
+    Routing (see _config.llm_mode):
+      - "hub":   hub ONLY. Success -> hub text. ANY failure, or not-live ->
+                 the safe sentinel "" (callers already fail toward silence). The
+                 user's model budget is NEVER spent.
+      - "auto":  hub when live; on ANY hub failure (503/429/network) OR when not
+                 live, fall back to ctx.llm so the plugin never goes mute.
+      - "local": ctx.llm ONLY — the hub is never called.
+    """
+    from . import _config
+
+    def _via_ctx(system: str, user: str) -> str:
+        """The user's own model (agent/plugin_llm.py::PluginLlm.complete):
+        synchronous, OpenAI-shaped ``messages``, text on ``.text``.
+        See docs/HERMES-API-GROUND-TRUTH.md §5. Billed to the USER."""
+        result = ctx.llm.complete(messages=[
+            {"role": "system", "content": system},
+            {"role": "user", "content": user},
+        ])
+        return result.text
+
+    def llm(system: str, user: str, *, purpose: str = "envoy") -> str:
+        mode = _config.llm_mode()
+        if mode == "local":
+            return _via_ctx(system, user)
+        # mode is "hub" or "auto": prefer operator-paid hub inference.
+        if _config.is_live():
+            try:
+                res = client.llm_complete(
+                    [{"role": "system", "content": system},
+                     {"role": "user", "content": user}],
+                    purpose,
+                )
+                return _result_text(res)
+            except Exception as e:  # 503/429/network — hub unavailable
+                log.debug("hub llm_complete(%s) failed: %s", purpose, e)
+                if mode == "hub":
+                    return ""             # fail toward silence; never bill user
+                return _via_ctx(system, user)   # auto: fall back to local
+        # Not live (no hub configured).
+        if mode == "hub":
+            return ""                     # hub-only: cannot bill operator, hush
+        return _via_ctx(system, user)     # auto with no hub -> local
+    return llm
+
+
 def register(ctx):
     import time
     from . import profile, tools, commands, service, matchmaker, dossier, _config
@@ -39,18 +102,9 @@ def register(ctx):
     card = profile.load_card()
     client = HermiesClient(make_transport())
 
-    def llm(system: str, user: str) -> str:
-        """Constrained LLM call for the envoy. Adapter over ctx.llm — the envoy
-        never receives anything but the card-derived system prompt.
-
-        Real API (agent/plugin_llm.py::PluginLlm.complete): synchronous,
-        takes OpenAI-shaped ``messages`` and returns a PluginLlmCompleteResult
-        whose text is on ``.text``. See docs/HERMES-API-GROUND-TRUTH.md §5."""
-        result = ctx.llm.complete(messages=[
-            {"role": "system", "content": system},
-            {"role": "user", "content": user},
-        ])
-        return result.text
+    # The routed LLM adapter: operator-paid hub inference (with local fallback),
+    # so users never bring their own model key. See make_llm above.
+    llm = make_llm(ctx, client)
 
     def inject(content: str, role: str = "user"):
         try:

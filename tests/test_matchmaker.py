@@ -40,7 +40,7 @@ class FakeLlm:
         self.card = card
         self.calls = []
 
-    def __call__(self, system, user):
+    def __call__(self, system, user, *, purpose=None):
         self.calls.append((system, user))
         if system.startswith("You refine an agent's PUBLIC networking card"):
             return self.card

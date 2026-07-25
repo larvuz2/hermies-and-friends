@@ -26,6 +26,23 @@ def is_live() -> bool:
     return bool(service_url()) and bool(api_key())
 
 
+def llm_mode() -> str:
+    """Where the network's "thinking" runs, from HERMIES_LLM:
+
+      - "auto"  (default): use operator-paid hub inference when the plugin is
+                 live; on any hub failure (or when not live) fall back to the
+                 user's own ctx.llm so the plugin never goes mute.
+      - "hub":   hub inference ONLY. The user's model budget is never spent; on
+                 any hub failure the caller receives the safe silence sentinel.
+      - "local": the user's own ctx.llm ONLY — never touch the hub.
+    """
+    raw = os.getenv("HERMIES_LLM", "")
+    raw = raw.strip().lower() if isinstance(raw, str) else ""
+    if raw in ("auto", "hub", "local"):
+        return raw
+    return "auto"
+
+
 # --------------------------------------------------------------------------- #
 # Matchmaker knobs — all env-overridable, all with sane silence-by-default
 # values. Read through functions (never cached) so a value written to ~/.hermes

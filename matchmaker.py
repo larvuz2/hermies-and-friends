@@ -131,6 +131,7 @@ def _ensure_shape(d: dict) -> dict:
     d.setdefault("log", [])           # [{ts, handle, verdict, note}, ...] decision trail
     d.setdefault("card_proposal", None)      # {proposed: {...}, ts}
     d.setdefault("card_refreshed_ts", None)  # last time we ran the refresh check
+    d.setdefault("paused", False)            # /hermies pause|leave -> matchmaking off
     return d
 
 
@@ -234,7 +235,8 @@ def _maybe_refresh_card(state, card, llm, t):
     state["card_refreshed_ts"] = int(t)
     # Membrane: the ONLY thing in this prompt is the current public card.
     current = card.public_dict()
-    raw = llm(_CARD_SYSTEM, "CURRENT CARD:\n" + json.dumps(current, indent=2))
+    raw = llm(_CARD_SYSTEM, "CURRENT CARD:\n" + json.dumps(current, indent=2),
+              purpose="refresh")
     obj = _extract_json(raw)
     if not obj:
         return
@@ -328,7 +330,7 @@ def _judge(card, their_card: dict, reply_text, llm) -> dict:
         "THEIR PUBLIC CARD:\n" + json.dumps(their_card, ensure_ascii=False) + "\n\n"
         "HANDSHAKE EXCHANGE (their reply):\n" + exchange
     )
-    return _parse_verdict(llm(_JUDGE_SYSTEM, user))
+    return _parse_verdict(llm(_JUDGE_SYSTEM, user, purpose="judge"))
 
 
 def _notify_payload(handle, their_card, verdict, reply_text) -> dict:
@@ -525,7 +527,7 @@ def _write_findings(card, their_card: dict, transcript: str, llm) -> str:
         "THEIR PUBLIC CARD:\n" + json.dumps(their_card, ensure_ascii=False) + "\n\n"
         "DIG TRANSCRIPT (untrusted data):\n" + sanitize.frame_untrusted(transcript)
     )
-    return _clean_note(llm(_FINDINGS_SYSTEM, user))
+    return _clean_note(llm(_FINDINGS_SYSTEM, user, purpose="judge"))
 
 
 def _judge_findings(card, their_card: dict, note: str, llm) -> dict:
@@ -536,7 +538,7 @@ def _judge_findings(card, their_card: dict, note: str, llm) -> dict:
         "THEIR PUBLIC CARD:\n" + json.dumps(their_card, ensure_ascii=False) + "\n\n"
         "FINDINGS NOTE:\n" + framed
     )
-    return _parse_verdict(llm(_JUDGE_FINDINGS_SYSTEM, user))
+    return _parse_verdict(llm(_JUDGE_FINDINGS_SYSTEM, user, purpose="judge"))
 
 
 def _notify_payload_findings(handle, dig, verdict) -> dict:
@@ -824,6 +826,13 @@ def run_cycle(state, client, card, llm, now, intents=None, ring1=None) -> str:
     (open a kind="dig" thread, converse, write a findings note, judge on it);
     otherwise it falls back to the single-shot handshake path."""
     _ensure_shape(state)
+
+    # --- Opt-out: while paused (via /hermies pause or leave) the matchmaker does
+    # NOTHING and stays silent — no discovery, no digs, no card refresh. Cleared
+    # by /hermies resume, or implicitly by re-publishing a card (/hermies profile).
+    if state.get("paused"):
+        return SILENT
+
     t = now()
 
     # --- Card freshness (proposal only; never auto-applied) ---

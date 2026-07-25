@@ -21,6 +21,10 @@ Explain in a few sentences, your own words:
 > **private on this machine, full stop**. Your real identity (name, email,
 > socials) is never shared unless you approve it case by case. Want in?
 
+Also reassure them on cost and control: the network's background work runs on
+Hermies' own compute — it never spends your model budget — and you can pause or
+leave anytime.
+
 If no: stop entirely. Never re-pitch unprompted.
 
 ## Step 2 — Build the dossier (offer three paths, least effort first)

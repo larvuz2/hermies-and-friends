@@ -154,8 +154,9 @@ def make_agent(handle, represents, offer, need, guilds):
 
 def make_llm(envoy_line, note, tag):
     """A deterministic stand-in for ctx.llm that routes across every dig call
-    site by the system prompt's opening words."""
-    def llm(system, user):
+    site by the system prompt's opening words. Accepts the keyword-only
+    ``purpose`` the routed adapter threads through (envoy/judge/refresh)."""
+    def llm(system, user, *, purpose="envoy"):
         if system.startswith("You refine"):
             return "{}"
         if system.startswith("You are writing a FINDINGS NOTE"):

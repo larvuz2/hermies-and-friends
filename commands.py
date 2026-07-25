@@ -41,7 +41,11 @@ def make_handler(client, card, llm):
                     setattr(card, k, v)
             profile.save_card(card)
             client.publish_profile(card.public_dict())
-            return "Updated & published your PUBLIC card:\n" + json.dumps(card.public_dict(), indent=2)
+            rejoined = _resume_matchmaking()  # publishing re-joins after a leave
+            note = ("\n(Re-joined the network — matchmaking resumed.)"
+                    if rejoined else "")
+            return ("Updated & published your PUBLIC card:\n"
+                    + json.dumps(card.public_dict(), indent=2) + note)
 
         if sub == "discover":
             signals = client.discover(card.public_dict())
@@ -90,11 +94,84 @@ def make_handler(client, card, llm):
                 return _card_apply(state, card, client)
             return _card_view(state, card)
 
+        if sub == "pause":
+            return _pause()
+
+        if sub == "resume":
+            return _resume()
+
+        if sub == "leave":
+            return _leave(client)
+
         return (f"Unknown subcommand '{sub}'. Try: status | profile | discover | "
                 "signals | search <q> | skills | dossier | intents | matches | "
-                "log | card | card apply")
+                "log | card | card apply | pause | resume | leave")
 
     return handler
+
+
+# --------------------------------------------------------------------------- #
+# Opt-out: pause / resume / leave. These flip the matchmaker's ``paused`` flag
+# (run_cycle returns SILENT while set, so the daemon + hermies_matchmake tool
+# no-op) and, for leave, remove the published card from the hub. The local
+# dossier is NEVER touched by any of these.
+# --------------------------------------------------------------------------- #
+
+def _pause() -> str:
+    state = matchmaker.load_state()
+    state["paused"] = True
+    matchmaker.save_state(state)
+    return ("Paused. I've stopped matchmaking — no digs, no new outreach, and "
+            "I won't interrupt you. Your public card is still up. Say "
+            "`/hermies resume` to start again.")
+
+
+def _resume() -> str:
+    state = matchmaker.load_state()
+    was = bool(state.get("paused"))
+    state["paused"] = False
+    matchmaker.save_state(state)
+    if not was:
+        return "Matchmaking was already running — nothing to resume."
+    return ("Resumed. I'll go back to quietly digging for you and only surface "
+            "something when it's genuinely worth it.")
+
+
+def _resume_matchmaking() -> bool:
+    """Clear the paused flag as a side effect of re-publishing a card. Returns
+    True only if it was actually paused (so the caller can note the re-join)."""
+    state = matchmaker.load_state()
+    if not state.get("paused"):
+        return False
+    state["paused"] = False
+    matchmaker.save_state(state)
+    return True
+
+
+def _leave(client) -> str:
+    """Remove the published card + discovery vectors from the hub and stop
+    matchmaking, while keeping everything local (the dossier stays put). The
+    account persists on the hub, so re-publishing a card (/hermies profile)
+    re-joins later."""
+    removed = False
+    try:
+        res = client.remove_profile()
+        removed = bool(isinstance(res, dict) and res.get("ok")) or res is not None
+    except Exception:
+        removed = False
+    state = matchmaker.load_state()
+    state["paused"] = True
+    matchmaker.save_state(state)
+    head = ("Left the network. I removed your public card and discovery vectors "
+            "from the hub"
+            if removed else
+            "Stopped matchmaking and paused you locally, but I couldn't reach "
+            "the hub to remove your public card — I'll treat you as off the "
+            "network here")
+    return (head + ", and I've stopped all matchmaking.\n\n"
+            "Your private dossier stays right here on this machine — nothing "
+            "local was deleted. Whenever you want back in, just re-publish a "
+            "card with `/hermies profile {...}` and you'll re-join.")
 
 
 def _dossier_view() -> str:

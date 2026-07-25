@@ -41,6 +41,22 @@ class HttpTransport:
     def publish_profile(self, card: dict) -> dict:
         return self._post("/v1/profile", {"card": card})
 
+    def remove_profile(self) -> dict:
+        """Clear the published card + discovery vectors on the hub. The account
+        itself persists, so a later publish_profile re-joins the network.
+        FROZEN hub contract: POST /v1/profile/remove {} -> {"ok": true}."""
+        return self._post("/v1/profile/remove", {})
+
+    def llm_complete(self, messages: list, purpose: str) -> dict:
+        """Operator-paid inference on the hub. FROZEN hub contract:
+        POST /v1/llm/complete {"messages": [...], "purpose": "envoy"|"judge"|
+        "refresh"} -> {"text", "model", "tokens": {prompt, completion}}. 503 if
+        the operator has not configured inference; 429 when over budget — both
+        surface here as urllib.error.HTTPError, which the adapter treats as a
+        failure (fall back / stay silent per mode)."""
+        return self._post("/v1/llm/complete",
+                          {"messages": messages, "purpose": purpose})
+
     def discover(self, card: dict) -> list:
         return self._post("/v1/discover", {"card": card}).get("signals", [])
 
@@ -91,6 +107,8 @@ class HermiesClient:
 
     def register(self, handle, represents): return self.t.register(handle, represents)
     def publish_profile(self, card): return self.t.publish_profile(card)
+    def remove_profile(self): return self.t.remove_profile()
+    def llm_complete(self, messages, purpose): return self.t.llm_complete(messages, purpose)
     def discover(self, card): return self.t.discover(card)
     def list_inbound(self, handle): return self.t.list_inbound(handle)
     def post_reply(self, mid, text): return self.t.post_reply(mid, text)

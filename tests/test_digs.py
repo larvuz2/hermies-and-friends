@@ -44,7 +44,7 @@ class DigLlm:
         self.note = note
         self.calls = []
 
-    def __call__(self, system, user):
+    def __call__(self, system, user, *, purpose=None):
         self.calls.append((system, user))
         if system.startswith("You refine"):
             return "{}"
@@ -221,7 +221,7 @@ def test_envoy_drain_caps_replies_at_six_then_closes(monkeypatch):
     fc = FakeThreadClient()
     tid = fc.open_thread("mira-herald", "dig", "fit")["thread_id"]
     state = matchmaker.new_state()
-    llm = lambda s, u: "envoy answer"
+    llm = lambda s, u, **_: "envoy answer"
 
     total_answered = 0
     for i in range(9):

@@ -21,6 +21,7 @@ from fastapi.responses import HTMLResponse, JSONResponse
 
 import db
 import engine as engine_mod
+import llm_proxy
 import matching
 
 log = logging.getLogger("hermies.app")
@@ -344,6 +345,47 @@ async def message(body: dict, authorization: str = Header(default="")):
     return {"ok": True, "to": to_handle}
 
 
+# --- operator-paid LLM proxy ----------------------------------------------
+@app.post("/v1/llm/complete")
+async def llm_complete(body: dict, authorization: str = Header(default="")):
+    """Proxy an envoy/judge/refresh completion to OpenRouter on the operator key.
+
+    Fail closed (503) when unconfigured; enforce per-agent + global daily token
+    budgets (429) BEFORE spending on upstream; meter every successful call.
+    """
+    handle = _authed_handle(authorization)
+    if not llm_proxy.is_configured():
+        raise HTTPException(status_code=503, detail="llm not configured")
+    body = body or {}
+    purpose = _clip_str(body.get("purpose")).strip()
+    messages = llm_proxy.validate(body.get("messages"), purpose)   # 400 / 413
+    # Budget: reject when today's ALREADY-recorded usage is at/over either cap,
+    # checked before we spend on the upstream call.
+    if (db.llm_tokens_today(handle) >= llm_proxy.daily_token_cap()
+            or db.llm_global_tokens_today() >= llm_proxy.global_token_cap()):
+        raise HTTPException(status_code=429, detail="llm budget exceeded")
+    result = llm_proxy.complete(messages, purpose)                  # 502 on failure
+    tok = result["tokens"]
+    db.record_llm_usage(handle, tok["prompt"], tok["completion"])
+    db.bump_stat("llm_calls")
+    db.bump_stat("llm_tokens", tok["prompt"] + tok["completion"])
+    return result
+
+
+@app.post("/v1/profile/remove")
+async def profile_remove(body: dict, authorization: str = Header(default="")):
+    """Opt-out: clear the caller's card + vectors from the db and live engine.
+
+    Account/key stay valid so they can re-publish later. Idempotent.
+    """
+    handle = _authed_handle(authorization)
+    db.delete_card(handle)
+    if _engine is not None:
+        _engine.remove(handle)     # drops from the index + in-memory + card_vectors
+    db.bump_stat("profiles_removed")
+    return {"ok": True}
+
+
 # --- threaded conversations -----------------------------------------------
 def _utc_midnight_ts() -> float:
     now = datetime.now(timezone.utc)
@@ -524,7 +566,8 @@ def _gather_stats() -> dict:
 
     stats_map = db.daily_stats_map()
     empty = {"requests": 0, "registrations": 0, "messages_routed": 0,
-             "signals_served": 0, "threads_opened": 0}
+             "signals_served": 0, "threads_opened": 0, "llm_calls": 0,
+             "llm_tokens": 0, "profiles_removed": 0}
     today_row = {**empty, **stats_map.get(today, {})}
 
     # 14-day window (oldest first), filling gaps with zeros.
@@ -564,6 +607,30 @@ def _gather_stats() -> dict:
             "indexed_cards": _engine.card_count if _engine else 0,
             "avg_match_latency_ms": _avg_match_latency_ms(),
         },
+        "llm": _gather_llm_stats(),
+    }
+
+
+def _gather_llm_stats() -> dict:
+    """Operator-paid LLM section for the admin dashboard (usage + est. cost)."""
+    usage = db.llm_usage_today()
+    tokens_today = usage["prompt_tokens"] + usage["completion_tokens"]
+    tokens_month = db.llm_tokens_month()
+    rate = llm_proxy.cost_per_mtok()
+    return {
+        "configured": llm_proxy.is_configured(),
+        "models": llm_proxy.models_by_purpose(),
+        "daily_cap": llm_proxy.daily_token_cap(),
+        "global_cap": llm_proxy.global_token_cap(),
+        "cost_per_mtok": rate,
+        "calls_today": usage["calls"],
+        "prompt_tokens_today": usage["prompt_tokens"],
+        "completion_tokens_today": usage["completion_tokens"],
+        "tokens_today": tokens_today,
+        "tokens_month": tokens_month,
+        "cost_today": tokens_today / 1_000_000.0 * rate,
+        "cost_month": tokens_month / 1_000_000.0 * rate,
+        "top": db.top_llm_consumers_today(5),
     }
 
 
@@ -644,6 +711,56 @@ def _render_admin(stats: dict) -> str:
         ]
     )
 
+    llm = stats["llm"]
+    if not llm["configured"]:
+        llm_section = (
+            '<p class="muted"><b>LLM: not configured</b> — set '
+            '<code>HERMIES_OPENROUTER_KEY</code> to enable operator-paid '
+            'envoy/judge/refresh inference. All <code>/v1/llm/complete</code> '
+            'calls currently fail closed (503).</p>'
+        )
+    else:
+        rate = llm["cost_per_mtok"]
+        llm_rows = "".join(
+            "<tr>"
+            f"<td>{_e(label)}</td><td class=\"r\">{_e(value)}</td>"
+            "</tr>"
+            for label, value in [
+                ("Calls today", llm["calls_today"]),
+                ("Prompt tokens today", llm["prompt_tokens_today"]),
+                ("Completion tokens today", llm["completion_tokens_today"]),
+                ("Tokens today", llm["tokens_today"]),
+                ("Est. cost today", f"${llm['cost_today']:.4f}"),
+                ("Est. cost this month", f"${llm['cost_month']:.4f}"),
+                ("Blended rate", f"${rate:.2f} / M tokens"),
+                ("Per-agent daily cap", f"{llm['daily_cap']} tokens"),
+                ("Global daily cap", f"{llm['global_cap']} tokens"),
+            ]
+        )
+        model_rows = "".join(
+            "<tr>"
+            f"<td>{_e(purpose)}</td><td>{_e(llm['models'][purpose])}</td>"
+            "</tr>"
+            for purpose in ("envoy", "judge", "refresh")
+        )
+        top_rows = "".join(
+            "<tr>"
+            f"<td>{_e(row['handle'])}</td><td class=\"r\">{_e(row['tokens'])}</td>"
+            "</tr>"
+            for row in llm["top"]
+        ) or '<tr><td colspan="2" class="muted">no usage today</td></tr>'
+        llm_section = (
+            '<p class="muted"><b>LLM: configured</b> — operator-paid inference '
+            'via OpenRouter.</p>'
+            '<div class="wrap"><table><tbody>' + llm_rows + '</tbody></table></div>'
+            '<h3>Models</h3><div class="wrap"><table>'
+            '<thead><tr><th>Purpose</th><th>Model</th></tr></thead>'
+            '<tbody>' + model_rows + '</tbody></table></div>'
+            '<h3>Top consumers today</h3><div class="wrap"><table>'
+            '<thead><tr><th>Handle</th><th class="r">Tokens</th></tr></thead>'
+            '<tbody>' + top_rows + '</tbody></table></div>'
+        )
+
     daily = stats["daily"]
     daily_rows = "".join(
         "<tr>"
@@ -695,6 +812,10 @@ def _render_admin(stats: dict) -> str:
   .tile .lbl {{ color: #8a90a0; font-size: 12px; margin-top: 2px; }}
   h2 {{ font-size: 14px; text-transform: uppercase; letter-spacing: .04em;
     color: #8a90a0; margin: 28px 0 10px; }}
+  h3 {{ font-size: 12px; text-transform: uppercase; letter-spacing: .04em;
+    color: #8a90a0; margin: 18px 0 8px; }}
+  code {{ background: #171a21; border: 1px solid #23262e; border-radius: 4px;
+    padding: 1px 5px; font-size: 12px; }}
   table {{ width: 100%; border-collapse: collapse; font-size: 13px; }}
   th, td {{ text-align: left; padding: 7px 10px; border-bottom: 1px solid #23262e;
     vertical-align: top; }}
@@ -728,6 +849,9 @@ def _render_admin(stats: dict) -> str:
     <tbody>{conv_rows}</tbody>
   </table>
   </div>
+
+  <h2>LLM costs</h2>
+  {llm_section}
 
   <h2>Agents ({stats['total_agents']})</h2>
   <div class="wrap">
@@ -782,6 +906,7 @@ async def admin_stats(authorization: str = Header(default="")):
         "daily": stats["daily"],
         "engine": stats["engine"],
         "conversations": stats["conversations"],
+        "llm": stats["llm"],
     }
 
 

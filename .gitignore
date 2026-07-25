@@ -4,3 +4,11 @@ __pycache__/
 .venv/
 node_modules/
 .pytest_cache/
+
+# stray local state / test artifacts
+SENTINEL-*
+*.db
+dossier.json
+matchmaker.json
+profile.json
+*.bak

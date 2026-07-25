@@ -47,6 +47,35 @@ def _overlap(a_items, b_items) -> int:
     return hits
 
 
+# --- public helpers reused by the semantic engine (engine.py) -------------
+# engine.py leans on these for the deterministic, stdlib token/guild layer:
+# they stay meaningful in fallback (pseudo-embedding) mode and provide the
+# literal, grounded term pairs that the "why" string quotes.
+def guild_overlap(a_guilds, b_guilds) -> int:
+    """Count of a-guild terms sharing at least one token with b-guilds."""
+    return _overlap(a_guilds, b_guilds)
+
+
+def best_shared_pair(a_items, b_items):
+    """Best literal (a_term, b_term) pair sharing the most tokens, or None.
+
+    Used to ground the "why" string in real card terms. Prefers the pair with
+    the largest token intersection so multi-word matches beat incidental ones.
+    """
+    best = None
+    best_n = 0
+    for a in (a_items or []):
+        a_tok = _tokens(a)
+        if not a_tok:
+            continue
+        for b in (b_items or []):
+            n = len(a_tok & _tokens(b))
+            if n > best_n:
+                best_n = n
+                best = (str(a), str(b))
+    return best
+
+
 def score_pair(me: dict, them: dict) -> int:
     """Directional affinity score of `me` toward `them`."""
     my_want = (me.get("need") or []) + (me.get("curious") or []) + \

@@ -6,6 +6,7 @@ is stdlib-only (matching.py).
 """
 import base64
 import html
+import logging
 import os
 import secrets
 import time
@@ -15,14 +16,73 @@ from contextlib import asynccontextmanager
 from datetime import datetime, timedelta, timezone
 from threading import Lock
 
-from fastapi import FastAPI, Header, HTTPException
+from fastapi import FastAPI, Header, HTTPException, Request
 from fastapi.responses import HTMLResponse, JSONResponse
 
 import db
+import engine as engine_mod
 import matching
+
+log = logging.getLogger("hermies.app")
 
 # Process start, used for the admin "uptime" tile.
 _START = time.time()
+
+# --- semantic matching engine v2 -----------------------------------------
+MATCH_TOP_K = 20               # hard cap on signals returned
+DEFAULT_MATCH_FLOOR = 2.0      # drop matches scoring below this (0..10 scale)
+
+# The live engine (built at startup in the lifespan). Module-global so every
+# request handler and the admin page share the one in-memory index.
+_engine = None
+
+# Rolling match latency samples (seconds) for the admin dashboard.
+_match_latencies = deque(maxlen=200)
+_latency_lock = Lock()
+
+
+def _match_floor() -> float:
+    try:
+        return float(os.environ.get("HERMIES_MATCH_FLOOR", DEFAULT_MATCH_FLOOR))
+    except (TypeError, ValueError):
+        return DEFAULT_MATCH_FLOOR
+
+
+def _record_latency(seconds: float) -> None:
+    with _latency_lock:
+        _match_latencies.append(seconds)
+
+
+def _avg_match_latency_ms() -> float:
+    with _latency_lock:
+        if not _match_latencies:
+            return 0.0
+        return 1000.0 * sum(_match_latencies) / len(_match_latencies)
+
+
+def _engine_match_signals(card: dict, exclude_handle: str) -> list:
+    """Run the semantic engine and shape results into the frozen SIGNAL list.
+
+    Shape is unchanged ({kind, agent, why, score}); ``components`` is added as an
+    additive, non-breaking extra key. Floors below HERMIES_MATCH_FLOOR are
+    dropped, results capped at MATCH_TOP_K, and latency sampled for the admin.
+    """
+    floor = _match_floor()
+    t0 = time.perf_counter()
+    results = _engine.match(card, exclude_handle=exclude_handle, top_k=MATCH_TOP_K)
+    _record_latency(time.perf_counter() - t0)
+    signals = []
+    for r in results:
+        if r["score"] < floor:
+            continue
+        signals.append({
+            "kind": "match",
+            "agent": r["agent"],
+            "why": r["why"],
+            "score": r["score"],
+            "components": r["components"],
+        })
+    return signals
 
 # --- card whitelist -------------------------------------------------------
 # handle/tagline/represents are strings; the rest are lists of strings.
@@ -41,6 +101,25 @@ RATE_LIMIT = 60          # requests
 RATE_WINDOW = 60.0       # seconds
 _hits = defaultdict(deque)
 _rate_lock = Lock()
+
+# Public-launch hardening: throttle account creation per client IP so a single
+# source cannot spray registrations. In-memory + process-local (single worker).
+REGISTER_MAX = 5
+REGISTER_WINDOW = 3600.0     # seconds (per hour)
+_reg_hits = defaultdict(deque)
+_reg_lock = Lock()
+
+
+def _check_register_rate(ip: str) -> None:
+    now = time.time()
+    with _reg_lock:
+        q = _reg_hits[ip]
+        while q and q[0] <= now - REGISTER_WINDOW:
+            q.popleft()
+        if len(q) >= REGISTER_MAX:
+            raise HTTPException(
+                status_code=429, detail="registration rate limit exceeded")
+        q.append(now)
 
 
 def _clip_str(value) -> str:
@@ -80,7 +159,15 @@ def _check_rate(key_hash: str) -> None:
 
 @asynccontextmanager
 async def _lifespan(_app: FastAPI):
+    global _engine
     db.init_db()
+    # Build the semantic index once at cold start (loads persisted embeddings +
+    # cards from sqlite; re-encodes anything missing so upgrades self-heal).
+    _engine = engine_mod.build_engine(db)
+    log.warning(
+        "hermies engine ready: mode=%s model=%s indexed_cards=%d floor=%.1f",
+        _engine.mode, _engine.model_name, _engine.card_count, _match_floor(),
+    )
     yield
 
 
@@ -113,7 +200,9 @@ async def healthz():
 
 
 @app.post("/v1/register")
-async def register(body: dict):
+async def register(body: dict, request: Request):
+    ip = request.client.host if request.client else "unknown"
+    _check_register_rate(ip)
     handle = _clip_str((body or {}).get("handle")).strip()
     represents = _clip_str((body or {}).get("represents"))
     if not handle:
@@ -136,14 +225,18 @@ async def profile(body: dict, authorization: str = Header(default="")):
         stored = db.get_card(handle) or {}
         card["represents"] = stored.get("represents", "")
     db.upsert_card(handle, card)
+    # Encode + (re)index this card in the live semantic engine. last_seen is now
+    # (the caller just authenticated), which also refreshes their presence.
+    if _engine is not None:
+        _engine.upsert_card(handle, card, last_seen_ts=time.time())
     return {"ok": True, "handle": handle}
 
 
 @app.post("/v1/discover")
 async def discover(body: dict, authorization: str = Header(default="")):
-    _authed_handle(authorization)
+    handle = _authed_handle(authorization)
     card = sanitize_card((body or {}).get("card"))
-    signals = matching.match_signals(card, db.all_cards())
+    signals = _engine_match_signals(card, exclude_handle=handle)
     db.bump_stat("signals_served", len(signals))
     return {"signals": signals}
 
@@ -152,7 +245,7 @@ async def discover(body: dict, authorization: str = Header(default="")):
 async def signals(body: dict, authorization: str = Header(default="")):
     handle = _authed_handle(authorization)
     card = db.get_card(handle) or {"handle": handle}
-    result = matching.match_signals(card, db.all_cards())
+    result = _engine_match_signals(card, exclude_handle=handle)
     db.bump_stat("signals_served", len(result))
     return {"signals": result}
 
@@ -344,6 +437,12 @@ def _gather_stats() -> dict:
         "uptime_seconds": time.time() - _START,
         "accounts": db.all_accounts_with_cards(),
         "daily": daily,
+        "engine": {
+            "mode": _engine.mode if _engine else "unbuilt",
+            "model": _engine.model_name if _engine else "?",
+            "indexed_cards": _engine.card_count if _engine else 0,
+            "avg_match_latency_ms": _avg_match_latency_ms(),
+        },
     }
 
 
@@ -393,6 +492,23 @@ def _render_admin(stats: dict) -> str:
         )
     agents_rows = "".join(rows) or (
         '<tr><td colspan="7" class="muted">no agents yet</td></tr>'
+    )
+
+    eng = stats["engine"]
+    engine_mode = eng["mode"]
+    mode_label = ("semantic (fastembed)" if engine_mode == "fastembed"
+                  else "fallback (hashing n-gram)" if engine_mode == "fallback"
+                  else engine_mode)
+    engine_rows = "".join(
+        "<tr>"
+        f"<td>{_e(label)}</td><td>{_e(value)}</td>"
+        "</tr>"
+        for label, value in [
+            ("Mode", mode_label),
+            ("Model", eng["model"]),
+            ("Indexed cards", eng["indexed_cards"]),
+            ("Avg match latency", f"{eng['avg_match_latency_ms']:.1f} ms"),
+        ]
     )
 
     daily = stats["daily"]
@@ -466,6 +582,13 @@ def _render_admin(stats: dict) -> str:
 <main>
   <div class="tiles">{tile_html}</div>
 
+  <h2>Matching engine</h2>
+  <div class="wrap">
+  <table>
+    <tbody>{engine_rows}</tbody>
+  </table>
+  </div>
+
   <h2>Agents ({stats['total_agents']})</h2>
   <div class="wrap">
   <table>
@@ -517,6 +640,7 @@ async def admin_stats(authorization: str = Header(default="")):
         "db_size_bytes": stats["db_size_bytes"],
         "uptime_seconds": stats["uptime_seconds"],
         "daily": stats["daily"],
+        "engine": stats["engine"],
     }
 
 

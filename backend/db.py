@@ -5,6 +5,8 @@ Tables:
   accounts    - api key (sha256) -> handle, the represents blurb, and presence
                 (last_seen ISO utc, request_count) for the admin dashboard
   cards       - handle -> JSON public card (upsert)
+  card_vectors- handle + field_group -> embedding BLOB (+ model, updated_at);
+                the persisted semantic index the engine rebuilds at startup
   messages    - inbound mailbox rows: id, to_handle, from_handle, query, drained
   daily_stats - per-UTC-day counters: requests, registrations, messages_routed,
                 signals_served
@@ -36,7 +38,7 @@ def db_path() -> str:
 def _connect() -> sqlite3.Connection:
     conn = sqlite3.connect(db_path())
     conn.row_factory = sqlite3.Row
-    conn.execute("PRAGMA journal_mode=WAL")
+    conn.execute("PRAGMA journal_mode=WAL")   # concurrent reads while a write holds
     return conn
 
 
@@ -80,6 +82,19 @@ def init_db() -> None:
                 registrations   INTEGER NOT NULL DEFAULT 0,
                 messages_routed INTEGER NOT NULL DEFAULT 0,
                 signals_served  INTEGER NOT NULL DEFAULT 0
+            )"""
+        )
+        # Persisted semantic index. Guarded create so a pre-vector deployment
+        # (no card_vectors table) upgrades itself in place on the next boot; the
+        # engine re-encodes any card missing rows here.
+        conn.execute(
+            """CREATE TABLE IF NOT EXISTS card_vectors (
+                handle      TEXT NOT NULL,
+                field_group TEXT NOT NULL,
+                vector      BLOB NOT NULL,
+                model       TEXT NOT NULL,
+                updated_at  REAL NOT NULL,
+                PRIMARY KEY (handle, field_group)
             )"""
         )
         # In-place upgrade: add presence columns to a pre-existing accounts
@@ -148,6 +163,53 @@ def all_cards() -> list:
     with _connect() as conn:
         rows = conn.execute("SELECT card FROM cards").fetchall()
         return [json.loads(r["card"]) for r in rows]
+
+
+# --- card_vectors (persisted semantic index) ------------------------------
+def upsert_vectors(handle: str, groups: dict, model: str, updated_at: float) -> None:
+    """Persist all of one agent's field-group vectors in a single transaction.
+
+    ``groups`` maps ``field_group -> vector bytes``. One commit for the whole
+    card keeps cold-start re-encode (migration) and live upserts cheap.
+    """
+    params = [
+        (handle, group, sqlite3.Binary(vec), model, updated_at)
+        for group, vec in groups.items()
+    ]
+    if not params:
+        return
+    with _LOCK, _connect() as conn:
+        conn.executemany(
+            "INSERT INTO card_vectors (handle, field_group, vector, model, updated_at) "
+            "VALUES (?, ?, ?, ?, ?) "
+            "ON CONFLICT(handle, field_group) DO UPDATE SET "
+            "vector = excluded.vector, model = excluded.model, "
+            "updated_at = excluded.updated_at",
+            params,
+        )
+
+
+def delete_vectors(handle: str) -> None:
+    with _LOCK, _connect() as conn:
+        conn.execute("DELETE FROM card_vectors WHERE handle = ?", (handle,))
+
+
+def all_vectors() -> list:
+    """Every persisted vector row: {handle, group, vector, model, updated_at}."""
+    with _connect() as conn:
+        rows = conn.execute(
+            "SELECT handle, field_group, vector, model, updated_at FROM card_vectors"
+        ).fetchall()
+    return [
+        {
+            "handle": r["handle"],
+            "group": r["field_group"],
+            "vector": bytes(r["vector"]),
+            "model": r["model"],
+            "updated_at": r["updated_at"],
+        }
+        for r in rows
+    ]
 
 
 # --- messages -------------------------------------------------------------
@@ -219,6 +281,31 @@ def bump_stat(field: str, n: int = 1) -> None:
             f"UPDATE daily_stats SET {field} = {field} + ? WHERE date = ?",
             (n, day),
         )
+
+
+def last_seen_ts_map() -> dict:
+    """handle -> last_seen as a POSIX timestamp (float). Skips never-seen rows.
+
+    Used by the engine to seed presence decay at startup from the accounts
+    table's ISO ``last_seen`` values.
+    """
+    out = {}
+    with _connect() as conn:
+        rows = conn.execute(
+            "SELECT handle, last_seen FROM accounts WHERE last_seen IS NOT NULL"
+        ).fetchall()
+    for r in rows:
+        iso = r["last_seen"]
+        if not iso:
+            continue
+        try:
+            dt = datetime.fromisoformat(iso)
+        except ValueError:
+            continue
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
+        out[r["handle"]] = dt.timestamp()
+    return out
 
 
 def count_accounts() -> int:

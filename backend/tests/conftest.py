@@ -10,6 +10,12 @@ import pytest
 # Make backend/ importable (app.py, db.py, matching.py live one level up).
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
+# Default the whole suite to the deterministic fallback encoder so tests never
+# touch the network or load the ~100MB model (each test rebuilds the engine in
+# its lifespan). Override with HERMIES_FORCE_FALLBACK_EMBED=0 to run the suite
+# once against the real fastembed model. setdefault respects an explicit value.
+os.environ.setdefault("HERMIES_FORCE_FALLBACK_EMBED", "1")
+
 
 @pytest.fixture()
 def client(tmp_path, monkeypatch):

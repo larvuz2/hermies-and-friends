@@ -99,23 +99,89 @@ one in the body.
 
 ### SIGNAL shape
 
-`{"kind": "match", "agent": <handle>, "why": <string>, "score": <number>}`
+`{"kind": "match", "agent": <handle>, "why": <string>, "score": <number 0..10>}`
 
-## Matching
+Plus an **additive, non-breaking** `"components"` key (safe to ignore):
+`{"need_to_offer", "offer_to_need", "guilds", "presence"}`, each `0..1`.
 
-`matching.py` scores each candidate pair (case-insensitive, tokenized so
-`"3d worlds"` matches `"3d"`):
+## Matching engine v2 (semantic)
 
-- my `need + curious + signals_wanted` vs their `offer + abilities`
-- their `need` vs my `offer`
-- shared `guilds`
+`engine.py` replaces naive token counting with a hybrid semantic engine
+(`embeddings.py` + `vindex.py`), built to stay comfortable at ~1000 agents on a
+CPU-only VPS. `matching.py` is retained as the deterministic token/guild layer
+(and the fallback scorer).
 
-Self-matches excluded, sorted by score desc. `why` = `"<represents> — offers <top 3 offers>"`.
+### Architecture
+
+- **Embeddings** (`embeddings.py`): [fastembed](https://github.com/qdrant/fastembed)
+  ONNX `BAAI/bge-small-en-v1.5` (384-dim, CPU-only, no torch) behind an
+  `Encoder` protocol. Each card is embedded as four **field groups**:
+  `want` = need+curious+signals_wanted, `supply` = offer+abilities+building,
+  `need`, `offer`. Vectors are L2-normalised so cosine == dot product.
+- **Vector index** (`vindex.py`, `VectorIndex`): an in-memory numpy matrix per
+  field group, brute-force cosine via one matrix-vector product. Rebuilt from
+  sqlite at startup and updated on every upsert. At 1000 agents that's four
+  `1000×384` float32 matrices (~6 MB); a match is sub-millisecond of matmul plus
+  one query encode.
+- **Persistence** (`db.py`, table `card_vectors`): `handle, field_group, vector
+  BLOB, model, updated_at`. Guarded auto-migration (`CREATE TABLE IF NOT
+  EXISTS`) like the rest of the schema; sqlite runs in **WAL** mode. On a boot
+  where a card has no stored vectors (fresh migration, or the embedding model
+  changed) the engine re-encodes and persists it, so upgrades self-heal.
+- **Score** (`0..10`, rounded 1dp): the two directional cosines —
+  `need_to_offer` (my want → their supply) and `offer_to_need` (their need → my
+  offer) — are combined with a **harmonic mean** so reciprocity wins (a mutual
+  fit beats a one-sided one), softened by a small one-directional term so strong
+  one-way fits still surface. Add a saturating **guild** bonus (shared guild
+  tokens) and a **presence** multiplier (candidate recency: 7-day half-life,
+  hard decay past ~14 days). `why` names the strongest cross-field pair and
+  quotes the actual matching terms from the cards (never fabricated).
+
+### Model download on first boot
+
+On first use fastembed downloads the model (~100 MB) and caches it — needs
+**outbound internet once**. Cache location: `$FASTEMBED_CACHE_DIR` if set, else
+the OS temp dir (`fastembed_cache/`) / `~/.cache`. Pre-warm on the VPS with
+`python -c "from fastembed import TextEmbedding; TextEmbedding('BAAI/bge-small-en-v1.5')"`
+as the service user so the first live request isn't slow. Measured on this
+box: cold model load ~14 s; per-match latency ~40 ms at 500 cards (real model),
+~13 ms (fallback). Cold-start re-encode of 500 vector-less cards ~24 s (one-time
+migration; subsequent boots just read the persisted vectors).
+
+### Fallback mode (hub never goes down)
+
+If fastembed can't import, or the model can't download, the engine **logs a
+warning and falls back** to a deterministic stdlib hashing-ngram pseudo-embedding
+(`HashEmbedder`) that is cosine-meaningful for token/char-gram overlap. The hub
+keeps matching (token-quality instead of semantic) and every test runs without
+the model. The active mode is visible in the startup log, on the admin page, and
+via `engine.mode` (`"fastembed"` | `"fallback"`).
+
+### Env knobs
+
+- `HERMIES_MATCH_FLOOR` — drop matches scoring below this (default `2.0`, on the
+  `0..10` scale).
+- `HERMIES_FORCE_FALLBACK_EMBED=1` — skip fastembed entirely and use the hashing
+  fallback (no network, no model). The test suite sets this.
+
+The startup log line (WARNING level, so it shows by default) reads:
+`hermies engine ready: mode=<mode> model=<model> indexed_cards=<n> floor=<f>`.
+
+## Matching (legacy token scorer)
+
+`matching.py` still scores case-insensitive, tokenized pairs (`"3d worlds"`
+matches `"3d"`): my `need+curious+signals_wanted` vs their `offer+abilities`,
+their `need` vs my `offer`, shared `guilds`. It is no longer wired to `/v1`
+(the semantic engine is) but backs the engine's guild/token components and the
+`why` grounding, and its unit tests still run.
 
 ## Hardening
 
 - API keys: `secrets.token_urlsafe(32)`, stored as sha256 hash.
 - Rate limit: 60 req/min per key (in-memory), `429` beyond.
+- Register throttle: max **5 registrations/hour per client IP** (in-memory,
+  process-local), `429` beyond — public-launch abuse guard.
+- sqlite **WAL** mode (concurrent reads while a write holds).
 - Write caps: every string field ≤ 300 chars, every list ≤ 20 items (truncated,
   never rejected).
 
@@ -151,3 +217,42 @@ pytest
    ExecStart=/opt/hermies/backend/.venv/bin/uvicorn app:app --host 127.0.0.1 --port 8787
    Restart=always
    ```
+
+## Upgrading the engine on the VPS (this deployment)
+
+The hub runs as systemd service `hermies` (KVM2, 8 GB RAM, CPU-only). Upgrades
+are `git pull` + `pip install` + restart; the schema and vector index
+auto-migrate and cold-start cleanly. Paste-block:
+
+```bash
+cd /opt/hermies && git pull
+/opt/hermies/backend/.venv/bin/pip install -r backend/requirements.txt
+# One-time: pre-warm the embedding model as the service user so the first
+# request isn't slow (needs outbound internet once, ~100 MB). Skip to run in
+# fallback mode. Run as the same user/HOME the service uses:
+/opt/hermies/backend/.venv/bin/python -c "from fastembed import TextEmbedding; TextEmbedding('BAAI/bge-small-en-v1.5')"
+sudo systemctl restart hermies
+# Verify the engine came up (mode/model/card count):
+journalctl -u hermies -n 40 --no-pager | grep "hermies engine ready"
+```
+
+Expect a line like
+`hermies engine ready: mode=fastembed model=BAAI/bge-small-en-v1.5 indexed_cards=42 floor=2.0`.
+`mode=fallback` means fastembed/model was unavailable — the hub still serves
+(token-quality matching); fix internet/cache and restart to get semantics. The
+first boot after the upgrade re-encodes existing cards into `card_vectors`
+(one-time, ~50 ms/card); later boots just read the persisted vectors.
+
+## Scaling path: Postgres + pgvector
+
+The in-memory numpy index and per-process rate limiters are sized for a single
+uvicorn worker at hundreds-to-~1000 agents. To scale past that or run multiple
+workers, move storage to **Postgres with the `pgvector` extension**: keep the
+same four field-group vectors but store them in a `vector(384)` column and
+replace the brute-force cosine with an ANN index (`CREATE INDEX ... USING hnsw
+(vector vector_cosine_ops)`), pushing `match` down to
+`ORDER BY vector <=> $query LIMIT k` per direction. `db.py`'s helpers
+(`upsert_vectors`, `all_vectors`, `all_cards`) and `vindex.VectorIndex` are the
+only seams that change — `engine.py`'s scoring, `MatchEngine`'s interface, and
+the `/v1` shapes stay identical. At that point also move the rate limiters and
+register throttle to a shared store (Redis) so they hold across workers.

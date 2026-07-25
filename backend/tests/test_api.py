@@ -190,3 +190,37 @@ def test_rate_limit_429(client):
         codes.append(client.post("/v1/skills", json={"query": "x"}, headers=hdr).status_code)
     assert codes[:60] == [200] * 60
     assert codes[60] == 429
+
+
+def test_register_throttle_429(client):
+    """Per-IP registration throttle: 5/hour, the 6th is rejected."""
+    codes = []
+    for i in range(6):
+        r = client.post("/v1/register", json={"handle": f"reg-{i}", "represents": ""})
+        codes.append(r.status_code)
+    assert codes[:5] == [200] * 5
+    assert codes[5] == 429
+
+
+def test_v1_signal_shape_unchanged(client):
+    """/v1 SIGNAL shape stays {kind, agent, why, score} + additive components."""
+    key_a = register(client, CARD_A["handle"], CARD_A["represents"])
+    key_b = register(client, CARD_B["handle"], CARD_B["represents"])
+    _publish(client, key_a, CARD_A)
+    _publish(client, key_b, CARD_B)
+
+    r = client.post("/v1/discover", json={"card": CARD_A}, headers=auth(key_a))
+    signals = r.json()["signals"]
+    assert signals, "expected at least one match"
+    for s in signals:
+        # Frozen keys are present and correctly typed.
+        assert s["kind"] == "match"
+        assert isinstance(s["agent"], str)
+        assert isinstance(s["why"], str)
+        assert isinstance(s["score"], (int, float))
+        assert 0.0 <= s["score"] <= 10.0
+        # Additive, non-breaking components block.
+        comp = s["components"]
+        assert set(comp) == {"need_to_offer", "offer_to_need", "guilds", "presence"}
+        for v in comp.values():
+            assert 0.0 <= v <= 1.0

@@ -158,9 +158,24 @@ def _matches_view(state) -> str:
     if queue:
         lines.append("Pending (queued for the next quiet slot):")
         for it in queue:
-            lines.append(f"  • @{it.get('handle', '')} — {it.get('pitch', '')}")
+            lead = (f'you asked me to find "{it.get("intent")}" — '
+                    if it.get("intent") else "")
+            lines.append(f"  • @{it.get('handle', '')} — {lead}{it.get('pitch', '')}")
     else:
         lines.append("Nothing queued right now.")
+
+    reveals = state.get("pending_reveals") or []
+    if reveals:
+        lines.append("")
+        lines.append("Reveal requests awaiting YOUR approval (contact is never "
+                     "released without your explicit yes):")
+        for r in reveals:
+            ctx = r.get("context", "")
+            lines.append(f"  • @{r.get('handle', '?')} — {ctx}")
+            lines.append(f"    To connect, say yes, then: hermies_reveal_respond("
+                         f"thread_id='{r.get('thread_id', '')}', approve=true, "
+                         "human_approved=true)")
+
     seen = state.get("seen") or {}
     if seen:
         recent = sorted(seen.items(), key=lambda kv: kv[1].get("ts", 0), reverse=True)[:8]

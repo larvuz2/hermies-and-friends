@@ -152,6 +152,7 @@ def test_register_wires_expected_surface(loaded):
         "hermies_send_message", "hermies_install_skill",
         "hermies_dossier", "hermies_ask", "hermies_thread",
         "hermies_reveal_request", "hermies_reveal_respond", "hermies_intent",
+        "hermies_pending",
     }
     assert set(ctx.commands) == {"hermies"}
     assert list(ctx.hooks) == ["pre_tool_call"]

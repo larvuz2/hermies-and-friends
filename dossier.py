@@ -35,10 +35,10 @@ from . import sanitize
 # Generous cap — dossier facts can be a sentence or two, unlike terse card fields.
 _MAX = 500
 
-# TODO(dig-integration): the follow-up agent that moves matchmaker handshakes
-# onto kind="dig" threads will add a "findings" store here (3-6 line notes per
-# dig per skills/hermies-envoy-protocol/SKILL.md) that match judgment reads.
-# Keep it Ring-0 (private) and route every write through _clean, like the rest.
+# Note: per-dig findings notes (3-6 lines per skills/hermies-envoy-protocol/
+# SKILL.md) live in the matchmaker's own state (matchmaker.py: state["findings"])
+# alongside the dig/thread bookkeeping that judgment reads, not here. This module
+# stays the guardian of the human's static profile + contact identity.
 
 RING0_SECTIONS = (
     "work_history", "projects", "hobbies", "goals",

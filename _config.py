@@ -93,3 +93,15 @@ def drop_cooldown_days() -> int:
 def card_refresh_days() -> int:
     """How often to propose (never auto-apply) an improved public card."""
     return _int_env("HERMIES_CARD_REFRESH_DAYS", 7)
+
+
+def dig_max_turns() -> int:
+    """Max OUTBOUND turns the matchmaker (initiator) spends on a dig thread
+    before it concludes with a findings note. The opener counts as turn 1."""
+    return _int_env("HERMIES_DIG_MAX_TURNS", 3)
+
+
+def envoy_max_replies() -> int:
+    """Max replies the answering-side envoy daemon posts into a single thread
+    before it politely concludes and closes it."""
+    return _int_env("HERMIES_ENVOY_MAX_REPLIES", 6)

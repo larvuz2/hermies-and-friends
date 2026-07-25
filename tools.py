@@ -17,8 +17,44 @@ def build(client, card, llm=None):
         # The autonomous brain. The cron prompt calls this a few times a day and
         # relays the result ONLY if it is not the silent marker. Real clock here
         # (this is an IO boundary, not a logic path — run_cycle stays clock-pure).
-        result = matchmaker.run_and_persist(client, card, llm, time.time)
+        # Standing intents + Ring-1 facts are read here (the IO boundary) and
+        # passed in, so intent-driven discovery and Ring-1 dig color work while
+        # run_cycle stays a pure function of its arguments.
+        try:
+            intents = [i for i in dossier.list_intents()
+                       if i.get("status") == "active"]
+        except Exception:
+            intents = []
+        try:
+            ring1 = dossier.get_ring1()
+        except Exception:
+            ring1 = []
+        result = matchmaker.run_and_persist(client, card, llm, time.time,
+                                            intents=intents, ring1=ring1)
         return json.dumps({"result": result})
+
+    def pending(params, **kwargs):
+        # Deliver-on-next-interaction queue (per the delivery skill): the agent
+        # peeks queued findings at a natural moment and pops them once relayed.
+        action = (params.get("action") or "peek").lower()
+        state = matchmaker.load_state()
+        queue = list(state.get("queue") or [])
+        reveals = list(state.get("pending_reveals") or [])
+        if action == "pop":
+            send = queue[:3]                       # batch, best-first, max 3
+            state["queue"] = queue[3:]
+            matchmaker.save_state(state)
+            return json.dumps({
+                "delivered": send,
+                "text": matchmaker._format_notification(send) if send else "",
+                "remaining": len(state["queue"]),
+                "pending_reveals": reveals,
+            })
+        return json.dumps({
+            "queued": queue,
+            "text": matchmaker._format_notification(queue[:3]) if queue else "",
+            "pending_reveals": reveals,
+        })
 
     def search_agents(params, **kwargs):
         agents = client.search_agents(params.get("query", ""))
@@ -69,10 +105,10 @@ def build(client, card, llm=None):
         return json.dumps({"success": True, "thread_id": tid,
                            "turn": sent.get("turn"), "error": sent.get("error")})
 
-    # TODO(dig-integration): the follow-up agent will drive kind="dig" threads
-    # from matchmaker (open_thread -> envoy.respond(mode="dig", ring1_facts=...)
-    # per turn -> findings note), replacing the single-shot send_message
-    # handshake. These thread ops + the envoy mode plumbing are the seam.
+    # The matchmaker now drives kind="dig" threads autonomously (matchmaker.py:
+    # open_thread -> envoy.open_dig / envoy.respond(mode="dig") per turn ->
+    # findings note -> judge). This manual tool remains for the agent to inspect
+    # or steer a conversation by hand.
     def thread(params, **kwargs):
         action = (params.get("action") or "list").lower()
         tid = params.get("thread_id", "")
@@ -332,6 +368,26 @@ def build(client, card, llm=None):
                 },
             },
             "handler": reveal_respond,
+        },
+        {
+            "name": "hermies_pending",
+            "description": ("Surface findings the matchmaker composed but hasn't "
+                            "delivered yet (the deliver-on-next-interaction "
+                            "queue), plus any reveal requests awaiting your "
+                            "human's approval. action='peek' to view without "
+                            "consuming; action='pop' to take up to 3 to relay "
+                            "now (per the delivery skill: best first, batched)."),
+            "schema": {
+                "name": "hermies_pending",
+                "description": "Peek/pop queued Hermies findings + pending reveals.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "action": {"type": "string", "enum": ["peek", "pop"]},
+                    },
+                },
+            },
+            "handler": pending,
         },
         {
             "name": "hermies_intent",

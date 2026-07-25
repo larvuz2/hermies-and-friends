@@ -9,29 +9,209 @@
 `run_once` is pure and synchronous for tests. `start` runs it on a daemon
 thread with simple polling (v1 — swap for SSE/websocket later).
 """
+import json
 import threading
 import time
 
-from . import envoy, sanitize
+from . import envoy, sanitize, _config
 
 
-def run_once(client, card, inject, llm) -> dict:
+def _is_ours(frm, handle) -> bool:
+    """A thread message is ours if it carries our handle (the live hub echoes
+    the sender's handle) or the mock backend's "me" sentinel."""
+    return frm in (handle, "me")
+
+
+def _reveal_summary(thread_id, th, msgs, handle) -> dict:
+    """Build a human-facing summary of an inbound reveal request WITHOUT ever
+    auto-answering it. Parses the counterpart's structured reveal payload
+    (best-effort) to surface who is asking and why."""
+    frm = th.get("with", "")
+    who, context = frm, ""
+    for m in msgs:
+        if _is_ours(m.get("from", ""), handle):
+            continue
+        try:
+            body = json.loads(m.get("text", "") or "{}")
+        except Exception:
+            body = {}
+        if isinstance(body, dict) and body.get("reveal_request"):
+            context = sanitize.clean_text(body.get("context", ""), max_len=300)
+            cardh = (body.get("card") or {}).get("handle", "")
+            who = sanitize.clean_text(cardh, max_len=80) or frm
+    return {"thread_id": thread_id, "from": frm, "handle": who,
+            "context": context, "ts": int(time.time())}
+
+
+def drain_threads(client, card, llm, state, ring1=None) -> dict:
+    """Answer inbound THREADS as the public envoy — the conversational twin of
+    the inbound-mailbox drain.
+
+    For every open thread with unread counterpart turns:
+      - reveal_request threads are NEVER auto-answered; each is queued once into
+        ``state['pending_reveals']`` for the human (surfaced via /hermies matches
+        and the delivery tool). Only the human, via hermies_reveal_respond, may
+        release contact.
+      - dig / ask threads are answered by ``envoy.respond`` in the thread's mode,
+        capped at ``HERMIES_ENVOY_MAX_REPLIES`` replies from our side; once the
+        cap is hit we post one polite conclusion and close the thread.
+
+    Mutates ``state`` in place; caller persists it. Returns a summary dict."""
+    handle = card.public_dict().get("handle") or ""
+    if not hasattr(client, "list_threads"):
+        return {"answered": 0, "reveals_queued": 0}
+    try:
+        listing = client.list_threads()
+    except Exception:
+        return {"answered": 0, "reveals_queued": 0}
+    threads = listing.get("threads", []) if isinstance(listing, dict) else []
+
+    replies = state.setdefault("thread_replies", {})
+    pending = state.setdefault("pending_reveals", [])
+    answered, queued = 0, 0
+
+    for th in threads:
+        tid = th.get("thread_id")
+        if not tid:
+            continue
+        if th.get("state") not in ("open", None):
+            # A dig the counterpart concluded (or the hub expired): if we took
+            # part, write our findings note, then move on (never reply).
+            if th.get("kind") != "reveal_request" and tid in replies:
+                _write_answerer_findings(client, card, llm, state, tid,
+                                         th.get("with", ""), th.get("subject", ""),
+                                         handle)
+            continue
+        if th.get("unread", 0) <= 0:
+            continue
+        try:
+            read = client.read_thread(tid)
+        except Exception:
+            continue
+        msgs = read.get("messages", []) if isinstance(read, dict) else []
+        if not msgs or _is_ours(msgs[-1].get("from", ""), handle):
+            continue  # nothing new for us to answer
+
+        kind = th.get("kind") or "dig"
+        if kind == "reveal_request":
+            # NEVER auto-answer. Queue once for the human.
+            if not any(p.get("thread_id") == tid for p in pending):
+                pending.append(_reveal_summary(tid, th, msgs, handle))
+                queued += 1
+            continue
+
+        count = replies.get(tid, 0)
+        if count >= _config.envoy_max_replies():
+            # Cap reached: conclude politely + close, exactly once.
+            try:
+                client.send_thread(
+                    tid, "Thanks — I think we've covered the useful ground here. "
+                         "I'll bring what's relevant back to my human. Good luck "
+                         "out there.")
+            except Exception:
+                pass
+            try:
+                client.close_thread(tid)
+            except Exception:
+                pass
+            replies[tid] = count + 1  # never re-trigger the closer
+            _write_answerer_findings(client, card, llm, state, tid,
+                                     th.get("with", ""), th.get("subject", ""),
+                                     handle)
+            continue
+
+        last_text = sanitize.clean_text(msgs[-1].get("text", ""), max_len=1000)
+        reply = envoy.respond(card, last_text, llm, ring1_facts=ring1, mode=kind)
+        try:
+            client.send_thread(tid, reply)
+            replies[tid] = count + 1
+            answered += 1
+        except Exception:
+            pass
+
+    return {"answered": answered, "reveals_queued": queued}
+
+
+def _thread_transcript(client, tid, handle) -> str:
+    try:
+        msgs = client.read_thread(tid).get("messages", [])
+    except Exception:
+        msgs = []
+    lines = []
+    for m in msgs:
+        text = sanitize.clean_text(m.get("text", ""), max_len=500)
+        who = "US" if _is_ours(m.get("from", ""), handle) else "THEM"
+        lines.append(f"{who}: {text}")
+    return "\n".join(lines) or "(no messages)"
+
+
+def _write_answerer_findings(client, card, llm, state, tid, other, subject, handle):
+    """When a dig/ask thread we participated in concludes, write OUR side's
+    findings note (the envoy-protocol skill: a findings note ends EVERY dig).
+    Deduped by thread id so it is written exactly once."""
+    if not other:
+        return False
+    done = state.setdefault("drained_findings", [])
+    if tid in done:
+        return False
+    from . import matchmaker
+    transcript = _thread_transcript(client, tid, handle)
+    note = matchmaker._write_findings(
+        card, {"agent": other, "why": sanitize.clean_text(subject or "", max_len=160)},
+        transcript, llm)
+    state.setdefault("findings", {})[other] = {
+        "note": note, "thread_id": tid, "concluded_ts": int(time.time()),
+        "verdict": None, "role": "answerer",
+    }
+    done.append(tid)
+    return True
+
+
+def _safe_ring1():
+    try:
+        from . import dossier
+        return dossier.get_ring1()
+    except Exception:
+        return []
+
+
+def run_once(client, card, inject, llm, ring1=None) -> dict:
     """One poll cycle. Returns a summary dict (handy for tests/logging)."""
     handled, signals = 0, []
 
-    # OUTWARD: answer inbound network queries as the envoy (card-only context).
+    # OUTWARD (mailbox): answer inbound network queries as the envoy.
     handle = card.public_dict().get("handle") or ""
     for msg in client.list_inbound(handle):
         reply = envoy.respond(card, msg.get("query", ""), llm)
         client.post_reply(msg["id"], reply)
         handled += 1
 
+    # OUTWARD (threads): drain conversational threads as the envoy. Persist the
+    # reply-cap counters + queued reveals into the shared matchmaker state so
+    # /hermies matches and the delivery tool see them. Only touch the state file
+    # when there is actually a thread to act on.
+    threads_summary = None
+    if hasattr(client, "list_threads"):
+        try:
+            listing = client.list_threads()
+            has_threads = bool((listing or {}).get("threads"))
+        except Exception:
+            has_threads = False
+        if has_threads:
+            from . import matchmaker
+            st = matchmaker.load_state()
+            threads_summary = drain_threads(client, card, llm, st, ring1=ring1)
+            matchmaker.save_state(st)
+
     # INWARD: pull signals and surface a digest to the human.
     signals = client.list_signals(handle)
     if signals:
         inject(_format_digest(signals), "user")
 
-    return {"handled": handled, "signals": len(signals)}
+    summary = {"handled": handled, "signals": len(signals)}
+    if threads_summary is not None:
+        summary["threads"] = threads_summary
+    return summary
 
 
 def _format_digest(signals) -> str:
@@ -70,7 +250,7 @@ def start(client, card, inject, llm, interval: int = 90, matchmake=None,
     def _loop():
         while True:
             try:
-                run_once(client, card, inject, llm)
+                run_once(client, card, inject, llm, ring1=_safe_ring1())
             except Exception:
                 pass
             if matchmake is not None:

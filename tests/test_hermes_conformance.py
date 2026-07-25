@@ -10,6 +10,7 @@ enforced in CI without the Hermes checkout.
 If Hermes ever changes these signatures, these tests are the tripwire.
 """
 import inspect
+import pathlib
 
 import pytest
 
@@ -64,6 +65,7 @@ class SpyContext:
         self.tools = {}
         self.commands = {}
         self.hooks = {}
+        self.skills = {}
         self.injected = []
         self._llm = FakeLlm()
 
@@ -95,6 +97,15 @@ class SpyContext:
         assert callable(callback)
         self.hooks.setdefault(hook_name, []).append(callback)
 
+    # Real: register_skill(name, path: Path, description="")
+    def register_skill(self, name, path, description=""):
+        import re
+        assert isinstance(name, str) and name
+        assert ":" not in name, "namespace is derived; name must not contain ':'"
+        assert re.match(r"^[a-zA-Z0-9_-]+$", name)
+        assert pathlib.Path(path).exists(), f"skill path must exist: {path}"
+        self.skills[name] = dict(path=str(path), description=description)
+
     # Real: inject_message(content, role="user") -> bool
     def inject_message(self, content, role="user"):
         self.injected.append((content, role))
@@ -102,9 +113,13 @@ class SpyContext:
 
 
 @pytest.fixture
-def loaded(monkeypatch):
+def loaded(monkeypatch, tmp_path):
     """Run our real register(ctx) against a spy, WITHOUT spawning the daemon
-    thread — capture the (client, card, inject, llm) the plugin wired instead."""
+    thread — capture the (client, card, inject, llm) the plugin wired instead.
+
+    HERMIES_HOME is redirected to a fresh tmp dir so the dossier is deterministic
+    (absent -> not onboarded -> the register() bootstrap injection fires)."""
+    monkeypatch.setenv("HERMIES_HOME", str(tmp_path))
     captured = {}
 
     def fake_start(client, card, inject, llm, interval=90, matchmake=None,
@@ -135,9 +150,30 @@ def test_register_wires_expected_surface(loaded):
     assert set(ctx.tools) == {
         "hermies_matchmake", "hermies_search_agents", "hermies_list_signals",
         "hermies_send_message", "hermies_install_skill",
+        "hermies_dossier", "hermies_ask", "hermies_thread",
+        "hermies_reveal_request", "hermies_reveal_respond", "hermies_intent",
     }
     assert set(ctx.commands) == {"hermies"}
     assert list(ctx.hooks) == ["pre_tool_call"]
+
+
+def test_register_wires_the_five_behavioral_skills(loaded):
+    ctx, _ = loaded
+    assert set(ctx.skills) == {
+        "hermies-context", "hermies-voice", "hermies-onboarding",
+        "hermies-envoy-protocol", "hermies-delivery",
+    }
+    # Every registered skill path points at a real SKILL.md.
+    for spec in ctx.skills.values():
+        assert spec["path"].endswith("SKILL.md")
+
+
+def test_first_run_injects_onboarding_bootstrap_once(loaded):
+    """A fresh (not-onboarded) dossier => register() injects exactly one
+    onboarding nudge via inject_message."""
+    ctx, _ = loaded
+    onboarding = [c for (c, _r) in ctx.injected if "onboarding" in c.lower()]
+    assert len(onboarding) == 1
 
 
 # --------------------------------------------------------------------------- #
@@ -247,5 +283,6 @@ def test_envoy_respond_flows_through_the_llm_adapter(loaded):
 
 def test_inject_adapter_calls_inject_message(loaded):
     ctx, captured = loaded
+    ctx.injected.clear()  # drop the first-run onboarding bootstrap
     captured["inject"]("hello human", "user")
     assert ctx.injected == [("hello human", "user")]

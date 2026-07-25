@@ -10,13 +10,30 @@ against your Hermes version and adjust the thin adapters if they differ — the
 plugin's own logic lives in the sibling modules and is API-independent.
 """
 import logging
+import pathlib
 
 log = logging.getLogger("hermies")
+
+# The five behavioral skills that steer the agent's Hermies behavior. They are
+# opt-in explicit loads (register_skill does NOT add them to <available_skills>);
+# the agent resolves them as hermies:<name> when a situation calls for one.
+_BEHAVIORAL_SKILLS = [
+    ("hermies-context",
+     "World model for the Hermies network — entities, rings, public vs private."),
+    ("hermies-voice",
+     "How to talk to your human about Hermies — tone, framing, hard bans."),
+    ("hermies-onboarding",
+     "The one-time onboarding ritual: build the dossier, draft/publish the card."),
+    ("hermies-envoy-protocol",
+     "Rules for talking to other agents — digs, asks, reveals, rings, defense."),
+    ("hermies-delivery",
+     "When to speak vs stay quiet — the worth-it bar, intents, follow-ups."),
+]
 
 
 def register(ctx):
     import time
-    from . import profile, tools, commands, service, matchmaker, _config
+    from . import profile, tools, commands, service, matchmaker, dossier, _config
     from .client import HermiesClient, make_transport
 
     card = profile.load_card()
@@ -58,8 +75,34 @@ def register(ctx):
             description=spec["description"],
         )
 
-    # --- approval gate for network skill installs ---
+    # --- approval gate for skill installs AND contact reveals ---
     ctx.register_hook("pre_tool_call", commands.install_gate)
+
+    # --- behavioral skills (opt-in explicit loads) ---
+    if hasattr(ctx, "register_skill"):
+        skill_root = pathlib.Path(__file__).resolve().parent / "skills"
+        for sname, sdesc in _BEHAVIORAL_SKILLS:
+            try:
+                ctx.register_skill(sname, skill_root / sname / "SKILL.md", sdesc)
+            except Exception as e:  # a packaging hiccup must not kill the plugin
+                log.debug("register_skill(%s) skipped: %s", sname, e)
+
+    # --- first-run bootstrap: point the agent at onboarding, once ---
+    # inject_message is the safest surface (no-op in gateway mode, never raises —
+    # see docs/HERMES-API-GROUND-TRUTH.md §6). We say it ONCE, only while the
+    # dossier does not exist / is not onboarded; the onboarding skill drives the
+    # actual consented setup with the human.
+    try:
+        if not dossier.is_onboarded():
+            inject(
+                "Hermies is installed but not set up yet. Next time you talk "
+                "with your human, run the hermies:hermies-onboarding skill "
+                "together to build their private dossier and public card before "
+                "doing anything else on the network.",
+                role="user",
+            )
+    except Exception as e:
+        log.debug("onboarding bootstrap skipped: %s", e)
 
     # --- the notification path: prefer the blessed cron scheduler ---
     # The cron job calls hermies_matchmake a few times a day and relays the

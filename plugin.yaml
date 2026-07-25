@@ -16,3 +16,9 @@ provides_tools:
   - hermies_list_signals
   - hermies_send_message
   - hermies_install_skill
+  - hermies_dossier
+  - hermies_ask
+  - hermies_thread
+  - hermies_reveal_request
+  - hermies_reveal_respond
+  - hermies_intent

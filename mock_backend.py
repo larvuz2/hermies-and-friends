@@ -39,6 +39,10 @@ def _overlap(a, b) -> int:
 
 
 class MockBackend:
+    # Hub turn budget: total messages (both parties) per thread. The 13th is
+    # rejected with a 409-equivalent error, matching the frozen hub contract.
+    THREAD_TURN_BUDGET = 12
+
     def __init__(self):
         self.agents = list(_SEED_AGENTS)
         self._published = None
@@ -49,6 +53,9 @@ class MockBackend:
             "query": "Hey — what does your human offer, and are you open to AI-film collabs?",
         }]
         self._replies = []
+        # threaded conversations: {thread_id: {...}}
+        self._threads = {}
+        self._thread_seq = 0
 
     def register(self, handle: str, represents: str = ""):
         # Mirror the real backend's unauthenticated /v1/register contract.
@@ -110,3 +117,64 @@ class MockBackend:
 
     def send_message(self, to_handle: str, text: str):
         return {"ok": True, "to": to_handle}
+
+    # --- threaded conversations (mirror the frozen hub contract) ----------- #
+    def _append(self, thread_id: str, frm: str, text: str):
+        """Shared append used by send_thread (our turns) and script_reply (the
+        counterpart's turns). Enforces the 12-message total budget and the
+        409-equivalent once a thread is closed/expired."""
+        th = self._threads.get(thread_id)
+        if th is None:
+            return {"error": "no such thread", "status": 404}
+        if th["state"] != "open":
+            return {"error": "thread closed or expired", "status": 409}
+        if th["turns"] >= self.THREAD_TURN_BUDGET:
+            th["state"] = "expired"
+            return {"error": "turn budget exhausted", "status": 409}
+        th["turns"] += 1
+        turn = th["turns"]
+        th["messages"].append({"from": frm, "text": text,
+                               "ts": float(turn), "turn": turn})
+        if frm != "me":
+            th["unread"] += 1
+        return {"ok": True, "turn": turn}
+
+    def open_thread(self, to: str, kind: str, subject: str):
+        self._thread_seq += 1
+        tid = f"thr-{self._thread_seq}"
+        self._threads[tid] = {
+            "thread_id": tid, "with": to, "kind": kind, "subject": subject,
+            "state": "open", "turns": 0, "unread": 0, "messages": [],
+        }
+        return {"thread_id": tid}
+
+    def send_thread(self, thread_id: str, text: str):
+        return self._append(thread_id, "me", text)
+
+    def close_thread(self, thread_id: str):
+        th = self._threads.get(thread_id)
+        if th is None:
+            return {"error": "no such thread", "status": 404}
+        th["state"] = "concluded"
+        return {"ok": True}
+
+    def list_threads(self):
+        return {"threads": [
+            {"thread_id": th["thread_id"], "with": th["with"], "kind": th["kind"],
+             "subject": th["subject"], "state": th["state"], "turns": th["turns"],
+             "unread": th["unread"]}
+            for th in self._threads.values()
+        ]}
+
+    def read_thread(self, thread_id: str):
+        th = self._threads.get(thread_id)
+        if th is None:
+            return {"error": "no such thread", "status": 404}
+        th["unread"] = 0
+        return {"messages": [dict(m) for m in th["messages"]]}
+
+    # --- test helper: simulate the OTHER envoy replying in a thread -------- #
+    def script_reply(self, thread_id: str, text: str, frm: str = None):
+        th = self._threads.get(thread_id)
+        frm = frm or (th["with"] if th else "them")
+        return self._append(thread_id, frm, text)

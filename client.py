@@ -62,6 +62,25 @@ class HttpTransport:
     def send_message(self, to_handle: str, text: str) -> dict:
         return self._post("/v1/message", {"to": to_handle, "text": text})
 
+    # --- threaded conversations (FROZEN contract, owned by the hub team) ---
+    # All authed Bearer. The hub enforces a 12-message total turn budget per
+    # thread and answers 409 once a thread is closed/expired.
+    def open_thread(self, to: str, kind: str, subject: str) -> dict:
+        return self._post("/v1/thread/open",
+                          {"to": to, "kind": kind, "subject": subject})
+
+    def send_thread(self, thread_id: str, text: str) -> dict:
+        return self._post("/v1/thread/send", {"thread_id": thread_id, "text": text})
+
+    def close_thread(self, thread_id: str) -> dict:
+        return self._post("/v1/thread/close", {"thread_id": thread_id})
+
+    def list_threads(self) -> dict:
+        return self._post("/v1/thread/list", {})
+
+    def read_thread(self, thread_id: str) -> dict:
+        return self._post("/v1/thread/read", {"thread_id": thread_id})
+
 
 class HermiesClient:
     """Thin façade over a transport. Adds nothing but a stable surface for the
@@ -79,6 +98,12 @@ class HermiesClient:
     def search_agents(self, query): return self.t.search_agents(query)
     def browse_skills(self, query): return self.t.browse_skills(query)
     def send_message(self, to_handle, text): return self.t.send_message(to_handle, text)
+    # threaded conversations
+    def open_thread(self, to, kind, subject): return self.t.open_thread(to, kind, subject)
+    def send_thread(self, thread_id, text): return self.t.send_thread(thread_id, text)
+    def close_thread(self, thread_id): return self.t.close_thread(thread_id)
+    def list_threads(self): return self.t.list_threads()
+    def read_thread(self, thread_id): return self.t.read_thread(thread_id)
 
 
 def make_transport():

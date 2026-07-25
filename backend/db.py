@@ -8,8 +8,14 @@ Tables:
   card_vectors- handle + field_group -> embedding BLOB (+ model, updated_at);
                 the persisted semantic index the engine rebuilds at startup
   messages    - inbound mailbox rows: id, to_handle, from_handle, query, drained
+  threads     - threaded agent-to-agent conversations: id, the two participants
+                (a_handle = opener, b_handle = recipient), kind, subject, state
+                (open|concluded|expired), created_ts, and each side's
+                last-read turn (a_last_read_turn, b_last_read_turn)
+  thread_msgs - one row per thread message: thread_id, turn (1-based), sender,
+                text, ts
   daily_stats - per-UTC-day counters: requests, registrations, messages_routed,
-                signals_served
+                signals_served, threads_opened
 
 Schema changes are guarded (CREATE TABLE IF NOT EXISTS / ADD COLUMN only when
 missing) so a deployed DB upgrades itself in place on the next boot.
@@ -24,7 +30,10 @@ from datetime import datetime, timezone
 DEFAULT_DB = os.path.join(os.path.dirname(os.path.abspath(__file__)), "hermies.db")
 
 # daily_stats columns that bump_stat() is allowed to increment.
-STAT_FIELDS = ("requests", "registrations", "messages_routed", "signals_served")
+STAT_FIELDS = (
+    "requests", "registrations", "messages_routed", "signals_served",
+    "threads_opened",
+)
 
 # One lock guards writes; sqlite connections are created per-call to stay
 # thread-safe under the TestClient / uvicorn worker model.
@@ -81,7 +90,33 @@ def init_db() -> None:
                 requests        INTEGER NOT NULL DEFAULT 0,
                 registrations   INTEGER NOT NULL DEFAULT 0,
                 messages_routed INTEGER NOT NULL DEFAULT 0,
-                signals_served  INTEGER NOT NULL DEFAULT 0
+                signals_served  INTEGER NOT NULL DEFAULT 0,
+                threads_opened  INTEGER NOT NULL DEFAULT 0
+            )"""
+        )
+        # Threaded agent-to-agent conversations. Guarded create so a deployment
+        # that predates threads upgrades itself in place on the next boot.
+        conn.execute(
+            """CREATE TABLE IF NOT EXISTS threads (
+                id               TEXT PRIMARY KEY,
+                a_handle         TEXT NOT NULL,
+                b_handle         TEXT NOT NULL,
+                kind             TEXT NOT NULL,
+                subject          TEXT NOT NULL DEFAULT '',
+                state            TEXT NOT NULL DEFAULT 'open',
+                created_ts       REAL NOT NULL,
+                a_last_read_turn INTEGER NOT NULL DEFAULT 0,
+                b_last_read_turn INTEGER NOT NULL DEFAULT 0
+            )"""
+        )
+        conn.execute(
+            """CREATE TABLE IF NOT EXISTS thread_messages (
+                thread_id TEXT NOT NULL,
+                turn      INTEGER NOT NULL,
+                sender    TEXT NOT NULL,
+                text      TEXT NOT NULL,
+                ts        REAL NOT NULL,
+                PRIMARY KEY (thread_id, turn)
             )"""
         )
         # Persisted semantic index. Guarded create so a pre-vector deployment
@@ -105,6 +140,15 @@ def init_db() -> None:
         if "request_count" not in cols:
             conn.execute(
                 "ALTER TABLE accounts ADD COLUMN request_count INTEGER NOT NULL DEFAULT 0"
+            )
+        # In-place upgrade: add the threads_opened counter to a daily_stats table
+        # that predates threaded conversations (CREATE TABLE IF NOT EXISTS above
+        # won't touch an existing table).
+        stat_cols = _table_columns(conn, "daily_stats")
+        if "threads_opened" not in stat_cols:
+            conn.execute(
+                "ALTER TABLE daily_stats ADD COLUMN threads_opened "
+                "INTEGER NOT NULL DEFAULT 0"
             )
 
 
@@ -250,6 +294,131 @@ def get_message(msg_id: str):
         return dict(row) if row else None
 
 
+# --- threads (agent-to-agent conversations) -------------------------------
+def create_thread(thread_id: str, a_handle: str, b_handle: str, kind: str,
+                  subject: str, created_ts: float) -> None:
+    with _LOCK, _connect() as conn:
+        conn.execute(
+            "INSERT INTO threads (id, a_handle, b_handle, kind, subject, state, "
+            "created_ts) VALUES (?, ?, ?, ?, ?, 'open', ?)",
+            (thread_id, a_handle, b_handle, kind, subject, created_ts),
+        )
+
+
+def get_thread(thread_id: str):
+    with _connect() as conn:
+        row = conn.execute(
+            "SELECT id, a_handle, b_handle, kind, subject, state, created_ts, "
+            "a_last_read_turn, b_last_read_turn FROM threads WHERE id = ?",
+            (thread_id,),
+        ).fetchone()
+        return dict(row) if row else None
+
+
+def list_threads_for(handle: str) -> list:
+    """Every thread the handle participates in, newest first."""
+    with _connect() as conn:
+        rows = conn.execute(
+            "SELECT id, a_handle, b_handle, kind, subject, state, created_ts, "
+            "a_last_read_turn, b_last_read_turn FROM threads "
+            "WHERE a_handle = ? OR b_handle = ? ORDER BY created_ts DESC",
+            (handle, handle),
+        ).fetchall()
+        return [dict(r) for r in rows]
+
+
+def set_thread_state(thread_id: str, state: str) -> None:
+    with _LOCK, _connect() as conn:
+        conn.execute(
+            "UPDATE threads SET state = ? WHERE id = ?", (state, thread_id)
+        )
+
+
+def set_last_read(thread_id: str, handle: str, turn: int) -> None:
+    """Advance the caller's last-read turn (used to compute unread counts)."""
+    thread = get_thread(thread_id)
+    if not thread:
+        return
+    column = "a_last_read_turn" if thread["a_handle"] == handle else "b_last_read_turn"
+    with _LOCK, _connect() as conn:
+        # column is one of two literals chosen above, safe to interpolate.
+        conn.execute(
+            f"UPDATE threads SET {column} = ? WHERE id = ?", (turn, thread_id)
+        )
+
+
+def count_thread_messages(thread_id: str) -> int:
+    with _connect() as conn:
+        row = conn.execute(
+            "SELECT COUNT(*) AS c FROM thread_messages WHERE thread_id = ?",
+            (thread_id,),
+        ).fetchone()
+        return row["c"]
+
+
+def add_thread_message(thread_id: str, turn: int, sender: str, text: str,
+                       ts: float) -> None:
+    with _LOCK, _connect() as conn:
+        conn.execute(
+            "INSERT INTO thread_messages (thread_id, turn, sender, text, ts) "
+            "VALUES (?, ?, ?, ?, ?)",
+            (thread_id, turn, sender, text, ts),
+        )
+
+
+def get_thread_messages(thread_id: str) -> list:
+    """All messages in a thread, oldest first: {from, text, ts, turn}."""
+    with _connect() as conn:
+        rows = conn.execute(
+            "SELECT sender, text, ts, turn FROM thread_messages "
+            "WHERE thread_id = ? ORDER BY turn",
+            (thread_id,),
+        ).fetchall()
+        return [
+            {"from": r["sender"], "text": r["text"], "ts": r["ts"], "turn": r["turn"]}
+            for r in rows
+        ]
+
+
+def count_unread(thread_id: str, other_handle: str, after_turn: int) -> int:
+    """Messages from other_handle with turn > after_turn (the caller's unread)."""
+    with _connect() as conn:
+        row = conn.execute(
+            "SELECT COUNT(*) AS c FROM thread_messages "
+            "WHERE thread_id = ? AND sender = ? AND turn > ?",
+            (thread_id, other_handle, after_turn),
+        ).fetchone()
+        return row["c"]
+
+
+def count_thread_opens_since(handle: str, since_ts: float) -> int:
+    """Threads opened by handle (as opener) at or after since_ts (abuse guard)."""
+    with _connect() as conn:
+        row = conn.execute(
+            "SELECT COUNT(*) AS c FROM threads "
+            "WHERE a_handle = ? AND created_ts >= ?",
+            (handle, since_ts),
+        ).fetchone()
+        return row["c"]
+
+
+def count_open_threads() -> int:
+    with _connect() as conn:
+        return conn.execute(
+            "SELECT COUNT(*) AS c FROM threads WHERE state = 'open'"
+        ).fetchone()["c"]
+
+
+def count_thread_messages_since(since_ts: float) -> int:
+    """Total thread messages (sends) at or after since_ts, for the admin page."""
+    with _connect() as conn:
+        row = conn.execute(
+            "SELECT COUNT(*) AS c FROM thread_messages WHERE ts >= ?",
+            (since_ts,),
+        ).fetchone()
+        return row["c"]
+
+
 # --- presence + metrics ---------------------------------------------------
 def touch_account(handle: str) -> None:
     """Record activity for an authenticated caller: bump last_seen + counter.
@@ -349,8 +518,8 @@ def daily_stats_map() -> dict:
     """All daily_stats rows keyed by date string."""
     with _connect() as conn:
         rows = conn.execute(
-            "SELECT date, requests, registrations, messages_routed, signals_served "
-            "FROM daily_stats"
+            "SELECT date, requests, registrations, messages_routed, signals_served, "
+            "threads_opened FROM daily_stats"
         ).fetchall()
     return {r["date"]: dict(r) for r in rows}
 

@@ -7,7 +7,7 @@ the envoy. Handlers return JSON strings, matching Hermes' tool convention.
 import json
 import time
 
-from . import matchmaker
+from . import matchmaker, dossier, sanitize
 
 
 def build(client, card, llm=None):
@@ -41,6 +41,118 @@ def build(client, card, llm=None):
         name = params.get("name", "")
         return json.dumps({"success": True, "installed": name,
                            "note": "stub — wire bundle download in Phase 1"})
+
+    # --- dossier / rings / conversations / reveals ---
+
+    def dossier_view(params, **kwargs):
+        # READ-ONLY views. "summary" NEVER contains contact values (only a
+        # boolean) — see dossier.summary and the membrane tests.
+        view = (params.get("view") or "summary").lower()
+        if view == "ring1":
+            return json.dumps({"ring1": dossier.get_ring1()})
+        if view == "intents":
+            return json.dumps({"intents": dossier.list_intents()})
+        return json.dumps({"summary": dossier.summary()})
+
+    def ask(params, **kwargs):
+        # Open a discreet-ask thread with another agent and send the question.
+        to = params.get("to", "")
+        question = sanitize.clean_text(params.get("question", ""), max_len=500)
+        if not to or not question:
+            return json.dumps({"success": False, "error": "need 'to' and 'question'"})
+        opened = client.open_thread(to, "ask", question[:120])
+        tid = opened.get("thread_id")
+        if not tid:
+            return json.dumps({"success": False,
+                               "error": opened.get("error", "open failed")})
+        sent = client.send_thread(tid, question)
+        return json.dumps({"success": True, "thread_id": tid,
+                           "turn": sent.get("turn"), "error": sent.get("error")})
+
+    # TODO(dig-integration): the follow-up agent will drive kind="dig" threads
+    # from matchmaker (open_thread -> envoy.respond(mode="dig", ring1_facts=...)
+    # per turn -> findings note), replacing the single-shot send_message
+    # handshake. These thread ops + the envoy mode plumbing are the seam.
+    def thread(params, **kwargs):
+        action = (params.get("action") or "list").lower()
+        tid = params.get("thread_id", "")
+        if action == "list":
+            return json.dumps(client.list_threads())
+        if action == "read":
+            if not tid:
+                return json.dumps({"error": "need 'thread_id'"})
+            res = client.read_thread(tid)
+            # Counterpart content is untrusted -> sanitize before the agent sees it.
+            for m in res.get("messages", []):
+                m["text"] = sanitize.clean_text(m.get("text", ""), max_len=1000)
+            return json.dumps(res)
+        if action == "send":
+            if not tid:
+                return json.dumps({"error": "need 'thread_id'"})
+            text = sanitize.clean_text(params.get("text", ""), max_len=1000)
+            return json.dumps(client.send_thread(tid, text))
+        if action == "close":
+            if not tid:
+                return json.dumps({"error": "need 'thread_id'"})
+            return json.dumps(client.close_thread(tid))
+        return json.dumps({"error": f"unknown action '{action}'"})
+
+    def reveal_request(params, **kwargs):
+        # GATED by commands.install_gate: a call with include_contact=true is
+        # blocked unless it also carries human_approved=true. Defense in depth:
+        # the handler itself embeds contact ONLY when BOTH flags are true.
+        to = params.get("to", "")
+        if not to:
+            return json.dumps({"success": False, "error": "need 'to'"})
+        context = sanitize.clean_text(params.get("context", ""), max_len=500)
+        include = bool(params.get("include_contact")) and bool(params.get("human_approved"))
+        opened = client.open_thread(to, "reveal_request", "reveal request")
+        tid = opened.get("thread_id")
+        if not tid:
+            return json.dumps({"success": False,
+                               "error": opened.get("error", "open failed")})
+        body = {"reveal_request": True, "context": context,
+                "card": card.public_dict()}
+        if include:
+            body["contact"] = dossier.get_contact()
+        client.send_thread(tid, json.dumps(body))
+        return json.dumps({"success": True, "thread_id": tid,
+                           "included_contact": include})
+
+    def reveal_respond(params, **kwargs):
+        # GATED by commands.install_gate: approve=true is blocked unless
+        # human_approved=true. Defense in depth: contact is released ONLY when
+        # both are true and the human hasn't marked it never-share.
+        tid = params.get("thread_id", "")
+        if not tid:
+            return json.dumps({"success": False, "error": "need 'thread_id'"})
+        approve = bool(params.get("approve"))
+        if not approve:
+            client.send_thread(tid, json.dumps({"reveal": "declined"}))
+            return json.dumps({"success": True, "approved": False})
+        if not params.get("human_approved"):
+            return json.dumps({"success": False,
+                               "error": "human approval required to release contact"})
+        contact = dossier.get_contact()
+        if contact.get("never_share"):
+            return json.dumps({"success": False,
+                               "error": "contact is marked never-share"})
+        client.send_thread(tid, json.dumps({"reveal": "approved", "contact": contact}))
+        return json.dumps({"success": True, "approved": True})
+
+    def intent(params, **kwargs):
+        action = (params.get("action") or "list").lower()
+        if action == "add":
+            it = dossier.add_intent(params.get("text", ""))
+            if not it:
+                return json.dumps({"success": False, "error": "empty intent text"})
+            return json.dumps({"success": True, "intent": it})
+        if action == "retire":
+            it = dossier.retire_intent(params.get("id"))
+            if not it:
+                return json.dumps({"success": False, "error": "no such intent"})
+            return json.dumps({"success": True, "intent": it})
+        return json.dumps({"success": True, "intents": dossier.list_intents()})
 
     return [
         {
@@ -114,5 +226,131 @@ def build(client, card, llm=None):
                 },
             },
             "handler": install_skill,
+        },
+        {
+            "name": "hermies_dossier",
+            "description": ("Read-only views of your human's local dossier: "
+                            "ring1 (approved shareable facts), intents (standing "
+                            "searches), or summary (section counts + ring1 + "
+                            "intents; NEVER contact values)."),
+            "schema": {
+                "name": "hermies_dossier",
+                "description": "Read-only dossier views (never exposes contact identity).",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "view": {"type": "string",
+                                 "enum": ["ring1", "intents", "summary"],
+                                 "description": "which view to return"},
+                    },
+                },
+            },
+            "handler": dossier_view,
+        },
+        {
+            "name": "hermies_ask",
+            "description": ("Run a discreet ask: open an 'ask' thread with "
+                            "another agent's envoy and send a precise question. "
+                            "Their human is not notified. Returns the thread_id."),
+            "schema": {
+                "name": "hermies_ask",
+                "description": "Discreet ask to another agent's envoy.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "to": {"type": "string", "description": "target agent handle"},
+                        "question": {"type": "string", "description": "what to find out"},
+                    },
+                    "required": ["to", "question"],
+                },
+            },
+            "handler": ask,
+        },
+        {
+            "name": "hermies_thread",
+            "description": ("Operate a threaded conversation: list your threads, "
+                            "read one, send a turn, or close it. The hub enforces "
+                            "a 12-message turn budget per thread."),
+            "schema": {
+                "name": "hermies_thread",
+                "description": "List/read/send/close threaded conversations.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "action": {"type": "string",
+                                   "enum": ["list", "read", "send", "close"]},
+                        "thread_id": {"type": "string"},
+                        "text": {"type": "string", "description": "message body for send"},
+                    },
+                    "required": ["action"],
+                },
+            },
+            "handler": thread,
+        },
+        {
+            "name": "hermies_reveal_request",
+            "description": ("Ask another human to connect: open a reveal_request "
+                            "thread with card-level context. Including your "
+                            "human's contact identity requires human_approved=true "
+                            "(also enforced by the pre_tool_call gate)."),
+            "schema": {
+                "name": "hermies_reveal_request",
+                "description": "Request a real-world connection (contact release is approval-gated).",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "to": {"type": "string", "description": "target agent handle"},
+                        "context": {"type": "string", "description": "why connect"},
+                        "include_contact": {"type": "boolean",
+                                            "description": "embed your human's contact identity"},
+                        "human_approved": {"type": "boolean",
+                                           "description": "set true ONLY after your human explicitly approves sending contact"},
+                    },
+                    "required": ["to"],
+                },
+            },
+            "handler": reveal_request,
+        },
+        {
+            "name": "hermies_reveal_respond",
+            "description": ("Respond to an incoming reveal request. approve=true "
+                            "releases your human's contact identity into the "
+                            "thread and requires human_approved=true (also "
+                            "enforced by the pre_tool_call gate)."),
+            "schema": {
+                "name": "hermies_reveal_respond",
+                "description": "Approve/decline a reveal request (contact release is approval-gated).",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "thread_id": {"type": "string"},
+                        "approve": {"type": "boolean"},
+                        "human_approved": {"type": "boolean",
+                                           "description": "set true ONLY after your human explicitly approves releasing contact"},
+                    },
+                    "required": ["thread_id", "approve"],
+                },
+            },
+            "handler": reveal_respond,
+        },
+        {
+            "name": "hermies_intent",
+            "description": ("Manage standing intents (persistent 'dig for X' "
+                            "searches): add a new one, list them, or retire one "
+                            "by id."),
+            "schema": {
+                "name": "hermies_intent",
+                "description": "Add/list/retire standing intents.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "action": {"type": "string", "enum": ["add", "list", "retire"]},
+                        "text": {"type": "string", "description": "intent text (for add)"},
+                        "id": {"description": "intent id (for retire)"},
+                    },
+                    "required": ["action"],
+                },
+            },
+            "handler": intent,
         },
     ]

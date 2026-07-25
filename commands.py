@@ -2,7 +2,7 @@
 import datetime
 import json
 
-from . import profile, service, sanitize, matchmaker
+from . import profile, service, sanitize, matchmaker, dossier
 
 
 def _ts(epoch) -> str:
@@ -72,6 +72,12 @@ def make_handler(client, card, llm):
                 f"{sanitize.clean_text(s.get('description', ''))}"
                 for s in skills)
 
+        if sub == "dossier":
+            return _dossier_view()
+
+        if sub == "intents":
+            return _intents_view(rest)
+
         if sub == "matches":
             return _matches_view(matchmaker.load_state())
 
@@ -85,9 +91,63 @@ def make_handler(client, card, llm):
             return _card_view(state, card)
 
         return (f"Unknown subcommand '{sub}'. Try: status | profile | discover | "
-                "signals | search <q> | skills | matches | log | card | card apply")
+                "signals | search <q> | skills | dossier | intents | matches | "
+                "log | card | card apply")
 
     return handler
+
+
+def _dossier_view() -> str:
+    """Human-facing dossier summary. Shows Ring-0 section COUNTS (never values),
+    Ring-1 facts, standing intents, and whether contact identity is on file —
+    but never the contact values themselves (dossier.summary enforces this)."""
+    s = dossier.summary()
+    lines = ["Your dossier (private — never leaves this machine):", "",
+             "Ring 0 (private) — kept local, used only to reason for you:"]
+    for sec, n in s["ring0_counts"].items():
+        lines.append(f"  • {sec}: {n}")
+    lines.append("")
+    lines.append("Ring 1 (shareable in agent-to-agent conversation):")
+    if s["ring1"]:
+        for f in s["ring1"]:
+            lines.append(f"  • {f}")
+    else:
+        lines.append("  (none yet)")
+    lines.append("")
+    active = [i for i in s["intents"] if i.get("status") == "active"]
+    lines.append("Standing intents (active):")
+    if active:
+        for i in active:
+            lines.append(f"  • [{i.get('id')}] {i.get('text')}")
+    else:
+        lines.append("  (none)")
+    lines.append("")
+    lines.append(f"Contact identity on file: {'yes' if s['contact_set'] else 'no'} "
+                 "— never shared without your explicit, per-time approval.")
+    return "\n".join(lines)
+
+
+def _intents_view(rest: str) -> str:
+    """`/hermies intents` lists; `intents add <text>` and `intents retire <id>`
+    mutate."""
+    parts = (rest or "").split(maxsplit=1)
+    verb = parts[0].lower() if parts else ""
+    arg = parts[1].strip() if len(parts) > 1 else ""
+    if verb == "add" and arg:
+        it = dossier.add_intent(arg)
+        return (f"Added standing intent [{it['id']}]: {it['text']}"
+                if it else "Nothing to add.")
+    if verb == "retire" and arg:
+        it = dossier.retire_intent(arg)
+        return f"Retired intent [{arg}]." if it else f"No intent with id '{arg}'."
+    intents = dossier.list_intents()
+    if not intents:
+        return ("No standing intents yet. Add one with:\n"
+                "  /hermies intents add <what to hunt for>")
+    lines = ["Standing intents:"]
+    for i in intents:
+        lines.append(f"  • [{i.get('id')}] ({i.get('status')}) {i.get('text')}")
+    return "\n".join(lines)
 
 
 def _matches_view(state) -> str:
@@ -167,8 +227,9 @@ def _card_apply(state, card, client) -> str:
 
 
 def install_gate(**kwargs):
-    """pre_tool_call hook: never let a skill be installed from the network
-    without explicit human approval.
+    """pre_tool_call hook: the human-consent membrane for the two irreversible
+    actions — installing a network skill, and releasing your human's contact
+    identity in a reveal.
 
     Return contract verified against Hermes source
     (hermes_cli/plugins.py::_get_pre_tool_call_directive_details, see
@@ -178,16 +239,43 @@ def install_gate(**kwargs):
     tool result the model sees); return ``None`` to allow. There is no
     ``allow``/``reason`` shape.
 
-    We DENY hermies_install_skill unless the call carries ``approved=True``
-    (which the /hermies UI / an inject_message prompt would set after the human
-    says yes).
+    Blocks:
+      - hermies_install_skill unless ``approved=True``.
+      - hermies_reveal_request with ``include_contact=True`` unless
+        ``human_approved=True``.
+      - hermies_reveal_respond with ``approve=True`` unless
+        ``human_approved=True``.
+
+    Contact identity therefore cannot move without the human having said yes and
+    the caller having set ``human_approved=true`` on THIS specific call.
     """
     tool = kwargs.get("tool_name")
     args = kwargs.get("args") or {}
+
     if tool == "hermies_install_skill" and not args.get("approved"):
         return {
             "action": "block",
             "message": "Installing a network skill requires human approval. "
                        "Confirm in chat first, then retry with approved=true.",
         }
+
+    if tool == "hermies_reveal_request" and args.get("include_contact") \
+            and not args.get("human_approved"):
+        return {
+            "action": "block",
+            "message": "Sending your human's contact identity (name/email/"
+                       "socials) requires their explicit approval. Ask your "
+                       "human directly, get a clear yes, then retry this call "
+                       "with human_approved=true.",
+        }
+
+    if tool == "hermies_reveal_respond" and args.get("approve") \
+            and not args.get("human_approved"):
+        return {
+            "action": "block",
+            "message": "Releasing your human's contact identity requires their "
+                       "explicit approval. Ask your human directly, get a clear "
+                       "yes, then retry this call with human_approved=true.",
+        }
+
     return None  # allow everything else

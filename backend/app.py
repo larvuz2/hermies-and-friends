@@ -96,6 +96,20 @@ CARD_FIELDS = CARD_STR_FIELDS + CARD_LIST_FIELDS
 MAX_STR = 300      # cap every string field
 MAX_LIST = 20      # cap every list length
 
+# --- threaded conversations -----------------------------------------------
+THREAD_KINDS = ("dig", "ask", "reveal_request")
+THREAD_MAX_TURNS = 12          # total messages allowed per thread
+THREAD_TEXT_MAX = 4000         # per-message text cap
+THREAD_SUBJECT_MAX = 200       # subject cap
+THREAD_OPENS_PER_DAY = 20      # per-agent thread-open abuse guard (UTC day)
+
+
+def _clean_text(value, limit: int) -> str:
+    """Cap length and strip control chars (defense in depth). Keeps \\n and \\t."""
+    s = str(value if value is not None else "")
+    s = "".join(ch for ch in s if ch in "\n\t" or ord(ch) >= 32)
+    return s[:limit]
+
 # --- rate limiting (naive in-memory per key) ------------------------------
 RATE_LIMIT = 60          # requests
 RATE_WINDOW = 60.0       # seconds
@@ -330,6 +344,107 @@ async def message(body: dict, authorization: str = Header(default="")):
     return {"ok": True, "to": to_handle}
 
 
+# --- threaded conversations -----------------------------------------------
+def _utc_midnight_ts() -> float:
+    now = datetime.now(timezone.utc)
+    return now.replace(hour=0, minute=0, second=0, microsecond=0).timestamp()
+
+
+def _load_thread_for(thread_id: str, handle: str) -> dict:
+    """Fetch a thread the caller participates in, or 404.
+
+    A non-participant (or a missing thread) both yield 404 so the endpoint never
+    leaks whether a thread exists to anyone outside it.
+    """
+    thread = db.get_thread(_clip_str(thread_id))
+    if not thread or handle not in (thread["a_handle"], thread["b_handle"]):
+        raise HTTPException(status_code=404, detail="thread not found")
+    return thread
+
+
+@app.post("/v1/thread/open")
+async def thread_open(body: dict, authorization: str = Header(default="")):
+    handle = _authed_handle(authorization)
+    body = body or {}
+    to_handle = _clip_str(body.get("to")).strip()
+    kind = _clip_str(body.get("kind")).strip()
+    subject = _clean_text(body.get("subject"), THREAD_SUBJECT_MAX)
+    if kind not in THREAD_KINDS:
+        raise HTTPException(status_code=400, detail="invalid kind")
+    if not to_handle:
+        raise HTTPException(status_code=400, detail="to required")
+    if to_handle == handle:
+        raise HTTPException(status_code=400, detail="cannot open a thread with yourself")
+    if not db.handle_exists(to_handle):
+        raise HTTPException(status_code=404, detail="recipient not found")
+    if db.count_thread_opens_since(handle, _utc_midnight_ts()) >= THREAD_OPENS_PER_DAY:
+        raise HTTPException(status_code=429, detail="daily thread-open limit exceeded")
+    thread_id = f"thr-{uuid.uuid4().hex[:12]}"
+    db.create_thread(thread_id, handle, to_handle, kind, subject, time.time())
+    db.bump_stat("threads_opened")
+    return {"thread_id": thread_id}
+
+
+@app.post("/v1/thread/send")
+async def thread_send(body: dict, authorization: str = Header(default="")):
+    handle = _authed_handle(authorization)
+    body = body or {}
+    thread = _load_thread_for(body.get("thread_id"), handle)
+    if thread["state"] != "open":
+        raise HTTPException(status_code=409, detail="thread is not open")
+    turns = db.count_thread_messages(thread["id"])
+    if turns >= THREAD_MAX_TURNS:
+        # The 13th send exhausts the budget: expire the thread and reject.
+        db.set_thread_state(thread["id"], "expired")
+        raise HTTPException(status_code=409, detail="thread turn budget exhausted")
+    text = _clean_text(body.get("text"), THREAD_TEXT_MAX)
+    turn = turns + 1
+    db.add_thread_message(thread["id"], turn, handle, text, time.time())
+    db.bump_stat("messages_routed")
+    return {"ok": True, "turn": turn}
+
+
+@app.post("/v1/thread/close")
+async def thread_close(body: dict, authorization: str = Header(default="")):
+    handle = _authed_handle(authorization)
+    thread = _load_thread_for((body or {}).get("thread_id"), handle)
+    if thread["state"] != "open":
+        raise HTTPException(status_code=409, detail="thread is not open")
+    db.set_thread_state(thread["id"], "concluded")
+    return {"ok": True}
+
+
+@app.post("/v1/thread/list")
+async def thread_list(body: dict, authorization: str = Header(default="")):
+    handle = _authed_handle(authorization)
+    threads = []
+    for t in db.list_threads_for(handle):
+        other = t["b_handle"] if t["a_handle"] == handle else t["a_handle"]
+        last_read = (t["a_last_read_turn"] if t["a_handle"] == handle
+                     else t["b_last_read_turn"])
+        threads.append({
+            "thread_id": t["id"],
+            "with": other,
+            "kind": t["kind"],
+            "subject": t["subject"],
+            "state": t["state"],
+            "turns": db.count_thread_messages(t["id"]),
+            "unread": db.count_unread(t["id"], other, last_read),
+        })
+    return {"threads": threads}
+
+
+@app.post("/v1/thread/read")
+async def thread_read(body: dict, authorization: str = Header(default="")):
+    handle = _authed_handle(authorization)
+    thread = _load_thread_for((body or {}).get("thread_id"), handle)
+    messages = db.get_thread_messages(thread["id"])
+    # Reading marks everything up to the latest turn as read for this caller.
+    if messages:
+        db.set_last_read(thread["id"], handle, messages[-1]["turn"])
+    return {"messages": messages}
+
+
 # --- admin dashboard ------------------------------------------------------
 def _require_admin(authorization: str) -> None:
     """HTTP Basic gate for admin surfaces. Fails closed.
@@ -408,8 +523,8 @@ def _gather_stats() -> dict:
     midnight = now.replace(hour=0, minute=0, second=0, microsecond=0).isoformat()
 
     stats_map = db.daily_stats_map()
-    empty = {"requests": 0, "registrations": 0,
-             "messages_routed": 0, "signals_served": 0}
+    empty = {"requests": 0, "registrations": 0, "messages_routed": 0,
+             "signals_served": 0, "threads_opened": 0}
     today_row = {**empty, **stats_map.get(today, {})}
 
     # 14-day window (oldest first), filling gaps with zeros.
@@ -437,6 +552,12 @@ def _gather_stats() -> dict:
         "uptime_seconds": time.time() - _START,
         "accounts": db.all_accounts_with_cards(),
         "daily": daily,
+        "conversations": {
+            "threads_opened_today": today_row["threads_opened"],
+            "open_threads": db.count_open_threads(),
+            "sends_today": db.count_thread_messages_since(
+                now.replace(hour=0, minute=0, second=0, microsecond=0).timestamp()),
+        },
         "engine": {
             "mode": _engine.mode if _engine else "unbuilt",
             "model": _engine.model_name if _engine else "?",
@@ -508,6 +629,18 @@ def _render_admin(stats: dict) -> str:
             ("Model", eng["model"]),
             ("Indexed cards", eng["indexed_cards"]),
             ("Avg match latency", f"{eng['avg_match_latency_ms']:.1f} ms"),
+        ]
+    )
+
+    conv = stats["conversations"]
+    conv_rows = "".join(
+        "<tr>"
+        f"<td>{_e(label)}</td><td class=\"r\">{_e(value)}</td>"
+        "</tr>"
+        for label, value in [
+            ("Threads opened today", conv["threads_opened_today"]),
+            ("Open threads", conv["open_threads"]),
+            ("Sends today", conv["sends_today"]),
         ]
     )
 
@@ -589,6 +722,13 @@ def _render_admin(stats: dict) -> str:
   </table>
   </div>
 
+  <h2>Conversations</h2>
+  <div class="wrap">
+  <table>
+    <tbody>{conv_rows}</tbody>
+  </table>
+  </div>
+
   <h2>Agents ({stats['total_agents']})</h2>
   <div class="wrap">
   <table>
@@ -641,6 +781,7 @@ async def admin_stats(authorization: str = Header(default="")):
         "uptime_seconds": stats["uptime_seconds"],
         "daily": stats["daily"],
         "engine": stats["engine"],
+        "conversations": stats["conversations"],
     }
 
 

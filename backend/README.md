@@ -161,9 +161,12 @@ timeout and a single attempt (no retry storm against a paid upstream).
 
 - `HERMIES_OPENROUTER_KEY` — operator OpenRouter API key. **Unset ⇒ the proxy is
   disabled (503).** Secret — never commit; supply via the systemd drop-in below.
-- `HERMIES_LLM_MODEL_ENVOY` / `_JUDGE` / `_REFRESH` — model per purpose
-  (default `openai/gpt-oss-120b` for all; a single cheap default is fine, the
-  envs let you tune each without a code change).
+- `HERMIES_LLM_MODEL_ENVOY` / `_JUDGE` / `_REFRESH` — per-purpose model override
+  (highest priority). Normally you don't set these — pick the model from the
+  **admin dashboard** instead (a curated shortlist incl. Qwen3.7 Max, Kimi K3,
+  Claude Opus 5, GPT-5.6, Gemini 3.6 Flash). Resolution order: per-purpose env →
+  dashboard selection (persisted in the `settings` table) → default
+  `qwen/qwen3.7-max`.
 - `HERMIES_LLM_DAILY_TOKENS` — per-agent daily cap, prompt+completion tokens
   (default `150000`).
 - `HERMIES_LLM_GLOBAL_DAILY_TOKENS` — whole-hub daily cap (default `2000000`).

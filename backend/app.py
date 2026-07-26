@@ -17,7 +17,7 @@ from datetime import datetime, timedelta, timezone
 from threading import Lock
 
 from fastapi import FastAPI, Header, HTTPException, Request
-from fastapi.responses import HTMLResponse, JSONResponse
+from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 
 import db
 import engine as engine_mod
@@ -364,7 +364,8 @@ async def llm_complete(body: dict, authorization: str = Header(default="")):
     if (db.llm_tokens_today(handle) >= llm_proxy.daily_token_cap()
             or db.llm_global_tokens_today() >= llm_proxy.global_token_cap()):
         raise HTTPException(status_code=429, detail="llm budget exceeded")
-    result = llm_proxy.complete(messages, purpose)                  # 502 on failure
+    selected = db.get_setting("llm_model")     # dashboard-chosen model, if any
+    result = llm_proxy.complete(messages, purpose, selected)        # 502 on failure
     tok = result["tokens"]
     db.record_llm_usage(handle, tok["prompt"], tok["completion"])
     db.bump_stat("llm_calls")
@@ -619,9 +620,12 @@ def _gather_llm_stats() -> dict:
     tokens_today = usage["prompt_tokens"] + usage["completion_tokens"]
     tokens_month = db.llm_tokens_month()
     rate = llm_proxy.cost_per_mtok()
+    selected = db.get_setting("llm_model")
     return {
         "configured": llm_proxy.is_configured(),
-        "models": llm_proxy.models_by_purpose(),
+        "models": llm_proxy.models_by_purpose(selected),
+        "selected_model": selected or llm_proxy.DEFAULT_MODEL,
+        "top_models": llm_proxy.TOP_MODELS,
         "daily_cap": llm_proxy.daily_token_cap(),
         "global_cap": llm_proxy.global_token_cap(),
         "cost_per_mtok": rate,
@@ -795,11 +799,39 @@ def _render_admin(stats: dict) -> str:
             "</tr>"
             for row in llm["top"]
         ) or '<tr><td colspan="2" class="muted">no usage today</td></tr>'
+
+        # Model picker — a GET form so no extra form-parsing dependency is needed.
+        sel = llm["selected_model"]
+        options = "".join(
+            f'<option value="{_e(mid)}"{" selected" if mid == sel else ""}>'
+            f'{_e(label)}</option>'
+            for mid, label in llm["top_models"]
+        )
+        picker = (
+            '<h3>Active model</h3>'
+            f'<p class="muted">The network\'s thinking (envoy / judge / refresh) '
+            f'currently runs on <code>{_e(sel)}</code>. Pick another and it '
+            'applies immediately to new calls.</p>'
+            '<form method="get" action="/admin/model" '
+            'style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">'
+            f'<select name="model" style="padding:7px 10px;background:#171a21;'
+            'color:#e6e8ec;border:1px solid #23262e;border-radius:6px;'
+            f'font-size:13px">{options}</select>'
+            '<button type="submit" style="padding:7px 14px;background:#2f6df6;'
+            'color:#fff;border:0;border-radius:6px;font-size:13px;cursor:pointer">'
+            'Set model</button>'
+            '</form>'
+            '<p class="muted" style="font-size:12px;margin-top:6px">Per-purpose '
+            'env vars (<code>HERMIES_LLM_MODEL_ENVOY</code> etc.) still override '
+            'this if set.</p>'
+        )
+
         llm_section = (
             '<p class="muted"><b>LLM: configured</b> — operator-paid inference '
             'via OpenRouter.</p>'
-            '<div class="wrap"><table><tbody>' + llm_rows + '</tbody></table></div>'
-            '<h3>Models</h3><div class="wrap"><table>'
+            + picker
+            + '<div class="wrap"><table><tbody>' + llm_rows + '</tbody></table></div>'
+            '<h3>Models in use (by purpose)</h3><div class="wrap"><table>'
             '<thead><tr><th>Purpose</th><th>Model</th></tr></thead>'
             '<tbody>' + model_rows + '</tbody></table></div>'
             '<h3>Top consumers today</h3><div class="wrap"><table>'
@@ -1038,6 +1070,18 @@ async def admin(authorization: str = Header(default="")):
 async def admin_agent(handle: str, authorization: str = Header(default="")):
     _require_admin(authorization)
     return HTMLResponse(_render_agent_detail(handle))
+
+
+@app.get("/admin/model")
+async def admin_set_model(model: str = "", authorization: str = Header(default="")):
+    """Set the active network model from the dashboard picker. Only ids on the
+    curated shortlist are accepted (auth-gated, but validated anyway)."""
+    _require_admin(authorization)
+    if model not in llm_proxy.TOP_MODEL_IDS:
+        raise HTTPException(status_code=400, detail="unknown model")
+    db.set_setting("llm_model", model)
+    # 303 -> GET /admin so a refresh doesn't re-submit.
+    return RedirectResponse(url="/admin", status_code=303)
 
 
 @app.get("/admin/api/stats")

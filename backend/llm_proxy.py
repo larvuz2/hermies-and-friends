@@ -20,7 +20,18 @@ OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions"
 
 # Purposes the plugin drives, each routable to its own model via env.
 PURPOSES = ("envoy", "judge", "refresh")
-DEFAULT_MODEL = "openai/gpt-oss-120b"
+DEFAULT_MODEL = "qwen/qwen3.7-max"
+
+# Curated shortlist the admin dashboard offers as a model picker (real, current
+# OpenRouter ids). Edit this list to change what shows in the dropdown.
+TOP_MODELS = [
+    ("qwen/qwen3.7-max",        "Qwen3.7 Max — capable + cheap (default)"),
+    ("moonshotai/kimi-k3",      "Kimi K3 — Moonshot, strong reasoning"),
+    ("anthropic/claude-opus-5", "Claude Opus 5 — top quality (pricier)"),
+    ("openai/gpt-5.6-sol",      "GPT-5.6 Sol — OpenAI frontier"),
+    ("google/gemini-3.6-flash", "Gemini 3.6 Flash — fastest / cheapest"),
+]
+TOP_MODEL_IDS = {m for m, _ in TOP_MODELS}
 
 # Payload caps (defense in depth — the plugin builds small prompts).
 MAX_MESSAGES = 40
@@ -46,11 +57,12 @@ def is_configured() -> bool:
     return bool(_key())
 
 
-def model_for(purpose: str) -> str:
-    """Resolve the model for a purpose from env, falling back to the default.
+def model_for(purpose: str, selected: str = None) -> str:
+    """Resolve the model for a purpose. Priority:
 
-    A single cheap default is fine; the per-purpose envs allow tuning without a
-    code change (envoy/judge/refresh can each point at a different model).
+    1. a per-purpose env var (ops override, highest — pins one purpose),
+    2. ``selected`` — the model chosen in the admin dashboard (persisted in db),
+    3. ``DEFAULT_MODEL``.
     """
     env_name = {
         "envoy": "HERMIES_LLM_MODEL_ENVOY",
@@ -61,11 +73,13 @@ def model_for(purpose: str) -> str:
         val = (os.environ.get(env_name) or "").strip()
         if val:
             return val
+    if selected:
+        return selected
     return DEFAULT_MODEL
 
 
-def models_by_purpose() -> dict:
-    return {p: model_for(p) for p in PURPOSES}
+def models_by_purpose(selected: str = None) -> dict:
+    return {p: model_for(p, selected) for p in PURPOSES}
 
 
 def _env_int(name: str, default: int) -> int:
@@ -118,14 +132,15 @@ def validate(messages, purpose: str) -> list:
     return cleaned
 
 
-def complete(messages: list, purpose: str) -> dict:
+def complete(messages: list, purpose: str, selected: str = None) -> dict:
     """Call OpenRouter with the operator key and return text + token usage.
 
-    Assumes ``messages`` is already validated. Raises ``502`` on any transport
-    error, non-2xx upstream status, or unparseable response — the detail is kept
-    short and never contains the key or the raw upstream body.
+    ``selected`` is the dashboard-chosen model (from db). Assumes ``messages`` is
+    already validated. Raises ``502`` on any transport error, non-2xx upstream
+    status, or unparseable response — the detail is kept short and never contains
+    the key or the raw upstream body.
     """
-    model = model_for(purpose)
+    model = model_for(purpose, selected)
     headers = {
         "Authorization": f"Bearer {_key()}",
         "Content-Type": "application/json",

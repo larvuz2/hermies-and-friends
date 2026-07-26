@@ -77,7 +77,7 @@ def test_happy_path_returns_text_and_records_usage(client, monkeypatch):
     assert r.status_code == 200, r.text
     body = r.json()
     assert body["text"] == "an answer"
-    assert body["model"] == "openai/gpt-oss-120b"
+    assert body["model"] == "qwen/qwen3.7-max"
     assert body["tokens"] == {"prompt": 12, "completion": 7}
 
     # Usage was metered (per-agent + aggregate).
@@ -194,7 +194,7 @@ def test_purpose_routes_to_model(client, monkeypatch):
     client.post("/v1/llm/complete",
                 json={"messages": _msgs(), "purpose": "envoy"},
                 headers=auth(key))
-    assert captured["json"]["model"] == "openai/gpt-oss-120b"
+    assert captured["json"]["model"] == "qwen/qwen3.7-max"
     # The completion is capped.
     assert captured["json"]["max_tokens"] == 1024
 
@@ -255,11 +255,11 @@ def test_admin_llm_section_configured(client, monkeypatch):
     assert page.status_code == 200
     assert "LLM costs" in page.text
     assert "LLM: configured" in page.text
-    assert "openai/gpt-oss-120b" in page.text     # configured model shown
+    assert "qwen/qwen3.7-max" in page.text     # default model shown
     assert "Top consumers today" in page.text
     stats = client.get("/admin/api/stats", auth=("admin", ADMIN_PW)).json()
     assert stats["llm"]["configured"] is True
-    assert stats["llm"]["models"]["envoy"] == "openai/gpt-oss-120b"
+    assert stats["llm"]["models"]["envoy"] == "qwen/qwen3.7-max"
 
 
 def test_admin_llm_section_unconfigured(client, monkeypatch):
@@ -271,3 +271,52 @@ def test_admin_llm_section_unconfigured(client, monkeypatch):
     assert "LLM: not configured" in page.text
     stats = client.get("/admin/api/stats", auth=("admin", ADMIN_PW)).json()
     assert stats["llm"]["configured"] is False
+
+
+# --- model picker ---------------------------------------------------------
+def test_default_model_is_qwen(monkeypatch):
+    for p in ("ENVOY", "JUDGE", "REFRESH"):
+        monkeypatch.delenv(f"HERMIES_LLM_MODEL_{p}", raising=False)
+    assert llm_proxy.DEFAULT_MODEL == "qwen/qwen3.7-max"
+    assert llm_proxy.model_for("envoy") == "qwen/qwen3.7-max"
+
+
+def test_selected_model_used_in_upstream_call(client, monkeypatch):
+    monkeypatch.setenv(KEY_ENV, "sk-operator-xyz")
+    monkeypatch.setenv("HERMIES_ADMIN_PASSWORD", ADMIN_PW)
+    for p in ("ENVOY", "JUDGE", "REFRESH"):
+        monkeypatch.delenv(f"HERMIES_LLM_MODEL_{p}", raising=False)
+    captured = {}
+    _install_upstream(monkeypatch, _FakeResp(200, _ok_payload()), captured)
+    key = register(client, "envoy-herald", "r")
+
+    r = client.get("/admin/model", params={"model": "moonshotai/kimi-k3"},
+                   auth=("admin", ADMIN_PW), follow_redirects=False)
+    assert r.status_code == 303
+
+    client.post("/v1/llm/complete",
+                json={"messages": _msgs(), "purpose": "envoy"}, headers=auth(key))
+    assert captured["json"]["model"] == "moonshotai/kimi-k3"
+
+
+def test_set_model_rejects_unknown(client, monkeypatch):
+    monkeypatch.setenv("HERMIES_ADMIN_PASSWORD", ADMIN_PW)
+    r = client.get("/admin/model", params={"model": "evil/not-a-model"},
+                   auth=("admin", ADMIN_PW), follow_redirects=False)
+    assert r.status_code == 400
+
+
+def test_set_model_requires_auth(client, monkeypatch):
+    monkeypatch.setenv("HERMIES_ADMIN_PASSWORD", ADMIN_PW)
+    r = client.get("/admin/model", params={"model": "moonshotai/kimi-k3"},
+                   follow_redirects=False)
+    assert r.status_code == 401
+
+
+def test_admin_renders_model_picker(client, monkeypatch):
+    monkeypatch.setenv(KEY_ENV, "sk-operator-xyz")
+    monkeypatch.setenv("HERMIES_ADMIN_PASSWORD", ADMIN_PW)
+    page = client.get("/admin", auth=("admin", ADMIN_PW)).text
+    assert "Active model" in page
+    assert 'action="/admin/model"' in page
+    assert "moonshotai/kimi-k3" in page      # an option is present

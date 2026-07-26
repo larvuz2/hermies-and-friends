@@ -151,6 +151,12 @@ def init_db() -> None:
                 PRIMARY KEY (handle, field_group)
             )"""
         )
+        conn.execute(
+            """CREATE TABLE IF NOT EXISTS settings (
+                key   TEXT PRIMARY KEY,
+                value TEXT NOT NULL
+            )"""
+        )
         # In-place upgrade: add presence columns to a pre-existing accounts
         # table that predates them.
         cols = _table_columns(conn, "accounts")
@@ -455,6 +461,24 @@ def count_thread_messages_since(since_ts: float) -> int:
 def count_threads_total() -> int:
     with _connect() as conn:
         return conn.execute("SELECT COUNT(*) AS c FROM threads").fetchone()["c"]
+
+
+# --- settings (small key/value overrides set from the admin dashboard) -----
+def get_setting(key: str, default=None):
+    with _connect() as conn:
+        row = conn.execute(
+            "SELECT value FROM settings WHERE key = ?", (key,)
+        ).fetchone()
+        return row["value"] if row else default
+
+
+def set_setting(key: str, value: str) -> None:
+    with _LOCK, _connect() as conn:
+        conn.execute(
+            "INSERT INTO settings(key, value) VALUES(?, ?) "
+            "ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+            (key, str(value)),
+        )
 
 
 def admin_list_threads(limit: int = 100) -> list:

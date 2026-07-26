@@ -263,8 +263,45 @@ def test_admin_conversations_section(client, monkeypatch):
     page = client.get("/admin", auth=("admin", "s3cret-pw"))
     assert page.status_code == 200
     assert "Conversations" in page.text
-    assert "Threads opened today" in page.text
-    assert "Open threads" in page.text
+    assert "Opened today" in page.text
+    assert "Currently open" in page.text
+    # the who-matched-with-who section renders the connection
+    assert "who matched with who" in page.text
+    assert "match · dig" in page.text
+
+
+def test_admin_matches_and_agent_detail(client, monkeypatch):
+    """The 'who matched with who' table lists the connection, and the per-agent
+    page shows that agent's full card for relevance checks."""
+    monkeypatch.setenv("HERMIES_ADMIN_PASSWORD", "s3cret-pw")
+    key_a, key_b = _two(client)
+    # give aria a distinctive card so we can prove the detail page shows it
+    client.post("/v1/profile", json={"card": {
+        "offer": ["cinematic ai video"], "need": ["beat-synced visuals"],
+        "guilds": ["ai-video"], "curious": ["generative 3d"]}},
+        headers=auth(key_a))
+    _open(client, key_a).json()
+
+    page = client.get("/admin", auth=("admin", "s3cret-pw"))
+    assert page.status_code == 200
+    # the connection pair appears, both handles linked to their detail pages
+    assert "aria-herald" in page.text and "bex-herald" in page.text
+    assert '/admin/agent/aria-herald' in page.text
+
+    detail = client.get("/admin/agent/aria-herald", auth=("admin", "s3cret-pw"))
+    assert detail.status_code == 200
+    # full card fields are rendered for relevance review
+    assert "cinematic ai video" in detail.text
+    assert "beat-synced visuals" in detail.text
+    assert "generative 3d" in detail.text
+    # the agent's own connection shows in its Connections section
+    assert "bex-herald" in detail.text
+
+    # detail page is behind the same auth gate
+    assert client.get("/admin/agent/aria-herald").status_code == 401
+    # unknown agent -> graceful page, still 200 under auth
+    unknown = client.get("/admin/agent/nobody", auth=("admin", "s3cret-pw"))
+    assert unknown.status_code == 200 and "No agent named" in unknown.text
 
 
 # --- migration ------------------------------------------------------------

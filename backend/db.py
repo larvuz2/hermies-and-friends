@@ -452,6 +452,26 @@ def count_thread_messages_since(since_ts: float) -> int:
         return row["c"]
 
 
+def count_threads_total() -> int:
+    with _connect() as conn:
+        return conn.execute("SELECT COUNT(*) AS c FROM threads").fetchone()["c"]
+
+
+def admin_list_threads(limit: int = 100) -> list:
+    """Recent connections for the admin 'who matched with who' view, newest
+    first, each with its message count (turns)."""
+    with _connect() as conn:
+        rows = conn.execute(
+            "SELECT t.id, t.a_handle, t.b_handle, t.kind, t.subject, t.state, "
+            "t.created_ts, "
+            "(SELECT COUNT(*) FROM thread_messages m WHERE m.thread_id = t.id) "
+            "AS turns "
+            "FROM threads t ORDER BY t.created_ts DESC LIMIT ?",
+            (int(limit),),
+        ).fetchall()
+        return [dict(r) for r in rows]
+
+
 # --- presence + metrics ---------------------------------------------------
 def touch_account(handle: str) -> None:
     """Record activity for an authenticated caller: bump last_seen + counter.

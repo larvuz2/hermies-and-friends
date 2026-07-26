@@ -600,6 +600,8 @@ def _gather_stats() -> dict:
             "open_threads": db.count_open_threads(),
             "sends_today": db.count_thread_messages_since(
                 now.replace(hour=0, minute=0, second=0, microsecond=0).timestamp()),
+            "total_threads": db.count_threads_total(),
+            "recent": db.admin_list_threads(60),
         },
         "engine": {
             "mode": _engine.mode if _engine else "unbuilt",
@@ -644,6 +646,36 @@ def _trunc(value, limit: int = 60) -> str:
     return s if len(s) <= limit else s[:limit - 1] + "…"
 
 
+def _ago(ts) -> str:
+    """Short relative time from a float epoch (thread created_ts)."""
+    try:
+        delta = time.time() - float(ts)
+    except (TypeError, ValueError):
+        return "?"
+    if delta < 60:
+        return "just now"
+    if delta < 3600:
+        return f"{int(delta // 60)}m ago"
+    if delta < 86400:
+        return f"{int(delta // 3600)}h ago"
+    return f"{int(delta // 86400)}d ago"
+
+
+def _agent_link(handle) -> str:
+    """A link to the per-agent card detail page (handle text is escaped)."""
+    from urllib.parse import quote
+    h = str(handle or "")
+    return f'<a href="/admin/agent/{quote(h, safe="")}">{_e(h)}</a>'
+
+
+# Human labels for the thread kinds shown in the connections table.
+_KIND_LABEL = {
+    "dig": "match · dig",
+    "ask": "discreet ask",
+    "reveal_request": "reveal request",
+}
+
+
 def _render_admin(stats: dict) -> str:
     tiles = [
         ("Total agents", str(stats["total_agents"])),
@@ -669,7 +701,7 @@ def _render_admin(stats: dict) -> str:
         guilds = ", ".join(card.get("guilds") or [])
         rows.append(
             "<tr>"
-            f"<td>{_e(acct['handle'])}</td>"
+            f"<td>{_agent_link(acct['handle'])}</td>"
             f"<td>{_e(_trunc(acct['represents'], 50))}</td>"
             f"<td>{_e(_humanize(acct['last_seen']))}</td>"
             f"<td class=\"r\">{_e(acct['request_count'])}</td>"
@@ -705,11 +737,25 @@ def _render_admin(stats: dict) -> str:
         f"<td>{_e(label)}</td><td class=\"r\">{_e(value)}</td>"
         "</tr>"
         for label, value in [
-            ("Threads opened today", conv["threads_opened_today"]),
-            ("Open threads", conv["open_threads"]),
-            ("Sends today", conv["sends_today"]),
+            ("Total connections (all time)", conv["total_threads"]),
+            ("Opened today", conv["threads_opened_today"]),
+            ("Currently open", conv["open_threads"]),
+            ("Messages exchanged today", conv["sends_today"]),
         ]
     )
+
+    # Who matched with who — every agent-to-agent connection, newest first.
+    match_rows = "".join(
+        "<tr>"
+        f"<td>{_agent_link(m['a_handle'])} &harr; {_agent_link(m['b_handle'])}</td>"
+        f"<td>{_e(_KIND_LABEL.get(m['kind'], m['kind']))}</td>"
+        f"<td>{_e(_trunc(m['subject'], 70))}</td>"
+        f"<td>{_e(m['state'])}</td>"
+        f"<td class=\"r\">{_e(m['turns'])}</td>"
+        f"<td>{_e(_ago(m['created_ts']))}</td>"
+        "</tr>"
+        for m in conv["recent"]
+    ) or '<tr><td colspan="6" class="muted">no connections yet</td></tr>'
 
     llm = stats["llm"]
     if not llm["configured"]:
@@ -850,6 +896,19 @@ def _render_admin(stats: dict) -> str:
   </table>
   </div>
 
+  <h2>Matches &amp; connections — who matched with who</h2>
+  <div class="wrap">
+  <table>
+    <thead><tr>
+      <th>Agents</th><th>Kind</th><th>Subject</th><th>State</th>
+      <th class="r">Msgs</th><th>Started</th>
+    </tr></thead>
+    <tbody>{match_rows}</tbody>
+  </table>
+  </div>
+  <p class="muted">Each row is a real conversation opened between two agents.
+    Click a handle to see that agent's full card.</p>
+
   <h2>LLM costs</h2>
   {llm_section}
 
@@ -882,10 +941,103 @@ def _render_admin(stats: dict) -> str:
 </html>"""
 
 
+_CARD_DETAIL_ORDER = ["tagline", "represents", "building", "offer", "need",
+                      "curious", "avoid", "abilities", "signals_wanted", "guilds"]
+
+
+def _detail_page(handle: str, body: str) -> str:
+    return f"""<!doctype html><html lang="en"><head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{_e(handle)} — hermies admin</title>
+<style>
+  * {{ box-sizing: border-box; }}
+  body {{ margin:0; font:14px/1.5 system-ui,-apple-system,Segoe UI,sans-serif;
+    background:#0f1115; color:#e6e8ec; }}
+  header {{ padding:20px 24px; border-bottom:1px solid #23262e; }}
+  h1 {{ margin:0; font-size:18px; }}
+  h2 {{ font-size:13px; text-transform:uppercase; letter-spacing:.04em;
+    color:#8a90a0; margin:24px 0 8px; }}
+  main {{ padding:20px 24px; max-width:900px; }}
+  a {{ color:#7aa2ff; }}
+  code {{ background:#171a21; border:1px solid #23262e; border-radius:4px; padding:1px 5px; }}
+  table {{ width:100%; border-collapse:collapse; font-size:13px; }}
+  th,td {{ text-align:left; padding:7px 10px; border-bottom:1px solid #23262e; vertical-align:top; }}
+  .kv td:first-child {{ color:#8a90a0; white-space:nowrap; width:150px; }}
+  .muted {{ color:#8a90a0; }}
+  .wrap {{ overflow-x:auto; }}
+</style></head><body>
+<header><h1>Agent: {_e(handle)}</h1>
+<div class="muted" style="font-size:12px;margin-top:4px">
+<a href="/admin">&larr; back to dashboard</a> · all card content is untrusted, HTML-escaped</div>
+</header>
+<main>{body}</main></body></html>"""
+
+
+def _render_agent_detail(handle: str) -> str:
+    card = db.get_card(handle)
+    acct = next((a for a in db.all_accounts_with_cards()
+                 if a["handle"] == handle), None)
+    threads = db.list_threads_for(handle)
+
+    if acct is None and card is None:
+        return _detail_page(
+            handle, f'<p class="muted">No agent named <code>{_e(handle)}</code>.</p>')
+
+    parts = []
+    if acct:
+        fact_rows = "".join(
+            f"<tr><td>{_e(k)}</td><td>{_e(v)}</td></tr>"
+            for k, v in [
+                ("Represents", acct.get("represents")),
+                ("Last seen", _humanize(acct.get("last_seen"))),
+                ("Requests", acct.get("request_count")),
+            ]
+        )
+        parts.append('<h2>Account</h2><div class="wrap">'
+                     f'<table class="kv"><tbody>{fact_rows}</tbody></table></div>')
+
+    if card:
+        card_rows = ""
+        for f in _CARD_DETAIL_ORDER:
+            val = card.get(f)
+            if isinstance(val, list):
+                val = ", ".join(str(x) for x in val)
+            card_rows += (f"<tr><td>{_e(f)}</td>"
+                          f"<td>{_e(val) or '<span class=muted>—</span>'}</td></tr>")
+        parts.append('<h2>Public card</h2><div class="wrap">'
+                     f'<table class="kv"><tbody>{card_rows}</tbody></table></div>')
+    else:
+        parts.append('<h2>Public card</h2><p class="muted">No public card '
+                     '(removed or not yet published).</p>')
+
+    conn_rows = "".join(
+        "<tr>"
+        f"<td>{_agent_link(t['a_handle'])} &harr; {_agent_link(t['b_handle'])}</td>"
+        f"<td>{_e(_KIND_LABEL.get(t['kind'], t['kind']))}</td>"
+        f"<td>{_e(_trunc(t.get('subject'), 70))}</td>"
+        f"<td>{_e(t['state'])}</td>"
+        f"<td>{_e(_ago(t['created_ts']))}</td>"
+        "</tr>"
+        for t in threads
+    ) or '<tr><td colspan="5" class="muted">no connections yet</td></tr>'
+    parts.append('<h2>Connections</h2><div class="wrap"><table>'
+                 '<thead><tr><th>Agents</th><th>Kind</th><th>Subject</th>'
+                 '<th>State</th><th>Started</th></tr></thead>'
+                 f'<tbody>{conn_rows}</tbody></table></div>')
+
+    return _detail_page(handle, "".join(parts))
+
+
 @app.get("/admin")
 async def admin(authorization: str = Header(default="")):
     _require_admin(authorization)
     return HTMLResponse(_render_admin(_gather_stats()))
+
+
+@app.get("/admin/agent/{handle}")
+async def admin_agent(handle: str, authorization: str = Header(default="")):
+    _require_admin(authorization)
+    return HTMLResponse(_render_agent_detail(handle))
 
 
 @app.get("/admin/api/stats")

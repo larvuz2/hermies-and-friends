@@ -145,6 +145,14 @@ def register(ctx):
     # --- approval gate for skill installs AND contact reveals ---
     ctx.register_hook("pre_tool_call", commands.install_gate)
 
+    # --- first-run onboarding nudge (gateway-safe) ---
+    # inject_message (below) is a no-op in gateway mode, so gateway users would
+    # otherwise never be prompted to onboard. pre_llm_call DOES fire in gateway
+    # mode: this hook appends a one-time nudge to the human's first message so
+    # the agent runs onboarding before anything else. See commands.onboarding_nudge
+    # and docs/HERMES-API-GROUND-TRUTH.md §4.
+    ctx.register_hook("pre_llm_call", commands.onboarding_nudge)
+
     # --- behavioral skills (opt-in explicit loads) ---
     if hasattr(ctx, "register_skill"):
         skill_root = pathlib.Path(__file__).resolve().parent / "skills"
@@ -160,16 +168,18 @@ def register(ctx):
     # dossier does not exist / is not onboarded; the onboarding skill drives the
     # actual consented setup with the human.
     try:
-        if not dossier.is_onboarded():
-            inject(
-                "Hermies is installed but not set up yet. Next time you talk "
-                "with your human, run the hermies:hermies-onboarding skill "
-                "together to build their private dossier and public card before "
-                "doing anything else on the network.",
-                role="user",
-            )
+        onboarded = dossier.is_onboarded()
     except Exception as e:
-        log.debug("onboarding bootstrap skipped: %s", e)
+        log.debug("onboarding state check skipped: %s", e)
+        onboarded = False
+    if not onboarded:
+        inject(
+            "Hermies is installed but not set up yet. Next time you talk "
+            "with your human, run the hermies:hermies-onboarding skill "
+            "together to build their private dossier and public card before "
+            "doing anything else on the network.",
+            role="user",
+        )
 
     # --- the notification path: prefer the blessed cron scheduler ---
     # The cron job calls hermies_matchmake a few times a day and relays the
@@ -195,8 +205,9 @@ def register(ctx):
     else:
         mode = "hub-unreachable"
     notify = "cron" if cron_ok else "daemon-fallback"
-    log.info("hermies registered (%s, notify=%s) hub=%s handle=%s",
-             mode, notify, _config.service_url() or "-",
+    log.info("hermies registered (%s, notify=%s, onboarded=%s) hub=%s handle=%s",
+             mode, notify, "yes" if onboarded else "no",
+             _config.service_url() or "-",
              card.public_dict().get("handle") or "<unset>")
 
 

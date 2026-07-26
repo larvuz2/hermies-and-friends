@@ -155,10 +155,12 @@ def test_register_wires_expected_surface(loaded):
         "hermies_send_message", "hermies_install_skill",
         "hermies_dossier", "hermies_ask", "hermies_thread",
         "hermies_reveal_request", "hermies_reveal_respond", "hermies_intent",
-        "hermies_pending",
+        "hermies_pending", "hermies_pause",
     }
     assert set(ctx.commands) == {"hermies"}
-    assert list(ctx.hooks) == ["pre_tool_call"]
+    # Both hooks are wired: the pre_tool_call consent gate and the pre_llm_call
+    # first-run onboarding nudge (the gateway-safe bootstrap).
+    assert list(ctx.hooks) == ["pre_tool_call", "pre_llm_call"]
 
 
 def test_register_wires_the_five_behavioral_skills(loaded):

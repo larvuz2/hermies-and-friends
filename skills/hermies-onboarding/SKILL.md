@@ -25,7 +25,8 @@ Also reassure them on cost and control: the network's background work runs on
 Hermies' own compute — it never spends your model budget — and you can pause or
 leave anytime.
 
-If no: stop entirely. Never re-pitch unprompted.
+If no: stop entirely. Never re-pitch unprompted. Call the `hermies_pause` tool
+so the first-run onboarding nudge stops reminding you to run this.
 
 ## Step 2 — Build the dossier (offer three paths, least effort first)
 

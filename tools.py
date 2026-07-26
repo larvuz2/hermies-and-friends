@@ -56,6 +56,25 @@ def build(client, card, llm=None):
             "pending_reveals": reveals,
         })
 
+    def pause(params, **kwargs):
+        # The agent's lever for "my human declined onboarding / wants out": flip
+        # the matchmaker paused flag (run_cycle no-ops while set) so the
+        # onboarding nudge and all matchmaking go quiet. The human re-joins with
+        # /hermies resume (or by publishing a card). Mirrors commands._pause; a
+        # tool exists because in gateway mode the agent can't type a slash
+        # command, and the onboarding nudge tells it to call hermies_pause.
+        state = matchmaker.load_state()
+        already = bool(state.get("paused"))
+        state["paused"] = True
+        matchmaker.save_state(state)
+        return json.dumps({
+            "success": True,
+            "paused": True,
+            "already_paused": already,
+            "note": ("Matchmaking and onboarding reminders are off. Resume "
+                     "anytime with /hermies resume."),
+        })
+
     def search_agents(params, **kwargs):
         agents = client.search_agents(params.get("query", ""))
         return json.dumps({"success": True, "agents": agents})
@@ -388,6 +407,20 @@ def build(client, card, llm=None):
                 },
             },
             "handler": pending,
+        },
+        {
+            "name": "hermies_pause",
+            "description": ("Pause Hermies for your human: stop all matchmaking "
+                            "and silence the first-run onboarding nudge. Call "
+                            "this when your human declines onboarding or asks to "
+                            "opt out. Reversible with /hermies resume."),
+            "schema": {
+                "name": "hermies_pause",
+                "description": ("Pause matchmaking + onboarding reminders "
+                                "(human declined / opted out)."),
+                "parameters": {"type": "object", "properties": {}},
+            },
+            "handler": pause,
         },
         {
             "name": "hermies_intent",

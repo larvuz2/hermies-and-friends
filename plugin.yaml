@@ -10,6 +10,7 @@ license: MIT
 # `hermes plugins list`). See docs/HERMES-API-GROUND-TRUTH.md §1.
 provides_hooks:
   - pre_tool_call
+  - pre_llm_call
 provides_tools:
   - hermies_matchmake
   - hermies_search_agents
@@ -21,4 +22,5 @@ provides_tools:
   - hermies_thread
   - hermies_reveal_request
   - hermies_reveal_respond
+  - hermies_pause
   - hermies_intent

@@ -1,6 +1,7 @@
 """`/hermies` slash-command handlers and the skill-install approval gate."""
 import datetime
 import json
+import time
 
 from . import profile, service, sanitize, matchmaker, dossier
 
@@ -40,6 +41,11 @@ def make_handler(client, card, llm):
         if sub in ("", "status"):
             pub = card.public_dict()
             net = _network_line()
+            # Surface first-run setup state right after the connectivity line so
+            # the human (and the agent reading status) sees onboarding is due.
+            if not dossier.is_onboarded():
+                net = (net + "\nSetup: NOT onboarded — run the hermies-onboarding "
+                       "skill with your human.")
             if card.is_empty():
                 return (net + "\n\nNo public profile yet. Set one with:\n"
                         "  /hermies profile {\"handle\": \"gus-herald\", "
@@ -393,3 +399,92 @@ def install_gate(**kwargs):
         }
 
     return None  # allow everything else
+
+
+# --------------------------------------------------------------------------- #
+# First-run onboarding nudge — a pre_llm_call hook (works in gateway mode).
+#
+# The register() bootstrap uses ctx.inject_message, which is a NO-OP in gateway
+# mode (Telegram/Discord/etc.) — so gateway users enable the plugin, restart,
+# say "hello", and the agent has no idea it should onboard. This hook rides the
+# pre_llm_call channel, which DOES fire in gateway mode: a callback may return
+# ``{"context": <text>}`` (or a plain string) and Hermes appends that text to
+# the CURRENT turn's user message — never the system prompt, so the prompt-cache
+# prefix is preserved. Return ``None`` to contribute nothing. Contract verified
+# against the real Hermes source: hermes_cli/plugins.py::PluginManager.invoke_hook
+# (docstring: pre_llm_call returns {"context": str} | str) and
+# agent/turn_context.py (which reads r["context"] / str(r) and injects it into
+# the user message). See docs/HERMES-API-GROUND-TRUTH.md §4.
+#
+# Cost discipline: once onboarding is confirmed we latch that in module state
+# and never touch disk again (zero steady-state IO). An in-memory throttle keeps
+# repeat calls within the hour free of IO too. Only the rare
+# first-call-per-hour-while-not-onboarded actually reads state (one small file,
+# then one more only if not onboarded).
+# --------------------------------------------------------------------------- #
+
+ONBOARDING_NUDGE_CONTEXT = (
+    "Hermies is installed but not set up. Before continuing, tell your human it "
+    "takes ~2 minutes and run the hermies:hermies-onboarding skill with them "
+    "now. If they decline, call the hermies_pause tool so you are not reminded "
+    "again."
+)
+
+_NUDGE_INTERVAL_SECONDS = 3600  # throttle: at most one nudge per hour
+
+# Per-process module state. ``_onboarded`` latches True forever once we confirm
+# onboarding, so the steady state costs zero file reads. ``_last_nudge_ts``
+# mirrors the persisted stamp so throttled calls also do zero IO.
+_onboarded = False
+_last_nudge_ts = None
+
+
+def _now():
+    """Clock seam so tests can drive throttling with a fake clock."""
+    return time.time()
+
+
+def _reset_nudge_state():
+    """Test seam: clear the in-process nudge caches."""
+    global _onboarded, _last_nudge_ts
+    _onboarded = False
+    _last_nudge_ts = None
+
+
+def onboarding_nudge(**kwargs):
+    """pre_llm_call hook. Returns ``{"context": <text>}`` to steer the agent to
+    run onboarding on the human's first message when the plugin is installed but
+    not yet set up — and ``None`` the vast majority of the time (onboarded,
+    paused, or throttled). Kwargs-only per the Hermes hook contract."""
+    global _onboarded, _last_nudge_ts
+
+    # Steady state after onboarding: never touch disk again.
+    if _onboarded:
+        return None
+
+    now = _now()
+
+    # In-memory throttle: repeat calls within the window do zero IO.
+    if _last_nudge_ts is not None and (now - _last_nudge_ts) < _NUDGE_INTERVAL_SECONDS:
+        return None
+
+    # Onboarded? (one small file read) -> latch and go silent forever.
+    if dossier.is_onboarded():
+        _onboarded = True
+        return None
+
+    # Not onboarded: consult matchmaker state for the opt-out flag + the
+    # persisted last-nudge stamp (one small file read).
+    state = matchmaker.load_state()
+    if state.get("paused"):
+        return None  # human declined / left — never nag someone who said no
+
+    last = state.get("onboarding_nudge_ts")
+    if last is not None and (now - last) < _NUDGE_INTERVAL_SECONDS:
+        _last_nudge_ts = last  # rehydrate the throttle after a process restart
+        return None
+
+    state["onboarding_nudge_ts"] = int(now)
+    matchmaker.save_state(state)
+    _last_nudge_ts = now
+    return {"context": ONBOARDING_NUDGE_CONTEXT}

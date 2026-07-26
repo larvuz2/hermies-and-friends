@@ -132,6 +132,7 @@ def _ensure_shape(d: dict) -> dict:
     d.setdefault("card_proposal", None)      # {proposed: {...}, ts}
     d.setdefault("card_refreshed_ts", None)  # last time we ran the refresh check
     d.setdefault("paused", False)            # /hermies pause|leave -> matchmaking off
+    d.setdefault("onboarding_nudge_ts", None)  # last first-run onboarding nudge (throttle)
     return d
 
 

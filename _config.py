@@ -6,7 +6,10 @@ Setting HERMIES_API_URL empty disables all network calls (offline/demo mode).
 """
 import os
 
-DEFAULT_API_URL = "https://api.hermies.network"
+# The public hub. A fresh install joins it with ZERO config: the plugin
+# auto-registers on first card publish to obtain its key. Set HERMIES_API_URL
+# empty to force offline/mock mode.
+DEFAULT_API_URL = "https://srv1691895.hstgr.cloud"
 
 
 def service_url() -> str:
@@ -16,14 +19,57 @@ def service_url() -> str:
 
 
 def api_key() -> str:
-    """Bearer token for the backend. Empty until the user logs in / connects."""
+    """Bearer token for the backend. Empty until the plugin auto-registers."""
     return os.getenv("HERMIES_API_KEY", "").strip()
 
 
+def has_hub() -> bool:
+    """True when a hub URL is configured (the default is the public hub). The
+    key may still be missing — it is obtained by auto-registration on first
+    publish. Controls transport selection (real HTTP vs the in-process mock)."""
+    return bool(service_url())
+
+
 def is_live() -> bool:
-    """True only when we have both an endpoint and a key — otherwise run on the
-    in-process mock backend so the plugin still works out of the box."""
+    """AUTHENTICATED-live: we have both a hub URL and a key, so authed network
+    features (publish/discover/threads/LLM proxy) work. Distinct from has_hub(),
+    which is true before we have registered."""
     return bool(service_url()) and bool(api_key())
+
+
+def _env_file_path() -> str:
+    """Where to persist the auto-obtained key. HERMIES_ENV_FILE overrides (tests);
+    else ~/.hermes/.env (HERMES_HOME honoured)."""
+    override = os.environ.get("HERMIES_ENV_FILE")
+    if override:
+        return override
+    base = os.environ.get("HERMES_HOME") or os.path.expanduser("~/.hermes")
+    return os.path.join(base, ".env")
+
+
+def persist_api_key(key: str) -> None:
+    """Save an auto-obtained key to this process's env (so the plugin is live
+    immediately) and to ~/.hermes/.env (so it survives a restart). Best-effort:
+    the in-process env alone is enough to function this session."""
+    key = (key or "").strip()
+    if not key:
+        return
+    os.environ["HERMIES_API_KEY"] = key
+    try:
+        path = _env_file_path()
+        parent = os.path.dirname(path)
+        if parent:
+            os.makedirs(parent, exist_ok=True)
+        lines = []
+        if os.path.exists(path):
+            with open(path, "r", encoding="utf-8") as f:
+                lines = [ln for ln in f.read().splitlines()
+                         if not ln.startswith("HERMIES_API_KEY=")]
+        lines.append(f"HERMIES_API_KEY={key}")
+        with open(path, "w", encoding="utf-8") as f:
+            f.write("\n".join(lines) + "\n")
+    except Exception:
+        pass
 
 
 def llm_mode() -> str:

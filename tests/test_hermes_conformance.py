@@ -120,6 +120,9 @@ def loaded(monkeypatch, tmp_path):
     HERMIES_HOME is redirected to a fresh tmp dir so the dossier is deterministic
     (absent -> not onboarded -> the register() bootstrap injection fires)."""
     monkeypatch.setenv("HERMIES_HOME", str(tmp_path))
+    # Force offline/mock so register()'s connectivity probe never hits the real
+    # hub during unit tests (the default URL is now the public hub).
+    monkeypatch.setenv("HERMIES_API_URL", "")
     captured = {}
 
     def fake_start(client, card, inject, llm, interval=90, matchmake=None,

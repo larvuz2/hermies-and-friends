@@ -16,7 +16,21 @@ class HttpTransport:
 
     def __init__(self, base_url: str, key: str):
         self.base_url = base_url.rstrip("/")
-        self.key = key
+        self.key = (key or "").strip()
+
+    def set_key(self, key: str) -> None:
+        """Authenticate subsequent calls (used right after auto-registration)."""
+        self.key = (key or "").strip()
+
+    def healthz(self) -> bool:
+        """Unauthenticated reachability probe. True iff the hub answers ok."""
+        try:
+            req = urllib.request.Request(f"{self.base_url}/healthz", method="GET")
+            with urllib.request.urlopen(req, timeout=8) as resp:
+                data = json.loads(resp.read().decode("utf-8"))
+                return bool(isinstance(data, dict) and data.get("ok"))
+        except Exception:
+            return False
 
     def _post(self, path: str, payload: dict) -> dict:
         headers = {"Content-Type": "application/json"}
@@ -105,6 +119,15 @@ class HermiesClient:
     def __init__(self, transport):
         self.t = transport
 
+    def set_key(self, key):
+        fn = getattr(self.t, "set_key", None)
+        if fn:
+            fn(key)
+
+    def healthz(self):
+        fn = getattr(self.t, "healthz", None)
+        return fn() if fn else True   # mock transports are always "reachable"
+
     def register(self, handle, represents): return self.t.register(handle, represents)
     def publish_profile(self, card): return self.t.publish_profile(card)
     def remove_profile(self): return self.t.remove_profile()
@@ -125,8 +148,37 @@ class HermiesClient:
 
 
 def make_transport():
-    """Live HTTP when a key is present, otherwise the seeded mock backend."""
-    if _config.is_live():
+    """Real HTTP whenever a hub URL is configured (the default is the public
+    hub); the key is obtained lazily by auto-registration. Only pure offline
+    mode (HERMIES_API_URL empty) uses the seeded mock backend."""
+    if _config.has_hub():
         return HttpTransport(_config.service_url(), _config.api_key())
     from .mock_backend import MockBackend
     return MockBackend()
+
+
+def ensure_registered(client, card) -> bool:
+    """Frictionless auto-join: if the hub is configured but we have no key yet,
+    claim the card's handle to obtain one, persist it, and authenticate the
+    transport. No-op when already keyed or in pure offline/mock mode.
+
+    Best-effort — a failure (network down, handle already taken → 409) leaves us
+    un-keyed; the next publish/onboarding retries. Returns True once keyed."""
+    if _config.api_key():
+        return True
+    if not _config.has_hub():
+        return False
+    pub = card.public_dict() if hasattr(card, "public_dict") else (card or {})
+    handle = pub.get("handle")
+    if not handle:
+        return False
+    try:
+        res = client.register(handle, pub.get("represents") or "")
+        key = (res or {}).get("api_key")
+    except Exception:
+        return False
+    if not key:
+        return False
+    _config.persist_api_key(key)
+    client.set_key(key)
+    return True

@@ -15,6 +15,23 @@ def _ts(epoch) -> str:
 def make_handler(client, card, llm):
     """Return a handler for `/hermies <sub> [args]`."""
 
+    def _network_line() -> str:
+        """One-line connectivity status for the human/operator."""
+        from . import _config
+        if not _config.has_hub():
+            return "Network: OFFLINE (mock) — HERMIES_API_URL is empty."
+        hub = _config.service_url()
+        try:
+            reachable = client.healthz()
+        except Exception:
+            reachable = False
+        if not reachable:
+            return f"Network: hub {hub} is UNREACHABLE right now."
+        if _config.api_key():
+            return f"Network: connected ✓  ({hub})"
+        return (f"Network: hub reachable ({hub}) — not registered yet. "
+                "Publish your card to join.")
+
     def handler(args: str = "", **kwargs) -> str:
         parts = (args or "").strip().split(maxsplit=1)
         sub = parts[0].lower() if parts else "status"
@@ -22,12 +39,13 @@ def make_handler(client, card, llm):
 
         if sub in ("", "status"):
             pub = card.public_dict()
+            net = _network_line()
             if card.is_empty():
-                return ("No public profile yet. Set one with:\n"
+                return (net + "\n\nNo public profile yet. Set one with:\n"
                         "  /hermies profile {\"handle\": \"gus-herald\", "
                         "\"represents\": \"a creative technologist in AI film\", "
                         "\"offer\": [\"ai video\"], \"need\": [\"collaborators\"]}")
-            return "Your PUBLIC card:\n" + json.dumps(pub, indent=2)
+            return net + "\n\nYour PUBLIC card:\n" + json.dumps(pub, indent=2)
 
         if sub == "profile":
             if not rest:
@@ -40,6 +58,10 @@ def make_handler(client, card, llm):
                 if k in profile.PUBLIC_FIELDS:
                     setattr(card, k, v)
             profile.save_card(card)
+            # Frictionless auto-join: claim our handle + get a key on first
+            # publish, so no API key is ever required from the user.
+            from .client import ensure_registered
+            ensure_registered(client, card)
             client.publish_profile(card.public_dict())
             rejoined = _resume_matchmaking()  # publishing re-joins after a leave
             note = ("\n(Re-joined the network — matchmaking resumed.)"

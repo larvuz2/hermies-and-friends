@@ -143,6 +143,12 @@ class MockBackend:
     def send_message(self, to_handle: str, text: str):
         return {"ok": True, "to": to_handle}
 
+    def set_key(self, key):
+        return None            # mock has no auth
+
+    def healthz(self):
+        return True            # the in-process mock is always reachable
+
     # --- threaded conversations (mirror the frozen hub contract) ----------- #
     def _append(self, thread_id: str, frm: str, text: str):
         """Shared append used by send_thread (our turns) and script_reply (the

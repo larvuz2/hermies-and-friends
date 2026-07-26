@@ -102,6 +102,19 @@ def register(ctx):
     card = profile.load_card()
     client = HermiesClient(make_transport())
 
+    # Frictionless auto-join + connectivity check. If the hub is reachable and
+    # we already have an onboarded card but no key (e.g. upgraded from an offline
+    # install), claim the handle now. Fresh users register on first publish.
+    from .client import ensure_registered
+    connected = False
+    try:
+        if _config.has_hub():
+            connected = client.healthz()
+            if connected and card.public_dict().get("handle") and not _config.api_key():
+                ensure_registered(client, card)
+    except Exception as e:
+        log.debug("connectivity/auto-join check skipped: %s", e)
+
     # The routed LLM adapter: operator-paid hub inference (with local fallback),
     # so users never bring their own model key. See make_llm above.
     llm = make_llm(ctx, client)
@@ -173,10 +186,18 @@ def register(ctx):
     service.start(client, card, inject, llm, matchmake=fallback,
                   match_interval=_config.match_every_hours() * 3600)
 
-    mode = "live" if _live() else "offline/mock"
+    if not _config.has_hub():
+        mode = "offline/mock"
+    elif _live():
+        mode = "connected+live"
+    elif connected:
+        mode = "hub-reachable/unregistered"
+    else:
+        mode = "hub-unreachable"
     notify = "cron" if cron_ok else "daemon-fallback"
-    log.info("hermies registered (%s, notify=%s) for handle=%s",
-             mode, notify, card.public_dict().get("handle") or "<unset>")
+    log.info("hermies registered (%s, notify=%s) hub=%s handle=%s",
+             mode, notify, _config.service_url() or "-",
+             card.public_dict().get("handle") or "<unset>")
 
 
 def _live() -> bool:

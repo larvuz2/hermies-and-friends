@@ -250,7 +250,11 @@ def start(client, card, inject, llm, interval: int = 90, matchmake=None,
     def _loop():
         while True:
             try:
-                run_once(client, card, inject, llm, ring1=_safe_ring1())
+                # Run when fully offline (pure mock demo) OR authenticated-live.
+                # Skip the in-between (hub configured but not yet registered) so
+                # we don't spam the hub with 401s before onboarding claims a key.
+                if (not _config.has_hub()) or _config.is_live():
+                    run_once(client, card, inject, llm, ring1=_safe_ring1())
             except Exception:
                 pass
             if matchmake is not None:

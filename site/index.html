@@ -191,11 +191,19 @@
             <span class="label">Install</span>
             <button class="copy-btn" id="copyBtn" type="button" aria-label="Copy install script">Copy</button>
           </div>
-<pre><code id="installCode">git clone https://github.com/larvuz2/hermies-and-friends ~/.hermes/plugins/hermies &amp;&amp;
-hermes plugins enable hermies</code></pre>
+<pre><code id="installCode">curl -fsSL https://raw.githubusercontent.com/larvuz2/hermies-and-friends/main/install.sh | bash</code></pre>
         </div>
-        <p class="built">Paste it to your <a href="https://hermes-agent.nousresearch.com">Hermes agent</a> (or run it in a terminal). Takes ~20 seconds.<br>
-        Then <b>restart the gateway</b> — your agent will announce it — and <b>send it any message</b>: it starts a 2-minute setup. That's it.</p>
+        <p class="built">Paste it to your <a href="https://hermes-agent.nousresearch.com">Hermes agent</a> or run it in a terminal — ~20 seconds, and it verifies itself.<br>
+        <b>Do not run <code>hermes update</code></b> — it restarts the gateway and kills the install.</p>
+
+        <div class="code-card" style="margin-top:14px">
+          <div class="code-head">
+            <span class="label">Then activate — from a terminal / SSH, not the chat</span>
+            <button class="copy-btn" id="copyBtn2" type="button" aria-label="Copy restart command">Copy</button>
+          </div>
+<pre><code id="restartCode">hermes gateway restart</code></pre>
+        </div>
+        <p class="built">Hermes blocks restarts from inside a chat, so this one step needs a real shell. Then <b>send your agent any message</b> — it starts a 2-minute setup. No API key, ever.</p>
       </div>
     </section>
   </div>
@@ -277,23 +285,27 @@ hermes plugins enable hermies</code></pre>
 
 <script>
   (function () {
-    var btn = document.getElementById('copyBtn');
-    var codeEl = document.getElementById('installCode');
-    btn.addEventListener('click', function () {
-      var text = codeEl.innerText;
-      function done() {
-        btn.textContent = 'Copied!';
-        btn.classList.add('copied');
-        setTimeout(function () {
-          btn.textContent = 'Copy';
-          btn.classList.remove('copied');
-        }, 1800);
-      }
-      if (navigator.clipboard && navigator.clipboard.writeText) {
-        navigator.clipboard.writeText(text).then(done, function () { fallback(text, done); });
-      } else {
-        fallback(text, done);
-      }
+    // Wire every copy button to its code block.
+    [['copyBtn', 'installCode'], ['copyBtn2', 'restartCode']].forEach(function (pair) {
+      var btn = document.getElementById(pair[0]);
+      var codeEl = document.getElementById(pair[1]);
+      if (!btn || !codeEl) return;
+      btn.addEventListener('click', function () {
+        var text = codeEl.innerText;
+        function done() {
+          btn.textContent = 'Copied!';
+          btn.classList.add('copied');
+          setTimeout(function () {
+            btn.textContent = 'Copy';
+            btn.classList.remove('copied');
+          }, 1800);
+        }
+        if (navigator.clipboard && navigator.clipboard.writeText) {
+          navigator.clipboard.writeText(text).then(done, function () { fallback(text, done); });
+        } else {
+          fallback(text, done);
+        }
+      });
     });
     function fallback(text, done) {
       var ta = document.createElement('textarea');

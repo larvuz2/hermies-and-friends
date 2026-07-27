@@ -295,8 +295,42 @@ def _refresh_poller_lock(now=None) -> None:
 LEASE_SECONDS = 300      # a lease older than this is considered abandoned
 
 
+def _sidecar_marker():
+    from . import matchmaker
+    return matchmaker._state_path().parent / "sidecar.alive"
+
+
+def _mark_sidecar_alive(now=None) -> None:
+    """The sidecar announces itself so the in-gateway plugin stands down."""
+    t = float(now() if callable(now) else (now if now is not None else time.time()))
+    try:
+        p = _sidecar_marker()
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_text(json.dumps({"pid": os.getpid(), "ts": int(t)}),
+                     encoding="utf-8")
+    except Exception:
+        pass
+
+
+def sidecar_active(now=None) -> bool:
+    """True when a sidecar process is doing the network work.
+
+    The sidecar owns the volatile logic and can restart on its own without
+    touching the user's gateway, so when it is alive the in-gateway plugin does
+    no network work at all — it is just the bridge (commands, tools, hooks)."""
+    t = float(now() if callable(now) else (now if now is not None else time.time()))
+    try:
+        held = json.loads(_sidecar_marker().read_text(encoding="utf-8"))
+    except Exception:
+        return False
+    if int(held.get("pid", -1)) == os.getpid():
+        return False                     # that's us
+    return (t - float(held.get("ts", 0))) < LEASE_SECONDS
+
+
 def start(client, card, inject, llm, interval: int = 90, matchmake=None,
-          match_interval: int = None, engine=None, inject_works: bool = True):
+          match_interval: int = None, engine=None, inject_works: bool = True,
+          role: str = "plugin"):
     """Spawn the daemon. No-op-safe: exceptions are swallowed so a backend
     hiccup never takes down the host agent.
 
@@ -322,6 +356,16 @@ def start(client, card, inject, llm, interval: int = 90, matchmake=None,
 
     def _loop():
         while True:
+            if role == "sidecar":
+                _mark_sidecar_alive()
+            elif sidecar_active():
+                # A sidecar owns the network work; in the gateway we are only
+                # the bridge. Doing nothing here is the whole point — the
+                # sidecar can then be updated and restarted without ever
+                # disturbing the user's Hermes.
+                time.sleep(interval)
+                continue
+
             # Single-flight: only the lease holder talks to the hub. Every other
             # Hermes process (subagents, workers) idles here instead of
             # multiplying the network's traffic by the process count.

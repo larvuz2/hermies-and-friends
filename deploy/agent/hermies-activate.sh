@@ -78,11 +78,27 @@ gateway_healthy() {
   "$hb" gateway status </dev/null 2>&1 | grep -qi "running"
 }
 
-activate() {
-  local target="$1" previous="$2" hb
-  hb="$(hermes_bin)" || { log "hermes binary not found"; return 1; }
+bridge_changed() {
+  # Did this release touch the in-gateway bridge (tools/commands/hooks)? If not,
+  # restarting OUR sidecar is enough and the user's Hermes is never disturbed.
+  local f="$STATE_DIR/remote_config.json"
+  [ -f "$f" ] || { echo "1"; return; }
+  python3 - "$f" <<'PY' 2>/dev/null || echo "1"
+import json, sys
+rel = (json.load(open(sys.argv[1], encoding="utf-8")).get("release") or {})
+print("1" if rel.get("bridge_changed", True) else "0")
+PY
+}
 
-  log "activating $target (from $previous)"
+sidecar_installed() { systemctl list-unit-files 2>/dev/null | grep -q '^hermies-sidecar'; }
+restart_sidecar()  { systemctl restart hermies-sidecar 2>/dev/null; sleep 5; }
+sidecar_healthy()  { systemctl is-active --quiet hermies-sidecar 2>/dev/null; }
+
+activate() {
+  local target="$1" previous="$2" hb needs_gateway
+  needs_gateway="$(bridge_changed)"
+
+  log "activating $target (from $previous), bridge_changed=$needs_gateway"
   if ! git_q fetch --tags --force >/dev/null; then
     log "fetch failed"; return 1
   fi
@@ -90,19 +106,42 @@ activate() {
     log "checkout of $target failed — staying on $previous"; return 1
   fi
 
-  "$hb" gateway restart </dev/null >/dev/null 2>&1 || true
-  sleep 20
-  if gateway_healthy; then
-    log "activated $target — gateway healthy"
-    return 0
+  # Sidecar first: it owns the volatile logic, and restarting it costs nothing.
+  if sidecar_installed; then
+    restart_sidecar
+    if ! sidecar_healthy; then
+      log "sidecar unhealthy after $target — ROLLING BACK"
+      git_q checkout --detach "tags/$previous" >/dev/null || \
+        git_q checkout --detach "$previous" >/dev/null || true
+      restart_sidecar
+      sidecar_healthy && log "rollback to $previous succeeded" \
+                      || log "rollback FAILED — manual attention needed"
+      return 1
+    fi
   fi
 
-  log "gateway unhealthy after $target — ROLLING BACK to $previous"
-  git_q checkout --detach "$previous" >/dev/null || git_q checkout --detach "tags/$previous" >/dev/null || true
-  "$hb" gateway restart </dev/null >/dev/null 2>&1 || true
-  sleep 20
-  gateway_healthy && log "rollback to $previous succeeded" || log "rollback FAILED — manual attention needed"
-  return 1
+  # Only a bridge change justifies disturbing the user's whole agent.
+  if [ "$needs_gateway" = "1" ]; then
+    hb="$(hermes_bin)" || { log "hermes binary not found"; return 1; }
+    "$hb" gateway restart </dev/null >/dev/null 2>&1 || true
+    sleep 20
+    if ! gateway_healthy; then
+      log "gateway unhealthy after $target — ROLLING BACK to $previous"
+      git_q checkout --detach "tags/$previous" >/dev/null || \
+        git_q checkout --detach "$previous" >/dev/null || true
+      sidecar_installed && restart_sidecar
+      "$hb" gateway restart </dev/null >/dev/null 2>&1 || true
+      sleep 20
+      gateway_healthy && log "rollback to $previous succeeded" \
+                      || log "rollback FAILED — manual attention needed"
+      return 1
+    fi
+  else
+    log "sidecar-only release — the user's gateway was not touched"
+  fi
+
+  log "activated $target"
+  return 0
 }
 
 main() {
@@ -136,6 +175,32 @@ main() {
 }
 
 install_units() {
+  # The sidecar: our own process for matchmaking/envoy/polling. Restarting it
+  # is invisible to the user, unlike restarting their Hermes gateway.
+  local py
+  py="$(command -v python3 || echo /usr/bin/python3)"
+  cat > /etc/systemd/system/hermies-sidecar.service <<EOF
+[Unit]
+Description=Hermies sidecar (matchmaking + envoy engine)
+After=network-online.target
+
+[Service]
+Type=simple
+Environment=HERMES_HOME=$HERMES_HOME
+Environment=HERMIES_LLM=hub
+WorkingDirectory=$(dirname "$PLUGIN_DIR")
+ExecStart=$py -m hermies.sidecar
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target
+EOF
+  systemctl daemon-reload
+  systemctl enable --now hermies-sidecar.service 2>/dev/null \
+    && log "installed hermies-sidecar.service" \
+    || log "sidecar service not started (the in-gateway plugin keeps working)"
+
   cat > /etc/systemd/system/hermies-activate.service <<EOF
 [Unit]
 Description=Hermies activation supervisor (activates approved releases)

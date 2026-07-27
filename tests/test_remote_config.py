@@ -253,3 +253,36 @@ def test_rollout_splits_the_population():
     handles = [f"agent-{i}" for i in range(400)]
     included = sum(1 for h in handles if updater._in_rollout(h, 25))
     assert 50 < included < 150, f"25% of 400 should be ~100, got {included}"
+
+
+# --- sidecar / bridge split -------------------------------------------------
+def test_plugin_stands_down_when_a_sidecar_is_alive(monkeypatch, tmp_path):
+    """Phase 2: when our own process owns the network work, the in-gateway
+    plugin does nothing — so the sidecar can be updated and restarted without
+    ever disturbing the user's Hermes."""
+    from hermies import service
+    monkeypatch.setenv("HERMIES_HOME", str(tmp_path))
+    assert service.sidecar_active(now=1000.0) is False        # none yet
+
+    # A sidecar (different pid) announces itself.
+    monkeypatch.setattr(service.os, "getpid", lambda: 4242)
+    service._mark_sidecar_alive(now=1000.0)
+    monkeypatch.setattr(service.os, "getpid", lambda: 777)    # the gateway
+    assert service.sidecar_active(now=1000.0 + 30) is True
+
+    # A dead sidecar must not silence the plugin forever.
+    assert service.sidecar_active(now=1000.0 + service.LEASE_SECONDS + 5) is False
+
+
+def test_sidecar_entrypoint_needs_no_hermes_context():
+    """The sidecar runs standalone because inference goes through the hub.
+    Checked on the AST, not the prose — the docstring legitimately mentions
+    ctx.llm to explain why it is absent."""
+    import ast
+    import pathlib
+    from hermies import sidecar
+    tree = ast.parse(pathlib.Path(sidecar.__file__).read_text(encoding="utf-8"))
+    names = {n.id for n in ast.walk(tree) if isinstance(n, ast.Name)}
+    assert "ctx" not in names, "the sidecar must not depend on a Hermes context"
+    attrs = {n.attr for n in ast.walk(tree) if isinstance(n, ast.Attribute)}
+    assert "llm_complete" in attrs, "it uses the hub's operator-paid inference"

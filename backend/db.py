@@ -178,6 +178,12 @@ def init_db() -> None:
             conn.execute(
                 "ALTER TABLE accounts ADD COLUMN request_count INTEGER NOT NULL DEFAULT 0"
             )
+        # Version telemetry: what each agent is RUNNING vs what it has on DISK.
+        # Without this we are blind to a release's blast radius.
+        if "version_active" not in cols:
+            conn.execute("ALTER TABLE accounts ADD COLUMN version_active TEXT")
+        if "version_disk" not in cols:
+            conn.execute("ALTER TABLE accounts ADD COLUMN version_disk TEXT")
         # In-place upgrade: add the threads_opened counter to a daily_stats table
         # that predates threaded conversations (CREATE TABLE IF NOT EXISTS above
         # won't touch an existing table).
@@ -515,6 +521,35 @@ def admin_list_threads(limit: int = 100) -> list:
 
 
 # --- presence + metrics ---------------------------------------------------
+def set_versions(handle: str, active: str = "", disk: str = "") -> None:
+    """Record what this agent is RUNNING and what it has on DISK (from request
+    headers). Only writes when we actually got a value, so a client that does
+    not report versions never clears a previously known one."""
+    sets, params = [], []
+    if active:
+        sets.append("version_active = ?")
+        params.append(active[:40])
+    if disk:
+        sets.append("version_disk = ?")
+        params.append(disk[:40])
+    if not sets:
+        return
+    params.append(handle)
+    with _LOCK, _connect() as conn:
+        conn.execute(f"UPDATE accounts SET {', '.join(sets)} WHERE handle = ?",
+                     params)
+
+
+def version_rollup() -> list:
+    """[{version_active, agents}] so the operator can see a release's spread."""
+    with _connect() as conn:
+        rows = conn.execute(
+            "SELECT COALESCE(version_active, 'unknown') AS version_active, "
+            "COUNT(*) AS agents FROM accounts GROUP BY 1 ORDER BY 2 DESC"
+        ).fetchall()
+        return [dict(r) for r in rows]
+
+
 def touch_account(handle: str) -> None:
     """Record activity for an authenticated caller: bump last_seen + counter.
 
@@ -592,7 +627,8 @@ def all_accounts_with_cards() -> list:
     """Every account joined to its public card, for the admin table."""
     with _connect() as conn:
         rows = conn.execute(
-            "SELECT a.handle, a.represents, a.last_seen, a.request_count, c.card "
+            "SELECT a.handle, a.represents, a.last_seen, a.request_count, "
+            "a.version_active, a.version_disk, c.card "
             "FROM accounts a LEFT JOIN cards c ON c.handle = a.handle "
             "ORDER BY a.handle"
         ).fetchall()
@@ -604,6 +640,8 @@ def all_accounts_with_cards() -> list:
             "represents": r["represents"] or "",
             "last_seen": r["last_seen"],
             "request_count": r["request_count"] or 0,
+            "version_active": r["version_active"] or "",
+            "version_disk": r["version_disk"] or "",
             "card": card,
         })
     return out

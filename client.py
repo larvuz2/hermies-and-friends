@@ -10,6 +10,9 @@ import urllib.error
 
 from . import _config
 
+# Cached once per process — the running version can't change without a restart.
+_VERSION_HEADERS = None
+
 
 class HttpTransport:
     """Talks to the real Hermies backend over HTTPS with a Bearer key."""
@@ -32,8 +35,25 @@ class HttpTransport:
         except Exception:
             return False
 
+    def _version_headers(self) -> dict:
+        """Tell the hub what we're RUNNING and what's on DISK, so the operator
+        can see a release's blast radius (which agents have a fix, which don't).
+        Best-effort and cached — never let telemetry break a real call."""
+        global _VERSION_HEADERS
+        if _VERSION_HEADERS is None:
+            try:
+                from . import updater
+                _VERSION_HEADERS = {
+                    "X-Hermies-Version": updater.active_version() or "",
+                    "X-Hermies-Disk": updater.local_revision() or "",
+                }
+            except Exception:
+                _VERSION_HEADERS = {}
+        return {k: v for k, v in (_VERSION_HEADERS or {}).items() if v}
+
     def _post(self, path: str, payload: dict) -> dict:
         headers = {"Content-Type": "application/json"}
+        headers.update(self._version_headers())
         # Tolerate an empty key: registration is unauthenticated, and until a
         # key exists we must NOT send a bogus "Bearer " header.
         if self.key:

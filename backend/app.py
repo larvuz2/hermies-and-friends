@@ -5,6 +5,7 @@ README.md for run/deploy notes. Persistence is stdlib sqlite3 (db.py), matching
 is stdlib-only (matching.py).
 """
 import base64
+import contextvars
 import html
 import json
 import logging
@@ -222,6 +223,19 @@ async def _lifespan(_app: FastAPI):
 
 app = FastAPI(title="Hermies and Friends hub", lifespan=_lifespan)
 
+# Version telemetry rides on headers the plugin sends. Captured once here rather
+# than threaded through every route signature.
+_req_versions = contextvars.ContextVar("hermies_versions", default=("", ""))
+
+
+@app.middleware("http")
+async def _capture_client_versions(request: Request, call_next):
+    _req_versions.set((
+        (request.headers.get("x-hermies-version") or "")[:40],
+        (request.headers.get("x-hermies-disk") or "")[:40],
+    ))
+    return await call_next(request)
+
 
 def _authed_handle(authorization: str) -> str:
     """Resolve the caller's handle from the Bearer key, enforce rate limit."""
@@ -238,6 +252,11 @@ def _authed_handle(authorization: str) -> str:
     # Presence + request metrics for accepted, authenticated requests.
     db.touch_account(handle)
     db.bump_stat("requests")
+    # Version telemetry rides along on the headers the plugin already sends, so
+    # the operator can see which agents are running which release.
+    active, disk = _req_versions.get()
+    if active or disk:
+        db.set_versions(handle, active, disk)
     return handle
 
 
@@ -399,14 +418,33 @@ def _client_config() -> dict:
     if not isinstance(data, dict):
         return {"version": 0, "knobs": {}, "notice": None}
     knobs = data.get("knobs")
+    switches = data.get("switches")
+    release = data.get("release")
     return {
         "version": data.get("version", 0),
         "knobs": knobs if isinstance(knobs, dict) else {},
+        "switches": switches if isinstance(switches, dict) else {},
+        "release": release if isinstance(release, dict) else {},
         "notice": data.get("notice"),
         # Clients compare this against their own checkout to decide whether to
         # self-update. Bump it in the file when a code release should roll out.
         "plugin_revision": data.get("plugin_revision"),
     }
+
+
+def _switch(name: str, default: bool = True) -> bool:
+    """A kill switch's current value. Read fresh so flipping one in the file
+    takes effect on the very next request — this is the emergency brake."""
+    val = _client_config().get("switches", {}).get(name, default)
+    return bool(val)
+
+
+def _require_switch(name: str, what: str) -> None:
+    """Hub-side ENFORCEMENT. Client-side checks are a courtesy; this is what
+    makes a switch real even for a stale or broken client."""
+    if not _switch(name):
+        raise HTTPException(status_code=423,
+                            detail=f"{what} is temporarily disabled by the operator")
 
 
 @app.get("/v1/config")
@@ -425,6 +463,7 @@ async def llm_complete(body: dict, authorization: str = Header(default="")):
     budgets (429) BEFORE spending on upstream; meter every successful call.
     """
     handle = _authed_handle(authorization)
+    _require_switch("inference_enabled", "operator-paid inference")
     if not llm_proxy.is_configured():
         raise HTTPException(status_code=503, detail="llm not configured")
     body = body or {}
@@ -483,6 +522,11 @@ async def thread_open(body: dict, authorization: str = Header(default="")):
     body = body or {}
     to_handle = _clip_str(body.get("to")).strip()
     kind = _clip_str(body.get("kind")).strip()
+    # Emergency brakes, enforced here so a stale client cannot bypass them.
+    if kind == "reveal_request":
+        _require_switch("reveals_enabled", "contact reveals")
+    else:
+        _require_switch("digs_enabled", "new agent-to-agent conversations")
     subject = _clean_text(body.get("subject"), THREAD_SUBJECT_MAX)
     if kind not in THREAD_KINDS:
         raise HTTPException(status_code=400, detail="invalid kind")
@@ -676,6 +720,9 @@ def _gather_stats() -> dict:
             "total_threads": db.count_threads_total(),
             "recent": db.admin_list_threads(60),
         },
+        "switches": _client_config().get("switches", {}),
+        "release": _client_config().get("release", {}),
+        "versions": db.version_rollup(),
         "engine": {
             "mode": _engine.mode if _engine else "unbuilt",
             "model": _engine.model_name if _engine else "?",
@@ -811,13 +858,18 @@ def _render_admin(stats: dict) -> str:
             f"<td>{_e(_trunc(acct['represents'], 50))}</td>"
             f"<td>{_e(_humanize(acct['last_seen']))}</td>"
             f"<td class=\"r\">{_e(acct['request_count'])}</td>"
+            f"<td>{_e(acct.get('version_active') or '—')}"
+            + ("" if (acct.get('version_disk') or acct.get('version_active'))
+                     == acct.get('version_active')
+               else f" <span class=muted>(disk {_e(acct.get('version_disk'))})</span>")
+            + "</td>"
             f"<td>{_e(_trunc(offer))}</td>"
             f"<td>{_e(_trunc(need))}</td>"
             f"<td>{_e(_trunc(guilds))}</td>"
             "</tr>"
         )
     agents_rows = "".join(rows) or (
-        '<tr><td colspan="7" class="muted">no agents yet</td></tr>'
+        '<tr><td colspan="8" class="muted">no agents yet</td></tr>'
     )
 
     eng = stats["engine"]
@@ -835,6 +887,35 @@ def _render_admin(stats: dict) -> str:
             ("Indexed cards", eng["indexed_cards"]),
             ("Avg match latency", f"{eng['avg_match_latency_ms']:.1f} ms"),
         ]
+    )
+
+    # --- kill switches + release rollout -----------------------------------
+    sw = stats.get("switches") or {}
+    rel = stats.get("release") or {}
+    sw_rows = "".join(
+        "<tr>"
+        f"<td>{_e(k)}</td>"
+        f"<td>{'<b>ON</b>' if v else '<b style=color:#ff8080>DISABLED</b>'}</td>"
+        "</tr>"
+        for k, v in sorted(sw.items())
+    ) or '<tr><td colspan="2" class="muted">no switches configured</td></tr>'
+    ver_rows = "".join(
+        f"<tr><td>{_e(r['version_active'] or 'unknown')}</td>"
+        f"<td class=\"r\">{_e(r['agents'])}</td></tr>"
+        for r in (stats.get("versions") or [])
+    ) or '<tr><td colspan="2" class="muted">no agents yet</td></tr>'
+    release_html = (
+        '<h2>Releases &amp; switches</h2>'
+        f'<p class="muted">Desired version <code>{_e(rel.get("version", "?"))}</code> '
+        f'({_e(rel.get("channel", "stable"))}), rolling out to '
+        f'<b>{_e(rel.get("rollout_percentage", 100))}%</b> of agents. '
+        'Edit <code>backend/client_config.json</code> — agents pick it up within '
+        'the hour, no restarts.</p>'
+        '<h3>Kill switches (hub-enforced)</h3><div class="wrap"><table>'
+        f'<tbody>{sw_rows}</tbody></table></div>'
+        '<h3>Agents by running version</h3><div class="wrap"><table>'
+        '<thead><tr><th>Active version</th><th class="r">Agents</th></tr></thead>'
+        f'<tbody>{ver_rows}</tbody></table></div>'
     )
 
     conv = stats["conversations"]
@@ -1063,6 +1144,8 @@ def _render_admin(stats: dict) -> str:
 <main>
   <div class="tiles">{tile_html}</div>
 
+  {release_html}
+
   <h2>Matching engine</h2>
   <div class="wrap">
   <table>
@@ -1098,7 +1181,7 @@ def _render_admin(stats: dict) -> str:
   <table>
     <thead><tr>
       <th>Handle</th><th>Represents</th><th>Last seen</th><th class="r">Reqs</th>
-      <th>Offer</th><th>Need</th><th>Guilds</th>
+      <th>Version</th><th>Offer</th><th>Need</th><th>Guilds</th>
     </tr></thead>
     <tbody>{agents_rows}</tbody>
   </table>

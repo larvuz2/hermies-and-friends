@@ -16,6 +16,7 @@ What this does NOT do, deliberately:
 
 Opt out completely with HERMIES_AUTO_UPDATE=0.
 """
+import hashlib
 import logging
 import os
 import pathlib
@@ -50,6 +51,39 @@ def local_revision() -> str:
         return r.stdout.strip() if r.returncode == 0 else ""
     except Exception:
         return ""
+
+
+def active_version() -> str:
+    """The release TAG we are running, if any (else the short sha).
+
+    Releases are tags, never 'main': activating whatever happens to be on a
+    branch means every push lands on every user with no staging."""
+    try:
+        r = _git("describe", "--tags", "--exact-match", timeout=15)
+        if r.returncode == 0 and r.stdout.strip():
+            return r.stdout.strip()
+        r = _git("describe", "--tags", "--abbrev=0", timeout=15)
+        if r.returncode == 0 and r.stdout.strip():
+            return r.stdout.strip() + "+"        # ahead of the last tag
+    except Exception:
+        pass
+    return local_revision()
+
+
+def _in_rollout(handle: str, percentage) -> bool:
+    """Stable per-agent cohort: the same agent always lands on the same side of
+    a percentage, so a staged rollout is reproducible rather than a coin flip
+    on every poll."""
+    try:
+        pct = float(percentage)
+    except (TypeError, ValueError):
+        pct = 100.0
+    if pct >= 100:
+        return True
+    if pct <= 0:
+        return False
+    digest = hashlib.sha256((handle or "anon").encode("utf-8")).hexdigest()
+    return (int(digest[:8], 16) % 100) < pct
 
 
 def _is_clean_git_checkout() -> bool:
@@ -90,18 +124,43 @@ def check_and_update(now=None, force=False) -> dict:
         result["reason"] = "not a clean git checkout — leaving it alone"
         return result
 
-    before = local_revision()
+    before = active_version()
     result["from"] = before
+
+    # What does the hub want us on? Releases are TAGS with a staged rollout.
+    desired, pct, handle = "", 100, ""
     try:
-        pull = _git("pull", "--ff-only", timeout=120)
-    except Exception as exc:
-        result["reason"] = f"git pull failed: {exc}"
-        return result
-    if pull.returncode != 0:
-        result["reason"] = (pull.stderr or pull.stdout or "git pull failed").strip()[:200]
+        from . import remote_config, profile
+        rel = remote_config.release() or {}
+        desired = str(rel.get("version") or "")
+        pct = rel.get("rollout_percentage", 100)
+        handle = (profile.load_card().public_dict().get("handle") or "")
+    except Exception:
+        pass
+
+    if desired and not _in_rollout(handle, pct):
+        result["reason"] = f"not in the {pct}% rollout for {desired} yet"
         return result
 
-    after = local_revision()
+    try:
+        fetched = _git("fetch", "--tags", "--force", timeout=120)
+        if fetched.returncode != 0:
+            result["reason"] = (fetched.stderr or "git fetch failed").strip()[:200]
+            return result
+        if desired:
+            # Pin to the release tag — never activate a moving branch.
+            checkout = _git("checkout", "--detach", f"tags/{desired}", timeout=120)
+        else:
+            checkout = _git("pull", "--ff-only", timeout=120)
+    except Exception as exc:
+        result["reason"] = f"git failed: {exc}"
+        return result
+    if checkout.returncode != 0:
+        result["reason"] = (checkout.stderr or checkout.stdout
+                            or "git checkout failed").strip()[:200]
+        return result
+
+    after = active_version()
     result["to"] = after
     if after and before and after != before:
         result["updated"] = True

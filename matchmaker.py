@@ -858,6 +858,15 @@ def _judge_concluded(state, card, llm, t) -> list:
     return fresh
 
 
+def _switch(name: str, default: bool = True) -> bool:
+    """Operator kill switch (see remote_config). Never raises."""
+    try:
+        from . import remote_config
+        return remote_config.switch(name, default)
+    except Exception:
+        return default
+
+
 def _existing_dig_threads(client) -> dict:
     """{counterpart_handle: [thread, ...]} for dig threads the hub already has.
 
@@ -898,6 +907,8 @@ def _run_threads_path(state, client, card, llm, t, intents, ring1) -> list:
         s["_card_hash"] = card_hash
         dig = state["digs"].get(cand)
         if dig is None:
+            if not _switch("digs_enabled"):
+                continue          # operator brake: stop starting new conversations
             prior = existing.get(cand) or []
             if prior:
                 # We already have a thread with them that local state forgot.
@@ -1112,6 +1123,8 @@ def deliver_pending(state, now) -> str:
 
     if not ready:
         return SILENT
+    if not _switch("notifications_enabled"):
+        return SILENT             # operator brake: hold everything, lose nothing
 
     # _emit applies value scoring + social battery + quiet hours, and only
     # records an interruption when it returns real text.

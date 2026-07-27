@@ -129,6 +129,12 @@ def drain_threads(client, card, llm, state, ring1=None) -> dict:
                                      handle)
             continue
 
+        try:
+            from . import remote_config
+            if not remote_config.switch("envoy_replies_enabled"):
+                continue          # operator brake: stop answering, stay listening
+        except Exception:
+            pass
         last_text = sanitize.clean_text(msgs[-1].get("text", ""), max_len=1000)
         reply = envoy.respond(card, last_text, llm, ring1_facts=ring1, mode=kind)
         try:

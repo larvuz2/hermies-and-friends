@@ -118,8 +118,8 @@ def test_update_reports_pending_restart_without_restarting(monkeypatch):
     """New code lands on disk; the gateway is NEVER restarted for us."""
     monkeypatch.delenv("HERMIES_AUTO_UPDATE", raising=False)
     monkeypatch.setattr(updater, "_is_clean_git_checkout", lambda: True)
-    revs = iter(["aaaaaaa", "bbbbbbb"])
-    monkeypatch.setattr(updater, "local_revision", lambda: next(revs))
+    revs = iter(["v0.9.0", "v0.9.1"])
+    monkeypatch.setattr(updater, "active_version", lambda: next(revs))
 
     class OK:
         returncode, stdout, stderr = 0, "Updating aaa..bbb", ""
@@ -127,13 +127,13 @@ def test_update_reports_pending_restart_without_restarting(monkeypatch):
     res = updater.check_and_update(force=True)
     assert res["updated"] is True
     assert res["pending_restart"] is True
-    assert res["from"] == "aaaaaaa" and res["to"] == "bbbbbbb"
+    assert res["from"] == "v0.9.0" and res["to"] == "v0.9.1"
 
 
 def test_update_is_quiet_when_already_current(monkeypatch):
     monkeypatch.delenv("HERMIES_AUTO_UPDATE", raising=False)
     monkeypatch.setattr(updater, "_is_clean_git_checkout", lambda: True)
-    monkeypatch.setattr(updater, "local_revision", lambda: "same123")
+    monkeypatch.setattr(updater, "active_version", lambda: "v0.9.0")
 
     class OK:
         returncode, stdout, stderr = 0, "Already up to date.", ""
@@ -183,3 +183,73 @@ def test_only_one_process_polls(monkeypatch, tmp_path):
 
     # ...but an abandoned lease is taken over, so a killed process can't wedge us
     assert service._claim_poller_lock(now=1000.0 + service.LEASE_SECONDS + 5) is True
+
+
+# --- kill switches ----------------------------------------------------------
+def _sw_doc(**switches):
+    return {"version": 3, "knobs": {}, "switches": switches, "notice": None}
+
+
+def test_switch_defaults_true_when_absent():
+    """A missing/unreachable config must never silently disable the product."""
+    assert remote_config.switch("digs_enabled") is True
+
+
+def test_switch_reads_the_hub():
+    remote_config.refresh(FakeClient(_sw_doc(digs_enabled=False)), force=True)
+    assert remote_config.switch("digs_enabled") is False
+    assert remote_config.switch("envoy_replies_enabled") is True   # untouched
+
+
+def test_digs_switch_stops_new_conversations(monkeypatch, tmp_path):
+    """The operator brake: flip it and agents stop starting digs — no release,
+    no restart, nobody touches a terminal."""
+    from hermies import matchmaker, profile
+    from hermies.client import HermiesClient
+    from hermies.mock_backend import MockBackend
+    monkeypatch.setenv("HERMIES_MIN_SCORE", "1")
+    card = profile.PublicCard(handle="gus-herald", represents="x",
+                              offer=["ai video"], need=["music visuals"],
+                              guilds=["ai-video"])
+    b = MockBackend(); b._inbox = []
+    client = HermiesClient(b)
+    client.publish_profile(card.public_dict())
+    llm = lambda s, u, **k: '{"verdict":"drop","pitch":"","reason":""}'
+
+    remote_config.refresh(FakeClient(_sw_doc(digs_enabled=False)), force=True)
+    st = matchmaker.new_state()
+    matchmaker.run_engine(st, client, card, llm, lambda: 1_000_000.0)
+    assert st["digs"] == {}, "no dig may be opened while the brake is on"
+
+    remote_config.refresh(FakeClient(_sw_doc(digs_enabled=True)), force=True)
+    matchmaker.run_engine(st, client, card, llm, lambda: 1_000_100.0)
+    assert st["digs"], "digs resume when the brake is released"
+
+
+def test_notifications_switch_holds_without_losing(monkeypatch):
+    from hermies import matchmaker
+    monkeypatch.setenv("HERMIES_QUIET_HOURS", "")
+    remote_config.refresh(FakeClient(_sw_doc(notifications_enabled=False)), force=True)
+    st = matchmaker.new_state()
+    st["outbox"]["ready"] = [{"id": "x", "handle": "a", "represents": "r",
+                              "pitch": "p", "reason": "", "evidence": "",
+                              "next_step": "", "score": 9, "note": "",
+                              "verified": True, "cards_only": False,
+                              "intent": None}]
+    assert matchmaker.deliver_pending(st, 1_000_000.0) == matchmaker.SILENT
+    assert len(st["outbox"]["ready"]) == 1        # held, never consumed
+
+
+# --- staged rollout ---------------------------------------------------------
+def test_rollout_is_stable_per_agent():
+    """The same agent always lands on the same side of a percentage."""
+    a = [updater._in_rollout("gus-herald", 50) for _ in range(5)]
+    assert len(set(a)) == 1, "must not flip between polls"
+    assert updater._in_rollout("anyone", 100) is True
+    assert updater._in_rollout("anyone", 0) is False
+
+
+def test_rollout_splits_the_population():
+    handles = [f"agent-{i}" for i in range(400)]
+    included = sum(1 for h in handles if updater._in_rollout(h, 25))
+    assert 50 < included < 150, f"25% of 400 should be ~100, got {included}"

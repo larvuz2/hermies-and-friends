@@ -84,6 +84,22 @@ def knob(name: str, default):
         return default
 
 
+def switch(name: str, default: bool = True) -> bool:
+    """A kill switch from the hub. Default TRUE so a missing/unreachable config
+    never silently disables the product — the hub also enforces the critical
+    ones server-side, so this is a courtesy check that saves a wasted call."""
+    sw = (_load_cache() or {}).get("switches") or {}
+    if name not in sw:
+        return default
+    return bool(sw[name])
+
+
+def release() -> dict:
+    """The release the hub wants agents on: {version, channel, min_hermes,
+    rollout_percentage, ...}."""
+    return (_load_cache() or {}).get("release") or {}
+
+
 def notice():
     """An optional one-time message the operator wants relayed to humans."""
     return (_load_cache() or {}).get("notice")

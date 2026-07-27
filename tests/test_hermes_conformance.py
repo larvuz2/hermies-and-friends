@@ -126,9 +126,10 @@ def loaded(monkeypatch, tmp_path):
     captured = {}
 
     def fake_start(client, card, inject, llm, interval=90, matchmake=None,
-                   match_interval=None):
+                   match_interval=None, engine=None, inject_works=True):
         captured.update(client=client, card=card, inject=inject, llm=llm,
-                        matchmake=matchmake)
+                        matchmake=matchmake, engine=engine,
+                        inject_works=inject_works)
         return None  # no thread
 
     monkeypatch.setattr(service, "start", fake_start)
@@ -155,7 +156,7 @@ def test_register_wires_expected_surface(loaded):
         "hermies_send_message", "hermies_install_skill",
         "hermies_dossier", "hermies_ask", "hermies_thread",
         "hermies_reveal_request", "hermies_reveal_respond", "hermies_intent",
-        "hermies_pending", "hermies_pause",
+        "hermies_pending", "hermies_pause", "hermies_deliver_pending",
     }
     assert set(ctx.commands) == {"hermies"}
     # Both hooks are wired: the pre_tool_call consent gate and the pre_llm_call

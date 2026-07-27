@@ -195,15 +195,22 @@ def register(ctx):
     # result only when it is not the silent marker. If cron is unavailable
     # (older Hermes / tests), fall back to running matchmake inside the daemon
     # loop and surfacing results via /hermies matches (degraded mode).
+    # --- DELIVERY plane: the cron job relays what the engine already produced.
+    # Its success or failure NEVER gates the engine below — a cron job that
+    # exists but never fires previously disabled matchmaking entirely.
     cron_ok = matchmaker.ensure_cron()
-    fallback = None
-    if not cron_ok:
-        def fallback():
-            return matchmaker.run_and_persist(client, card, llm, time.time)
 
-    # --- background envoy + signals loop (frequent, silent) ---
-    service.start(client, card, inject, llm, matchmake=fallback,
-                  match_interval=_config.match_every_hours() * 3600)
+    # --- EXECUTION plane: the daemon ALWAYS runs the matchmaking engine.
+    def engine():
+        return matchmaker.run_engine_and_persist(client, card, llm, time.time)
+
+    # inject_message is a no-op in gateway mode; when it can't reach the human
+    # we skip the signal digest instead of fetching data to discard.
+    inject_works = bool(getattr(ctx, "inject_message", None)) and not cron_ok
+
+    service.start(client, card, inject, llm, engine=engine,
+                  match_interval=_config.match_every_hours() * 3600,
+                  inject_works=inject_works)
 
     if not _config.has_hub():
         mode = "offline/mock"

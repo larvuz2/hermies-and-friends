@@ -328,3 +328,92 @@ def test_pending_tool_peek_and_pop(monkeypatch, tmp_path):
     assert matchmaker.load_state()["queue"] == []
     # reveals are NOT consumed by pop (they need the human's explicit action)
     assert len(pop["pending_reveals"]) == 1
+
+
+# --------------------------------------------------------------------------- #
+# Execution plane vs delivery plane
+#
+# The rule: cron failing may DELAY a notification, but must never stop agents
+# thinking/matching/conversing — and a delivery that never lands must never
+# silently consume the finding.
+# --------------------------------------------------------------------------- #
+def test_engine_works_and_delivers_nothing(monkeypatch):
+    """run_engine opens digs and fills the outbox WITHOUT notifying anyone."""
+    monkeypatch.setenv("HERMIES_MIN_SCORE", "1")
+    b, client = _fresh_client()
+    card, llm = _card(), DigLlm()
+    client.publish_profile(card.public_dict())
+    state = matchmaker.new_state()
+    clock = Clock()
+
+    matchmaker.run_engine(state, client, card, llm, clock)      # opens digs
+    assert state["digs"], "engine must open digs"
+    assert state["engine"]["last_success_at"] is not None       # heartbeat written
+    assert state["engine"]["cycles_total"] == 1
+    assert state["engine"]["last_digs_opened"] >= 1
+    assert state["outbox"]["ready"] == []                       # nothing to say yet
+
+    # Converse until the dig concludes (3 outbound turns), engine-only.
+    tid = state["digs"]["mira-herald"]["thread_id"]
+    for msg in ("Yes, I need AI-film collabs — timeline?",
+                "Next month works.",
+                "Let's co-produce the pilot together."):
+        b.script_reply(tid, msg)
+        clock.advance(3600)
+        matchmaker.run_engine(state, client, card, llm, clock)
+
+    assert state["digs"]["mira-herald"]["concluded"] is True
+    assert state["outbox"]["ready"], "a concluded dig must land in the outbox"
+    # ...and the engine never interrupted anyone doing it.
+    assert state["notify_log"] == []
+    assert state["outbox"]["inflight"] == []
+
+
+def test_delivery_is_durable_when_nothing_lands(monkeypatch):
+    """A finding claimed for delivery is NOT deleted; if it is never confirmed
+    it comes back rather than being lost."""
+    monkeypatch.setenv("HERMIES_QUIET_HOURS", "")
+    st = matchmaker.new_state()
+    st["outbox"]["ready"] = [{
+        "id": "f1", "handle": "mira-herald", "represents": "artist",
+        "pitch": "real fit", "reason": "verified", "evidence": "keen",
+        "next_step": "reach out", "score": 9, "note": "", "verified": True,
+        "cards_only": False, "intent": None,
+    }]
+    t = 1_000_000.0
+    text = matchmaker.deliver_pending(st, t)
+    assert text != matchmaker.SILENT
+    assert st["outbox"]["ready"] == []                  # claimed...
+    assert [i["id"] for i in st["outbox"]["inflight"]] == ["f1"]   # ...not deleted
+
+    # never acknowledged -> after the expiry it is offered again
+    later = t + matchmaker.INFLIGHT_EXPIRY_SECONDS + 60
+    again = matchmaker.deliver_pending(st, later)
+    assert again != matchmaker.SILENT and "mira-herald" in again
+
+    # once acknowledged it stops coming back
+    matchmaker.ack_delivered(st, now=later)
+    assert st["outbox"]["inflight"] == []
+    assert matchmaker.deliver_pending(st, later + 10) == matchmaker.SILENT
+
+
+def test_delivery_holds_subbar_findings_without_consuming_them(monkeypatch):
+    """Below the interrupt bar: stays in ready, and no interruption is recorded."""
+    monkeypatch.setenv("HERMIES_QUIET_HOURS", "")
+    monkeypatch.setenv("HERMIES_INTERRUPT_THRESHOLD", "9.5")
+    st = matchmaker.new_state()
+    st["outbox"]["ready"] = [{
+        "id": "f2", "handle": "weak-herald", "represents": "x", "pitch": "meh",
+        "reason": "", "evidence": "", "next_step": "", "score": 4,
+        "note": "", "verified": False, "cards_only": False, "intent": None,
+    }]
+    assert matchmaker.deliver_pending(st, 1_000_000.0) == matchmaker.SILENT
+    assert [i["id"] for i in st["outbox"]["ready"]] == ["f2"]   # still there
+    assert st["outbox"]["inflight"] == []
+    assert st["notify_log"] == []            # no interruption was "spent"
+
+
+def test_cron_prompt_is_delivery_only():
+    """Cron must not be able to trigger discovery/digs/judging."""
+    assert "hermies_deliver_pending" in matchmaker.CRON_PROMPT
+    assert "hermies_matchmake" not in matchmaker.CRON_PROMPT

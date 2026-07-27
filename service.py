@@ -11,6 +11,7 @@ thread with simple polling (v1 — swap for SSE/websocket later).
 """
 import json
 import os
+import random
 import threading
 import time
 
@@ -176,8 +177,12 @@ def _safe_ring1():
         return []
 
 
-def run_once(client, card, inject, llm, ring1=None) -> dict:
-    """One poll cycle. Returns a summary dict (handy for tests/logging)."""
+def run_once(client, card, inject, llm, ring1=None, inject_works=True) -> dict:
+    """One poll cycle. Returns a summary dict (handy for tests/logging).
+
+    ``inject_works`` tells us whether pushing a message to the human actually
+    lands (it does in CLI; it is a no-op in gateway mode). When it doesn't we
+    skip the signal digest entirely rather than fetching data to throw away."""
     handled, signals = 0, []
 
     # OUTWARD (mailbox): answer inbound network queries as the envoy.
@@ -204,10 +209,16 @@ def run_once(client, card, inject, llm, ring1=None) -> dict:
             threads_summary = drain_threads(client, card, llm, st, ring1=ring1)
             matchmaker.save_state(st)
 
-    # INWARD: pull signals and surface a digest to the human.
-    signals = client.list_signals(handle)
-    if signals:
-        inject(_format_digest(signals), "user")
+    # INWARD: a signal digest is only worth fetching if we can actually deliver
+    # it. inject_message is a no-op in gateway mode, so polling signals just to
+    # format a digest that vanishes burns hub requests and inflates the metrics
+    # (it was the bulk of 4,263 signals served in a day with zero conversations).
+    # The matchmaking ENGINE pulls its own candidates when it runs.
+    signals = []
+    if inject_works:
+        signals = client.list_signals(handle)
+        if signals:
+            inject(_format_digest(signals), "user")
 
     summary = {"handled": handled, "signals": len(signals)}
     if threads_summary is not None:
@@ -272,22 +283,29 @@ LEASE_SECONDS = 300      # a lease older than this is considered abandoned
 
 
 def start(client, card, inject, llm, interval: int = 90, matchmake=None,
-          match_interval: int = None):
-    """Spawn the daemon poll loop. No-op-safe: exceptions are swallowed so a
-    backend hiccup never takes down the host agent.
+          match_interval: int = None, engine=None, inject_works: bool = True):
+    """Spawn the daemon. No-op-safe: exceptions are swallowed so a backend
+    hiccup never takes down the host agent.
 
-    FREQUENT + SILENT work (drain inbound, envoy auto-replies) runs every
-    ``interval`` seconds. ``inject_message`` is a no-op in gateway mode, so this
-    loop is NOT the notification path — that is the cron job (see matchmaker).
+    Two planes, deliberately separate:
 
-    ``matchmake`` is only supplied in the DEGRADED fallback (no cron available):
-    a callable ``() -> str`` run every ``match_interval`` seconds; a non-SILENT
-    result is best-effort injected (works in CLI, silently dropped in gateway,
-    where the human reads it via /hermies matches instead)."""
+    * EXECUTION (here) — drain the mailbox and threads every ``interval``, and
+      run the matchmaking ``engine`` every ``match_interval``. This ALWAYS runs
+      and is never gated on cron. Cron failing may delay a notification; it must
+      never stop agents from thinking, matching or conversing.
+    * DELIVERY (the Hermes cron job) — reads what the engine already completed
+      and relays it. See matchmaker.deliver_pending.
+
+    ``matchmake`` is the legacy combined callable, kept for older callers/tests;
+    ``engine`` is the execution-only entry point and takes precedence."""
     from . import matchmaker
     if match_interval is None:
         match_interval = 4 * 3600
-    state = {"last_match": 0.0}
+    if engine is None and matchmake is not None:
+        engine = matchmake            # back-compat for older call sites
+    # Jitter the first cycle so hundreds of agents don't hit the hub in lockstep
+    # after a coordinated release.
+    state = {"last_match": 0.0, "every": random.uniform(0, min(300, interval * 2))}
 
     def _loop():
         while True:
@@ -318,19 +336,28 @@ def start(client, card, inject, llm, interval: int = 90, matchmake=None,
                 # Skip the in-between (hub configured but not yet registered) so
                 # we don't spam the hub with 401s before onboarding claims a key.
                 if (not _config.has_hub()) or _config.is_live():
-                    run_once(client, card, inject, llm, ring1=_safe_ring1())
+                    run_once(client, card, inject, llm, ring1=_safe_ring1(),
+                             inject_works=inject_works)
             except Exception:
                 pass
-            if matchmake is not None:
-                now = time.time()
-                if now - state["last_match"] >= match_interval:
+            # --- THE EXECUTION PLANE ---------------------------------------
+            # The daemon ALWAYS runs the matchmaking engine. It is never gated
+            # on cron: a cron job that exists but never fires must not stop
+            # agents from thinking, matching and conversing. Cron only DELIVERS
+            # what this produced (see matchmaker.CRON_PROMPT).
+            now = time.time()
+            if engine is not None and (now - state["last_match"]) >= state["every"]:
+                try:
+                    engine()
+                    # Advance the schedule only on SUCCESS, so one exception
+                    # can't suppress retries for a whole interval.
                     state["last_match"] = now
-                    try:
-                        result = matchmake()
-                        if result and result != matchmaker.SILENT:
-                            inject(result, "user")
-                    except Exception:
-                        pass
+                    state["every"] = match_interval
+                except Exception:
+                    # Back off briefly, then try again rather than waiting out
+                    # the full interval.
+                    state["last_match"] = now
+                    state["every"] = min(match_interval, max(300, interval * 5))
             time.sleep(interval)
 
     t = threading.Thread(target=_loop, name="hermies-service", daemon=True)

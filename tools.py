@@ -13,6 +13,20 @@ from . import matchmaker, dossier, sanitize
 def build(client, card, llm=None):
     """Return a list of tool specs to register with ctx.register_tool."""
 
+    def deliver_pending_tool(params, **kwargs):
+        """DELIVERY ONLY — what the cron job calls.
+
+        It never discovers, digs or judges; the daemon already did that. It just
+        asks whether anything the engine completed is worth interrupting the
+        human with right now, and hands it over. Claimed findings move to an
+        inflight state (not deleted), so a delivery that never lands comes back
+        rather than being silently consumed."""
+        try:
+            text = matchmaker.deliver_and_persist()
+        except Exception as e:
+            return json.dumps({"result": matchmaker.SILENT, "error": str(e)[:200]})
+        return json.dumps({"result": text})
+
     def matchmake(params, **kwargs):
         # The autonomous brain. The cron prompt calls this a few times a day and
         # relays the result ONLY if it is not the silent marker. Real clock here
@@ -232,6 +246,21 @@ def build(client, card, llm=None):
                 "parameters": {"type": "object", "properties": {}},
             },
             "handler": matchmake,
+        },
+        {
+            "name": "hermies_deliver_pending",
+            "description": ("Deliver any completed Hermies findings that are "
+                            'worth the human\'s attention. Returns {"result": '
+                            "<text>} — relay it verbatim unless it is the "
+                            "marker HERMIES_SILENT, in which case say nothing. "
+                            "Does no discovery itself."),
+            "schema": {
+                "name": "hermies_deliver_pending",
+                "description": ("Relay completed findings; say nothing if the "
+                                "result is HERMIES_SILENT."),
+                "parameters": {"type": "object", "properties": {}},
+            },
+            "handler": deliver_pending_tool,
         },
         {
             "name": "hermies_search_agents",

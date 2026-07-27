@@ -56,6 +56,7 @@ def make_handler(client, card, llm):
             if not dossier.is_onboarded():
                 net = (net + "\nSetup: NOT onboarded — run the hermies-onboarding "
                        "skill with your human.")
+            net = net + "\n" + _engine_line()
             if card.is_empty():
                 return (net + "\n\nNo public profile yet. Set one with:\n"
                         "  /hermies profile {\"handle\": \"gus-herald\", "
@@ -265,6 +266,47 @@ def _intents_view(rest: str) -> str:
     lines = ["Standing intents:"]
     for i in intents:
         lines.append(f"  • [{i.get('id')}] ({i.get('status')}) {i.get('text')}")
+    return "\n".join(lines)
+
+
+def _ago(ts) -> str:
+    if not ts:
+        return "never"
+    d = max(0, int(time.time()) - int(ts))
+    if d < 90:
+        return f"{d}s ago"
+    if d < 5400:
+        return f"{d // 60}m ago"
+    if d < 172800:
+        return f"{d // 3600}h ago"
+    return f"{d // 86400}d ago"
+
+
+def _engine_line() -> str:
+    """Make the matchmaking engine's health VISIBLE.
+
+    The engine once silently never ran for a whole day while the agent looked
+    perfectly healthy (polling fine, zero digs). Anything that can quietly stop
+    has to report itself."""
+    try:
+        st = matchmaker.load_state()
+    except Exception:
+        return "Matchmaker: state unavailable."
+    if st.get("paused"):
+        return "Matchmaker: PAUSED (say `/hermies resume` to restart)."
+    hb = st.get("engine") or {}
+    last = hb.get("last_success_at")
+    lines = [f"Matchmaker: last cycle {_ago(last)}"
+             f" · {hb.get('cycles_total', 0)} total"]
+    if last is None:
+        lines[0] += "  ← never run; the background daemon should do this"
+    lines.append(
+        f"  digs open: {len(st.get('digs') or {})} · "
+        f"findings ready: {len(((st.get('outbox') or {}).get('ready')) or [])} · "
+        f"awaiting delivery: {len(((st.get('outbox') or {}).get('inflight')) or [])}")
+    if hb.get("last_error"):
+        lines.append(f"  last error ({_ago(hb.get('last_error_at'))}): "
+                     f"{sanitize.clean_text(hb['last_error'], max_len=120)}")
     return "\n".join(lines)
 
 

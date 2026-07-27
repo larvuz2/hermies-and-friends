@@ -129,7 +129,14 @@ def _ensure_shape(d: dict) -> dict:
     d.setdefault("thread_replies", {})   # {thread_id: our-reply-count} — envoy daemon 6-reply cap
     d.setdefault("notify_log", [])    # [epoch_seconds, ...] recent interruptions (social battery)
     d.setdefault("engagement", [])    # [{ts, kind, w}, ...] human leaned in -> lowers the bar
-    d.setdefault("queue", [])         # [notification payload, ...] held for the next conversation
+    d.setdefault("queue", [])         # scratch: items _emit held back this pass
+    # Durable outbox between the two planes. The ENGINE (daemon) only appends to
+    # ready; DELIVERY (cron) claims into inflight and confirms into delivered.
+    # Nothing is ever deleted on the assumption a delivery worked.
+    ob = d.setdefault("outbox", {})
+    ob.setdefault("ready", [])        # completed findings awaiting judgement/delivery
+    ob.setdefault("inflight", [])     # handed to a delivery attempt, unconfirmed
+    ob.setdefault("delivered", [])    # confirmed (bounded history)
     d.setdefault("log", [])           # [{ts, handle, verdict, note}, ...] decision trail
     d.setdefault("card_proposal", None)      # {proposed: {...}, ts}
     d.setdefault("card_refreshed_ts", None)  # last time we ran the refresh check
@@ -944,6 +951,154 @@ def _run_legacy_path(state, client, card, llm, t) -> list:
 # The single entry point.
 # --------------------------------------------------------------------------- #
 
+def _heartbeat(state) -> dict:
+    return state.setdefault("engine", {
+        "last_started_at": None, "last_completed_at": None,
+        "last_success_at": None, "last_error_at": None, "last_error": None,
+        "cycles_total": 0, "candidates_seen_total": 0,
+        "digs_opened_total": 0, "findings_written_total": 0,
+        "last_candidates": 0, "last_digs_opened": 0,
+    })
+
+
+def run_engine(state, client, card, llm, now, intents=None, ring1=None) -> int:
+    """THE EXECUTION PLANE. Discovers candidates, opens/advances digs, writes
+    findings, judges — and appends anything worth saying to the durable outbox.
+
+    It NEVER delivers to the human and never touches the interrupt judgement.
+    That separation is the point: a broken delivery path (cron missing, gateway
+    injection a no-op) must never stop agents from thinking and conversing, and
+    a finding must never be consumed by a delivery that didn't happen.
+
+    Returns the number of findings newly added to the outbox. Heartbeat
+    timestamps are written AFTER the work, so one exception can't convince the
+    scheduler that a cycle succeeded."""
+    _ensure_shape(state)
+    hb = _heartbeat(state)
+    t = now()
+    hb["last_started_at"] = int(t)
+
+    if state.get("paused"):
+        hb["last_completed_at"] = int(t)
+        return 0
+
+    digs_before = len(state.get("digs") or {})
+    try:
+        _maybe_refresh_card(state, card, llm, t)
+        if _threads_supported(client):
+            fresh = _run_threads_path(
+                state, client, card, llm, t, intents or [], ring1 or [])
+        else:
+            fresh = _run_legacy_path(state, client, card, llm, t)
+    except Exception as exc:                     # never let one bad cycle wedge us
+        hb["last_error_at"] = int(t)
+        hb["last_error"] = str(exc)[:200]
+        hb["last_completed_at"] = int(t)
+        raise
+
+    ready = state.setdefault("outbox", {}).setdefault("ready", [])
+    known = {i.get("id") for i in ready}
+    known |= {i.get("id") for i in state["outbox"].setdefault("inflight", [])}
+    added = 0
+    for item in fresh:
+        item.setdefault("id", _finding_id(item, t))
+        if item["id"] in known:
+            continue                              # idempotent across cycles
+        item.setdefault("ready_at", int(t))
+        ready.append(item)
+        added += 1
+
+    digs_now = len(state.get("digs") or {})
+    hb["cycles_total"] = int(hb.get("cycles_total", 0)) + 1
+    hb["last_digs_opened"] = max(0, digs_now - digs_before)
+    hb["digs_opened_total"] = int(hb.get("digs_opened_total", 0)) + hb["last_digs_opened"]
+    hb["findings_written_total"] = int(hb.get("findings_written_total", 0)) + added
+    hb["last_completed_at"] = int(t)
+    hb["last_success_at"] = int(t)
+    return added
+
+
+def _finding_id(item, t) -> str:
+    """A stable id so a re-delivered finding can be recognised as the same one."""
+    basis = f"{item.get('handle','')}|{item.get('pitch','')}|{int(t) // 3600}"
+    return hashlib.sha256(basis.encode("utf-8")).hexdigest()[:12]
+
+
+# How long a claimed-but-unacknowledged delivery is trusted before we offer it
+# again. Hermes gives us no delivery receipt, so we choose duplicate delivery
+# over permanent loss.
+INFLIGHT_EXPIRY_SECONDS = 6 * 3600
+
+
+def deliver_pending(state, now) -> str:
+    """THE DELIVERY PLANE. Applies the interrupt judgement to whatever the
+    engine has already completed, and returns text for the human or SILENT.
+
+    Claimed items move to ``inflight`` (not deleted) and the interruption is
+    only recorded when we actually return something. An inflight item that is
+    never acknowledged comes back after INFLIGHT_EXPIRY_SECONDS — a duplicate
+    is recoverable, a silently swallowed finding is not."""
+    _ensure_shape(state)
+    if state.get("paused"):
+        return SILENT
+    t = float(now() if callable(now) else now)
+    outbox = state.setdefault("outbox", {})
+    ready = outbox.setdefault("ready", [])
+    inflight = outbox.setdefault("inflight", [])
+
+    # Anything claimed but never confirmed comes back for another attempt.
+    stale = [i for i in inflight
+             if (t - float(i.get("claimed_at", 0))) > INFLIGHT_EXPIRY_SECONDS]
+    if stale:
+        outbox["inflight"] = [i for i in inflight
+                              if i not in stale]
+        ready = stale + ready
+        outbox["ready"] = ready
+
+    if not ready:
+        return SILENT
+
+    # _emit applies value scoring + social battery + quiet hours, and only
+    # records an interruption when it returns real text.
+    before = {id(i) for i in ready}
+    text = _emit(state, list(ready), t)
+    held = state.get("queue") or []
+    if text == SILENT:
+        outbox["ready"] = held or ready          # nothing delivered; keep it all
+        state["queue"] = []
+        return SILENT
+
+    held_ids = {i.get("id") for i in held}
+    claimed = [i for i in ready if i.get("id") not in held_ids]
+    for i in claimed:
+        i["claimed_at"] = int(t)
+    outbox["inflight"] = inflight + claimed
+    outbox["ready"] = held
+    state["queue"] = []
+    return text
+
+
+def ack_delivered(state, ids=None, now=None) -> int:
+    """Confirm delivery: move inflight items to delivered. Called when the
+    delivery worker got the text into the human's hands."""
+    _ensure_shape(state)
+    t = float(now() if callable(now) else (now if now is not None else time.time()))
+    outbox = state.setdefault("outbox", {})
+    inflight = outbox.setdefault("inflight", [])
+    keep, done = [], outbox.setdefault("delivered", [])
+    n = 0
+    for i in inflight:
+        if ids is None or i.get("id") in set(ids):
+            i["delivered_at"] = int(t)
+            done.append(i)
+            n += 1
+        else:
+            keep.append(i)
+    outbox["inflight"] = keep
+    outbox["delivered"] = done[-50:]              # bounded history
+    return n
+
+
 def run_cycle(state, client, card, llm, now, intents=None, ring1=None) -> str:
     """One matchmaking cycle. Mutates ``state`` in place; returns the human
     notification text, or the SILENT marker when there is nothing worth an
@@ -1001,14 +1156,48 @@ def run_and_persist(client, card, llm, now, path=None, intents=None, ring1=None)
     return result
 
 
+def run_engine_and_persist(client, card, llm, now, path=None, intents=None,
+                           ring1=None) -> int:
+    """IO wrapper for the EXECUTION plane (what the daemon runs)."""
+    if intents is None or ring1 is None:
+        try:
+            from . import dossier
+            if intents is None:
+                intents = [i for i in dossier.list_intents()
+                           if i.get("status") == "active"]
+            if ring1 is None:
+                ring1 = dossier.get_ring1()
+        except Exception:
+            intents = intents or []
+            ring1 = ring1 or []
+    state = load_state(path)
+    try:
+        added = run_engine(state, client, card, llm, now,
+                           intents=intents, ring1=ring1)
+    finally:
+        save_state(state, path)       # persist heartbeat even on failure
+    return added
+
+
+def deliver_and_persist(now=None, path=None) -> str:
+    """IO wrapper for the DELIVERY plane (what the cron worker runs)."""
+    state = load_state(path)
+    text = deliver_pending(state, now or time.time)
+    save_state(state, path)
+    return text
+
+
 # --------------------------------------------------------------------------- #
 # Cron wiring (guarded) — the blessed notification path in gateway mode.
 # --------------------------------------------------------------------------- #
 
 CRON_JOB_NAME = "hermies-matchmake"
 
+# DELIVERY ONLY. Cron must never discover candidates, open threads, or call the
+# judge — the daemon owns all of that. If cron never fires, agents still think,
+# match and converse; only the proactive ping is delayed.
 CRON_PROMPT = (
-    "Call the hermies_matchmake tool now. It returns JSON of the form "
+    "Call the hermies_deliver_pending tool now. It returns JSON of the form "
     '{"result": <text>}. If result equals the exact marker "HERMIES_SILENT", '
     "then say NOTHING and do not message the human at all. Otherwise, relay the "
     "result text to the human verbatim as a brief, friendly notification."

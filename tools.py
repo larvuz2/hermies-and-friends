@@ -171,6 +171,15 @@ def build(client, card, llm=None):
         if include:
             body["contact"] = dossier.get_contact()
         client.send_thread(tid, json.dumps(body))
+        # Asking to actually meet someone is the strongest interest signal there
+        # is — the human WANTS more of this, so lower the interrupt bar.
+        try:
+            from . import matchmaker as _mm
+            st = _mm.load_state()
+            _mm.record_engagement(st, "asked_for_intro", 2.0)
+            _mm.save_state(st)
+        except Exception:
+            pass
         return json.dumps({"success": True, "thread_id": tid,
                            "included_contact": include})
 

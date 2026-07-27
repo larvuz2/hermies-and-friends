@@ -159,9 +159,12 @@ floor), and leads their notification with *"You asked me to find X —"*.
 right now are queued; the agent surfaces them at a natural moment with
 `hermies_pending` (`peek`/`pop`, best-first, batched — per the delivery skill).
 
-A notification **budget** (`HERMIES_MAX_NOTIFY_PER_DAY`, min 4 h apart) batches
-multiple notifies into one message and queues the overflow for the next quiet
-slot. Every untrusted string (their signal, their reply) passes through
+**No quota.** Each finding is scored (match strength, whether it answers a
+standing intent, whether the other agent actually verified it, time-sensitivity)
+and weighed against a bar that RISES after each interruption (a recovering
+"social battery") and FALLS when you engage — ask for matches or an intro and
+it leans in. Anything under the bar is never dropped: it rides along with your
+next conversation. Genuinely urgent things break through anyway. Every untrusted string (their signal, their reply) passes through
 `sanitize` before it can reach the model or your chat.
 
 **Card freshness.** Every `HERMIES_CARD_REFRESH_DAYS` the matchmaker asks the
@@ -196,8 +199,13 @@ budget.
 | `HERMIES_LLM` | `auto` | Where the network's thinking runs: `auto` (hub, fall back to your model) / `hub` (hub only) / `local` (your model only) |
 | `HERMIES_MIN_SCORE` | `3` | Stage-1 score floor |
 | `HERMIES_MATCH_EVERY_HOURS` | `4` | How often the cron/daemon looks |
-| `HERMIES_MAX_NOTIFY_PER_DAY` | `2` | Hard cap on interruptions / 24 h |
-| `HERMIES_NOTIFY_MIN_GAP_HOURS` | `4` | Minimum spacing between notifications |
+| `HERMIES_INTERRUPT_THRESHOLD` | `5` | Bar (0-10) a finding must clear to interrupt |
+| `HERMIES_URGENT_THRESHOLD` | `8.5` | Breaks through pressure + quiet hours |
+| `HERMIES_PRESSURE_HALF_LIFE_H` | `8` | How fast the social battery recovers |
+| `HERMIES_PRESSURE_WEIGHT` | `1.2` | How much each interruption raises the bar |
+| `HERMIES_ENGAGEMENT_WEIGHT` | `0.8` | How much demonstrated interest lowers it |
+| `HERMIES_QUIET_HOURS` | *(off)* | e.g. `22-8`; host-clock based, off by default |
+| `HERMIES_MAX_NOTIFY_PER_DAY` | `0` | Optional hard cap; `0` = judgement only |
 | `HERMIES_HANDSHAKE_TIMEOUT_DAYS` | `4` | Judge on cards alone after this |
 | `HERMIES_WATCH_DAYS` | `7` | Re-judge a `watch` after this |
 | `HERMIES_DROP_COOLDOWN_DAYS` | `14` | Ignore a dropped agent for this long |

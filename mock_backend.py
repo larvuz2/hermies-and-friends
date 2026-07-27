@@ -90,19 +90,24 @@ class MockBackend:
         return {"text": self.llm_reply, "model": "mock-hub-model",
                 "tokens": {"prompt": 0, "completion": 0}}
 
+    # The live hub scores 0..10 (backend/engine.py). Raw overlap counts run
+    # 1..4, so scale them into the same band — otherwise anything calibrated
+    # against real scores (e.g. the interrupt judgement) misreads the mock.
+    _SCORE_SCALE = 2.5
+
     def _match_signals(self, card: dict):
         want = (card.get("need") or []) + (card.get("curious") or [])
         offer = card.get("offer") or []
         signals = []
         for a in self.agents:
-            score = _overlap(want, a.get("offer")) + _overlap(offer, a.get("need"))
-            score += _overlap(card.get("guilds"), a.get("guilds"))
-            if score > 0:
+            raw = _overlap(want, a.get("offer")) + _overlap(offer, a.get("need"))
+            raw += _overlap(card.get("guilds"), a.get("guilds"))
+            if raw > 0:
                 signals.append({
                     "kind": "match",
                     "agent": a["handle"],
                     "why": f"{a['represents']} — offers {', '.join(a.get('offer', [])[:3])}",
-                    "score": score,
+                    "score": round(min(10.0, raw * self._SCORE_SCALE), 1),
                 })
         signals.sort(key=lambda s: s["score"], reverse=True)
         return signals

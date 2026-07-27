@@ -128,14 +128,71 @@ def match_every_hours() -> int:
     return _int_env("HERMIES_MATCH_EVERY_HOURS", 4)
 
 
+# --------------------------------------------------------------------------- #
+# When to interrupt the human.
+#
+# There is deliberately NO daily quota. A good friend doesn't ration contact —
+# they judge whether this particular thing is worth your attention right now.
+# The model: score every finding, and compare it against a threshold that RISES
+# as we interrupt more (a recovering "social battery") and FALLS when the human
+# engages with what we bring. Anything under the bar is not discarded — it rides
+# along with the next natural conversation (see hermies_pending).
+# --------------------------------------------------------------------------- #
+
+def interrupt_threshold() -> float:
+    """Base bar (0..10) a finding must clear to interrupt the human proactively.
+
+    Deliberately modest: everything reaching this point has ALREADY survived the
+    cheap filter, a real agent-to-agent dig, and an LLM judge that returned
+    "notify". The bar's job is pacing, not re-litigating quality — pressure
+    raises it after each interruption."""
+    return _float_env("HERMIES_INTERRUPT_THRESHOLD", 5.0)
+
+
+def urgent_threshold() -> float:
+    """At/above this, it goes through regardless of pressure or quiet hours —
+    the 'a friend calls you at midnight for this' line."""
+    return _float_env("HERMIES_URGENT_THRESHOLD", 8.5)
+
+
+def pressure_half_life_hours() -> float:
+    """How fast the social battery recovers after an interruption."""
+    return _float_env("HERMIES_PRESSURE_HALF_LIFE_H", 8.0)
+
+
+def pressure_weight() -> float:
+    """How much each recent interruption raises the bar."""
+    return _float_env("HERMIES_PRESSURE_WEIGHT", 1.2)
+
+
+def engagement_weight() -> float:
+    """How much demonstrated interest (asking for more, requesting intros)
+    lowers the bar — the human is telling us they want this."""
+    return _float_env("HERMIES_ENGAGEMENT_WEIGHT", 0.8)
+
+
+def quiet_hours() -> tuple:
+    """Hours to stay silent unless something is urgent, as (start, end).
+
+    OFF by default, deliberately: this reads the *machine's* clock, and the
+    agent usually runs on a UTC VPS while its human lives somewhere else — so a
+    default window would just as likely mute the workday as protect the night.
+    Set HERMIES_QUIET_HOURS="22-8" when the host clock really is the human's."""
+    raw = os.getenv("HERMIES_QUIET_HOURS", "")
+    raw = raw.strip() if isinstance(raw, str) else ""
+    if not raw:
+        return ()
+    try:
+        a, b = raw.split("-")
+        return (int(a) % 24, int(b) % 24)
+    except (ValueError, AttributeError):
+        return (22, 8)
+
+
 def max_notify_per_day() -> int:
-    """Hard cap on human interruptions per rolling 24h."""
-    return _int_env("HERMIES_MAX_NOTIFY_PER_DAY", 2)
-
-
-def notify_min_gap_hours() -> int:
-    """Minimum spacing between two notifications."""
-    return _int_env("HERMIES_NOTIFY_MIN_GAP_HOURS", 4)
+    """OPTIONAL hard safety cap. 0 (default) = no cap; judgement decides.
+    Left in place for anyone who explicitly wants a ceiling."""
+    return _int_env("HERMIES_MAX_NOTIFY_PER_DAY", 0)
 
 
 def handshake_timeout_days() -> int:

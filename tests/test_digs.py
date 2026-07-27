@@ -189,7 +189,11 @@ def test_dig_concludes_on_card_timeout_with_no_reply(monkeypatch):
     out = matchmaker.run_cycle(state, client, card, llm, clock)
     assert state["digs"]["mira-herald"]["concluded"] is True  # concluded on cards
     assert "mira-herald" in state["findings"]
-    assert out != matchmaker.SILENT                            # judged -> notify
+    assert state["seen"]["mira-herald"]["verdict"] == "notify"   # judged
+    # ...but nobody ever replied, so it is held for the next conversation
+    # rather than interrupting the human (see _value_of: cards_only).
+    assert out == matchmaker.SILENT
+    assert any(i["handle"] == "mira-herald" for i in state["queue"])
 
 
 # --------------------------------------------------------------------------- #

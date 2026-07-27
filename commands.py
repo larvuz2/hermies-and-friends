@@ -240,6 +240,9 @@ def _intents_view(rest: str) -> str:
     arg = parts[1].strip() if len(parts) > 1 else ""
     if verb == "add" and arg:
         it = dossier.add_intent(arg)
+        # The human asked us to hunt for something: strong interest signal, so
+        # lower the bar for interrupting them about it.
+        _note_engagement("intent_added", 1.5)
         return (f"Added standing intent [{it['id']}]: {it['text']}"
                 if it else "Nothing to add.")
     if verb == "retire" and arg:
@@ -255,9 +258,22 @@ def _intents_view(rest: str) -> str:
     return "\n".join(lines)
 
 
+def _note_engagement(kind: str, weight: float = 1.0) -> None:
+    """Record that the human leaned in. Cheap + best-effort: a failure here must
+    never break the command the human actually ran."""
+    try:
+        st = matchmaker.load_state()
+        matchmaker.record_engagement(st, kind, weight)
+        matchmaker.save_state(st)
+    except Exception:
+        pass
+
+
 def _matches_view(state) -> str:
-    """Pending notifications the budget hasn't delivered yet, plus recent
+    """Everything held back for the next natural conversation, plus recent
     verdicts. All candidate content already passed sanitize on the way in."""
+    # Asking to see matches IS interest — it lowers the bar for a while.
+    _note_engagement("asked_for_matches", 1.0)
     lines = []
     queue = state.get("queue") or []
     if queue:

@@ -39,6 +39,7 @@ import os
 import pathlib
 import re
 import shutil
+import time
 import urllib.error
 
 from . import _config, envoy, profile, sanitize
@@ -126,8 +127,9 @@ def _ensure_shape(d: dict) -> dict:
     d.setdefault("findings", {})      # {handle: {note, thread_id, concluded_ts, verdict}}
     d.setdefault("pending_reveals", [])  # [{thread_id, from, handle, context, ts}] awaiting the human
     d.setdefault("thread_replies", {})   # {thread_id: our-reply-count} — envoy daemon 6-reply cap
-    d.setdefault("notify_log", [])    # [epoch_seconds, ...] recent deliveries
-    d.setdefault("queue", [])         # [notification payload, ...] pending delivery
+    d.setdefault("notify_log", [])    # [epoch_seconds, ...] recent interruptions (social battery)
+    d.setdefault("engagement", [])    # [{ts, kind, w}, ...] human leaned in -> lowers the bar
+    d.setdefault("queue", [])         # [notification payload, ...] held for the next conversation
     d.setdefault("log", [])           # [{ts, handle, verdict, note}, ...] decision trail
     d.setdefault("card_proposal", None)      # {proposed: {...}, ts}
     d.setdefault("card_refreshed_ts", None)  # last time we ran the refresh check
@@ -342,6 +344,11 @@ def _notify_payload(handle, their_card, verdict, reply_text) -> dict:
         "reason": verdict.get("reason", ""),
         "evidence": sanitize.clean_text(reply_text or "", max_len=200),
         "next_step": f"Ask me to reach out to @{handle}, or run /hermies matches.",
+        # --- inputs to the interrupt judgement (see _value_of) ---
+        "score": float(their_card.get("score") or 0.0),
+        "note": (verdict.get("reason", "") or ""),
+        "verified": bool(reply_text),        # they actually answered us
+        "cards_only": not bool(reply_text),  # verdict reached without a reply
     }
 
 
@@ -349,9 +356,104 @@ def _notify_payload(handle, their_card, verdict, reply_text) -> dict:
 # Notification budget + digest formatting.
 # --------------------------------------------------------------------------- #
 
+# Words in a findings note that mean "this has a clock on it".
+_TIME_SENSITIVE = (
+    "deadline", "closing", "closes", "this week", "next week", "today",
+    "tomorrow", "hiring now", "urgent", "asap", "spots left", "expires",
+    "before friday", "launching", "budget ends", "last call",
+)
+
+
+def _value_of(item) -> float:
+    """Score a pending notification 0..10 — how much is this WORTH interrupting
+    a human for? Built from what we actually know, not guesswork.
+
+    Base is the match score; verified mutual fit, an explicit standing intent,
+    a live outcome the human asked for, and time-sensitivity all push it up.
+    A verdict reached on cards alone (nobody ever replied) pushes it down."""
+    v = float(item.get("score") or 0.0)
+    note = (item.get("note") or "").lower()
+    kind = item.get("kind") or "match"
+
+    if item.get("intent"):
+        v += 2.0                       # the human explicitly asked for this
+    if item.get("verified") or "verified" in note:
+        v += 1.5                       # the other agent confirmed it in a dig
+    if kind == "outcome":
+        v += 2.5                       # they acted; this is the result
+    elif kind == "followup":
+        v += 1.0                       # something is waiting on them
+    if any(w in note for w in _TIME_SENSITIVE):
+        v += 1.0
+    if item.get("cards_only"):
+        v -= 1.0                       # never actually spoke to them
+    return max(0.0, min(10.0, v))
+
+
+def _pressure(state, t) -> float:
+    """The social battery: recent interruptions decay exponentially. Two pings
+    an hour ago weigh a lot; two pings yesterday weigh almost nothing."""
+    half = max(0.5, _config.pressure_half_life_hours()) * 3600.0
+    total = 0.0
+    for ts in state.get("notify_log") or []:
+        age = max(0.0, t - float(ts))
+        total += 0.5 ** (age / half)
+    return total
+
+
+def _engagement(state, t) -> float:
+    """How interested the human has shown themselves to be lately (0..~3).
+    Positive acts (asking for matches, requesting an intro, adding an intent)
+    decay over a few days."""
+    half = 3 * _DAY
+    total = 0.0
+    for ev in state.get("engagement") or []:
+        age = max(0.0, t - float(ev.get("ts", 0)))
+        total += float(ev.get("w", 1.0)) * (0.5 ** (age / half))
+    return max(0.0, min(3.0, total))
+
+
+def _in_quiet_hours(t) -> bool:
+    window = _config.quiet_hours()
+    if not window:
+        return False
+    start, end = window
+    try:
+        hour = time.localtime(t).tm_hour
+    except (OverflowError, OSError, ValueError):
+        return False
+    if start == end:
+        return False
+    if start < end:
+        return start <= hour < end
+    return hour >= start or hour < end      # window wraps midnight
+
+
+def _bar(state, t) -> float:
+    """The bar this finding must clear right now."""
+    return (_config.interrupt_threshold()
+            + _config.pressure_weight() * _pressure(state, t)
+            - _config.engagement_weight() * _engagement(state, t))
+
+
+def record_engagement(state, kind="interest", weight=1.0, now=None) -> dict:
+    """Note that the human leaned IN (asked for matches, wanted an intro, added
+    a standing intent). Lowers the bar for a while — they want to hear more."""
+    t = float(now() if callable(now) else (now if now is not None else time.time()))
+    evs = state.setdefault("engagement", [])
+    evs.append({"ts": int(t), "kind": kind, "w": float(weight)})
+    # keep it bounded / recent
+    state["engagement"] = [e for e in evs if (t - float(e.get("ts", 0))) < 14 * _DAY][-50:]
+    return state
+
+
 def _emit(state, pending, t):
-    """Deliver as many pending notifications as the budget allows, batched into
-    one digest; queue the rest. Returns the digest text or SILENT."""
+    """Decide what (if anything) is worth interrupting the human with RIGHT NOW.
+
+    No daily quota. Each item is scored, then judged against a bar that rises
+    with recent interruptions and falls with the human's demonstrated interest.
+    Whatever doesn't clear the bar is NOT dropped — it stays queued and rides
+    along with the next natural conversation (hermies_pending)."""
     # de-dupe by handle (keep newest) so a re-judge can't double-queue a handle
     dedup = {}
     for item in pending:
@@ -361,21 +463,40 @@ def _emit(state, pending, t):
         state["queue"] = []
         return SILENT
 
-    log = state["notify_log"]
-    recent = [ts for ts in log if (t - ts) < _DAY]
-    allowed = _config.max_notify_per_day() - len(recent)
-    if log and (t - max(log)) < _config.notify_min_gap_hours() * 3600:
-        allowed = 0
-    allowed = max(0, allowed)
+    for it in pending:
+        it["value"] = _value_of(it)
+    pending.sort(key=lambda i: i["value"], reverse=True)
 
-    send, overflow = pending[:allowed], pending[allowed:]
-    state["queue"] = overflow
+    bar = _bar(state, t)
+    urgent = _config.urgent_threshold()
+    quiet = _in_quiet_hours(t)
+
+    # Optional hard ceiling (off by default) for operators who want one.
+    cap = _config.max_notify_per_day()
+    if cap > 0:
+        used = len([ts for ts in state.get("notify_log") or [] if (t - ts) < _DAY])
+        room = max(0, cap - used)
+    else:
+        room = len(pending)
+
+    send, hold = [], []
+    for it in pending:
+        v = it["value"]
+        passes = v >= bar if not quiet else v >= urgent
+        if passes and len(send) < room:
+            send.append(it)
+        else:
+            hold.append(it)
+
+    state["queue"] = hold
     if not send:
         return SILENT
-    for _ in send:
-        log.append(int(t))
-    # keep the log bounded to a couple of days of stamps
-    state["notify_log"] = [ts for ts in log if (t - ts) < 3 * _DAY]
+
+    # One interruption delivers the whole batch — cost is the interruption, not
+    # the item count, so the battery is charged once.
+    log = state.setdefault("notify_log", [])
+    log.append(int(t))
+    state["notify_log"] = [ts for ts in log if (t - ts) < 7 * _DAY]
     return _format_notification(send)
 
 
@@ -543,14 +664,23 @@ def _judge_findings(card, their_card: dict, note: str, llm) -> dict:
 
 
 def _notify_payload_findings(handle, dig, verdict) -> dict:
+    their = dig.get("their_card") or {}
+    replied = bool(dig.get("last_their_msg"))
     return {
         "handle": handle,
-        "represents": (dig.get("their_card") or {}).get("why", ""),
+        "represents": their.get("why", ""),
         "pitch": verdict.get("pitch", ""),
         "reason": verdict.get("reason", ""),
         "evidence": sanitize.clean_text(dig.get("last_their_msg", ""), max_len=200),
         "next_step": f"Ask me to reach out to @{handle}, or run /hermies matches.",
         "intent": dig.get("intent"),
+        # --- inputs to the interrupt judgement (see _value_of) ---
+        "score": float(their.get("score") or 0.0),
+        # the findings note is the richest signal we have about this candidate
+        "note": " ".join(filter(None, [
+            (dig.get("findings_note") or ""), verdict.get("reason", "")])),
+        "verified": replied,
+        "cards_only": not replied,
     }
 
 

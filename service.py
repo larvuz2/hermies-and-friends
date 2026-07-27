@@ -72,9 +72,16 @@ def drain_threads(client, card, llm, state, ring1=None) -> dict:
     pending = state.setdefault("pending_reveals", [])
     answered, queued = 0, 0
 
+    # Threads WE opened belong to the matchmaker, which advances them with the
+    # dig protocol. If the envoy also answered them the agent would be both
+    # asking and answering — in production that burned the hub's 12-message
+    # budget on four threads and doubled the inference bill.
+    ours = {d.get("thread_id") for d in (state.get("digs") or {}).values()
+            if d.get("thread_id")}
+
     for th in threads:
         tid = th.get("thread_id")
-        if not tid:
+        if not tid or tid in ours:
             continue
         if th.get("state") not in ("open", None):
             # A dig the counterpart concluded (or the hub expired): if we took

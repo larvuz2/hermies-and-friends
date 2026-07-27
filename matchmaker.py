@@ -691,6 +691,31 @@ def _notify_payload_findings(handle, dig, verdict) -> dict:
     }
 
 
+def _adopt_dig(state, s, cand, card_hash, prior, t):
+    """Re-attach to a dig thread the hub already has with this candidate,
+    instead of opening a duplicate. An open thread is resumed; if every prior
+    thread is finished we mark the dig concluded so it is judged (or skipped)
+    rather than started over."""
+    their = {k: s.get(k) for k in ("kind", "agent", "why", "score")}
+    open_ones = [th for th in prior if th.get("state") == "open"]
+    chosen = open_ones[0] if open_ones else prior[0]
+    turns = int(chosen.get("turns") or 0)
+    state["digs"][cand] = {
+        "thread_id": chosen.get("thread_id"),
+        "subject": chosen.get("subject", ""),
+        "opened_at": int(t),
+        # Count what has already been said so we don't blow the hub's budget.
+        "our_turns": max(1, (turns + 1) // 2),
+        "awaiting": bool(open_ones),
+        "concluded": not open_ones,
+        "card_hash": card_hash,
+        "their_card": their,
+        "intent": s.get("_intent"),
+        "last_their_msg": "",
+        "adopted": True,
+    }
+
+
 def _open_dig(state, client, card, s, cand, card_hash, llm, ring1, t):
     subject = _overlap_subject(card.public_dict(), s)
     opened = _open_safe(client, cand, "dig", subject)
@@ -833,8 +858,31 @@ def _judge_concluded(state, card, llm, t) -> list:
     return fresh
 
 
+def _existing_dig_threads(client) -> dict:
+    """{counterpart_handle: [thread, ...]} for dig threads the hub already has.
+
+    Local state is not the only source of truth: if it is lost, or two processes
+    raced before the poller lease existed, we would happily open a SECOND dig
+    with someone (observed in production: three separate threads with the same
+    agent inside two hours). The hub knows what already exists — ask it."""
+    try:
+        listing = client.list_threads()
+    except Exception:
+        return {}
+    out = {}
+    for th in (listing or {}).get("threads", []) or []:
+        if th.get("kind") != "dig":
+            continue
+        who = th.get("with")
+        if who:
+            out.setdefault(who, []).append(th)
+    return out
+
+
 def _run_threads_path(state, client, card, llm, t, intents, ring1) -> list:
     handle = card.public_dict().get("handle", "")
+    # One lookup per cycle, used as an idempotence guard when opening digs.
+    existing = _existing_dig_threads(client)
 
     # Stage 1 + 2: filter candidates, open a dig thread for genuinely new ones.
     for s in _collect_candidates(client, card, intents, handle):
@@ -850,7 +898,14 @@ def _run_threads_path(state, client, card, llm, t, intents, ring1) -> list:
         s["_card_hash"] = card_hash
         dig = state["digs"].get(cand)
         if dig is None:
-            _open_dig(state, client, card, s, cand, card_hash, llm, ring1, t)
+            prior = existing.get(cand) or []
+            if prior:
+                # We already have a thread with them that local state forgot.
+                # Adopt an open one so the conversation continues; if they are
+                # all finished, record that and never re-dig this candidate.
+                _adopt_dig(state, s, cand, card_hash, prior, t)
+            else:
+                _open_dig(state, client, card, s, cand, card_hash, llm, ring1, t)
         elif not dig.get("concluded"):
             dig["card_hash"] = card_hash
             dig["their_card"] = {k: s.get(k) for k in ("kind", "agent", "why", "score")}

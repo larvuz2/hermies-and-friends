@@ -417,3 +417,63 @@ def test_cron_prompt_is_delivery_only():
     """Cron must not be able to trigger discovery/digs/judging."""
     assert "hermies_deliver_pending" in matchmaker.CRON_PROMPT
     assert "hermies_matchmake" not in matchmaker.CRON_PROMPT
+
+
+# --------------------------------------------------------------------------- #
+# Production bugs found by watching the live network (2026-07-27)
+# --------------------------------------------------------------------------- #
+def test_envoy_never_answers_a_dig_we_opened(monkeypatch):
+    """BUG A: the envoy drain replied to threads the MATCHMAKER opened, so the
+    agent was both asking and answering — four live threads hit the hub's
+    12-message ceiling and doubled the inference bill."""
+    monkeypatch.setenv("HERMIES_MIN_SCORE", "1")
+    b, client = _fresh_client()
+    card, llm = _card(), DigLlm()
+    client.publish_profile(card.public_dict())
+    state = matchmaker.new_state()
+    clock = Clock()
+
+    matchmaker.run_engine(state, client, card, llm, clock)     # we open digs
+    tid = state["digs"]["mira-herald"]["thread_id"]
+    b.script_reply(tid, "sure, tell me more")                  # unread for us
+
+    before = len(b.read_thread(tid)["messages"])
+    summary = service.drain_threads(client, card, llm, state)
+    after = len(b.read_thread(tid)["messages"])
+
+    assert summary["answered"] == 0, "envoy must not answer our own dig"
+    assert after == before, "no extra message may be posted by the envoy"
+
+
+def test_envoy_still_answers_threads_others_opened():
+    """The guard must not silence the envoy on genuine inbound digs."""
+    card, llm = _card(), DigLlm()
+    ft = FakeThreadClient()
+    tid = ft.open_thread("someone-else", "dig", "hello")["thread_id"]
+    ft.add_counterpart(tid, "are our humans a fit?", frm="someone-else")
+    state = matchmaker.new_state()                    # no digs of our own
+    summary = service.drain_threads(ft, card, llm, state)
+    assert summary["answered"] == 1
+
+
+def test_no_duplicate_dig_when_the_hub_already_has_one(monkeypatch):
+    """BUG B: local state loss (or a pre-lease race) produced THREE threads with
+    the same agent in two hours. The hub is asked first now."""
+    monkeypatch.setenv("HERMIES_MIN_SCORE", "1")
+    b, client = _fresh_client()
+    card, llm = _card(), DigLlm()
+    client.publish_profile(card.public_dict())
+    clock = Clock()
+
+    state = matchmaker.new_state()
+    matchmaker.run_engine(state, client, card, llm, clock)
+    threads_after_first = len(b.list_threads()["threads"])
+    assert threads_after_first > 0
+
+    # Simulate losing local state entirely (crash, wiped file, other process).
+    fresh = matchmaker.new_state()
+    matchmaker.run_engine(fresh, client, card, llm, clock)
+
+    assert len(b.list_threads()["threads"]) == threads_after_first, \
+        "must adopt the existing thread, not open a duplicate"
+    assert fresh["digs"]["mira-herald"].get("adopted") is True

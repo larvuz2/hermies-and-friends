@@ -6,8 +6,10 @@ is stdlib-only (matching.py).
 """
 import base64
 import html
+import json
 import logging
 import os
+import pathlib
 import secrets
 import time
 import uuid
@@ -374,6 +376,44 @@ async def message(body: dict, authorization: str = Header(default="")):
     )
     db.bump_stat("messages_routed")
     return {"ok": True, "to": to_handle}
+
+
+# --- live client configuration --------------------------------------------
+# Every connected plugin polls this. It is how the network improves WITHOUT any
+# user ever running a command: tuning + behaviour text ship from here in
+# minutes. Only changes that need new Python require a code release (which the
+# plugin then self-updates in the background — see updater.py client-side).
+CLIENT_CONFIG_DEFAULT = pathlib.Path(__file__).resolve().parent / "client_config.json"
+
+
+def _client_config() -> dict:
+    """Read the served config fresh each time so an operator edit is live
+    immediately (the file is tiny; no caching games)."""
+    path = pathlib.Path(os.environ.get("HERMIES_CLIENT_CONFIG_FILE")
+                        or CLIENT_CONFIG_DEFAULT)
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError) as exc:
+        log.warning("client config unreadable (%s): %s", path, exc)
+        return {"version": 0, "knobs": {}, "notice": None}
+    if not isinstance(data, dict):
+        return {"version": 0, "knobs": {}, "notice": None}
+    knobs = data.get("knobs")
+    return {
+        "version": data.get("version", 0),
+        "knobs": knobs if isinstance(knobs, dict) else {},
+        "notice": data.get("notice"),
+        # Clients compare this against their own checkout to decide whether to
+        # self-update. Bump it in the file when a code release should roll out.
+        "plugin_revision": data.get("plugin_revision"),
+    }
+
+
+@app.get("/v1/config")
+async def client_config(authorization: str = Header(default="")):
+    """Live tuning + behaviour text for connected plugins."""
+    _authed_handle(authorization)
+    return _client_config()
 
 
 # --- operator-paid LLM proxy ----------------------------------------------

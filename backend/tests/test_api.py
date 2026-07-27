@@ -244,3 +244,42 @@ def test_v1_signal_shape_unchanged(client):
         assert set(comp) == {"need_to_offer", "offer_to_need", "guilds", "presence"}
         for v in comp.values():
             assert 0.0 <= v <= 1.0
+
+
+# --- live client config ----------------------------------------------------
+def test_client_config_served_to_agents(client):
+    """Every plugin polls this; it is how tuning ships without users acting."""
+    key = register(client, "cfg-herald", "r")
+    r = client.post("/v1/config", json={}, headers=auth(key))
+    assert r.status_code in (404, 405)          # it is a GET, not a POST
+    r = client.get("/v1/config", headers=auth(key))
+    assert r.status_code == 200
+    body = r.json()
+    assert "knobs" in body and isinstance(body["knobs"], dict)
+    assert body["knobs"]["interrupt_threshold"] > 0
+    assert "version" in body
+
+
+def test_client_config_requires_auth(client):
+    assert client.get("/v1/config").status_code == 401
+
+
+def test_client_config_survives_a_broken_file(client, monkeypatch, tmp_path):
+    bad = tmp_path / "broken.json"
+    bad.write_text("{not json", encoding="utf-8")
+    monkeypatch.setenv("HERMIES_CLIENT_CONFIG_FILE", str(bad))
+    key = register(client, "cfg2-herald", "r")
+    r = client.get("/v1/config", headers=auth(key))
+    assert r.status_code == 200                 # degrades, never 500s
+    assert r.json()["knobs"] == {}
+
+
+def test_operator_edit_is_served_live(client, monkeypatch, tmp_path):
+    f = tmp_path / "cfg.json"
+    f.write_text('{"version": 9, "knobs": {"interrupt_threshold": 7.7}}', encoding="utf-8")
+    monkeypatch.setenv("HERMIES_CLIENT_CONFIG_FILE", str(f))
+    key = register(client, "cfg3-herald", "r")
+    assert client.get("/v1/config", headers=auth(key)).json()["knobs"]["interrupt_threshold"] == 7.7
+    # edit on the hub -> next poll sees it, no restart
+    f.write_text('{"version": 10, "knobs": {"interrupt_threshold": 3.3}}', encoding="utf-8")
+    assert client.get("/v1/config", headers=auth(key)).json()["knobs"]["interrupt_threshold"] == 3.3

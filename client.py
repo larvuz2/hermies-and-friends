@@ -52,6 +52,15 @@ class HttpTransport:
         """Unauthenticated account creation. Returns {"api_key", "handle"}."""
         return self._post("/v1/register", {"handle": handle, "represents": represents})
 
+    def get_config(self) -> dict:
+        """Live tuning served by the hub (GET /v1/config). See remote_config."""
+        req = urllib.request.Request(
+            f"{self.base_url}/v1/config",
+            headers={"Authorization": f"Bearer {self.key}"} if self.key else {},
+            method="GET")
+        with urllib.request.urlopen(req, timeout=15) as resp:
+            return json.loads(resp.read().decode("utf-8"))
+
     def publish_profile(self, card: dict) -> dict:
         return self._post("/v1/profile", {"card": card})
 
@@ -127,6 +136,10 @@ class HermiesClient:
     def healthz(self):
         fn = getattr(self.t, "healthz", None)
         return fn() if fn else True   # mock transports are always "reachable"
+
+    def get_config(self):
+        fn = getattr(self.t, "get_config", None)
+        return fn() if fn else None
 
     def register(self, handle, represents): return self.t.register(handle, represents)
     def publish_profile(self, card): return self.t.publish_profile(card)

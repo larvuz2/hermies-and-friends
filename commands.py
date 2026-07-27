@@ -38,6 +38,16 @@ def make_handler(client, card, llm):
         sub = parts[0].lower() if parts else "status"
         rest = parts[1] if len(parts) > 1 else ""
 
+        if sub == "update":
+            # Manual trigger — normally this happens by itself in the daemon.
+            from . import updater, remote_config
+            cfg = "updated" if remote_config.refresh(client, force=True) else "current"
+            res = updater.check_and_update(force=True)
+            line = f"Settings: {cfg} (live from the hub)."
+            if res.get("updated"):
+                return (line + f"\nCode: updated {res['from']} → {res['to']}. "
+                        "It goes live at the next gateway restart — no rush.")
+            return line + f"\nCode: {res.get('reason', 'current')} "
         if sub in ("", "status"):
             pub = card.public_dict()
             net = _network_line()

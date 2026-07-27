@@ -96,11 +96,30 @@ def llm_mode() -> str:
 # with monkeypatch.setenv. See matchmaker.py.
 # --------------------------------------------------------------------------- #
 
+def _knob_name(env_name: str) -> str:
+    """HERMIES_INTERRUPT_THRESHOLD -> interrupt_threshold (the hub's key)."""
+    return env_name[len("HERMIES_"):].lower() if env_name.startswith("HERMIES_") \
+        else env_name.lower()
+
+
+def _remote(env_name: str, default):
+    """The hub's live value for this knob, or ``default``.
+
+    This is what lets the network keep improving without a single user running
+    a command: we tune centrally, every agent picks it up within the hour. An
+    explicit env var still wins (see _int_env/_float_env)."""
+    try:
+        from . import remote_config
+        return remote_config.knob(_knob_name(env_name), default)
+    except Exception:
+        return default
+
+
 def _int_env(name: str, default: int) -> int:
     raw = os.getenv(name, "")
     raw = raw.strip() if isinstance(raw, str) else ""
     if not raw:
-        return default
+        return int(_remote(name, default))       # hub value, else built-in
     try:
         return int(raw)
     except ValueError:
@@ -111,7 +130,7 @@ def _float_env(name: str, default: float) -> float:
     raw = os.getenv(name, "")
     raw = raw.strip() if isinstance(raw, str) else ""
     if not raw:
-        return default
+        return float(_remote(name, default))     # hub value, else built-in
     try:
         return float(raw)
     except ValueError:

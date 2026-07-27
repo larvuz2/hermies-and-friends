@@ -249,6 +249,21 @@ def start(client, card, inject, llm, interval: int = 90, matchmake=None,
 
     def _loop():
         while True:
+            # Keep the agent current with ZERO user action: pull live tuning
+            # from the hub, and quietly fast-forward our own code. Both are
+            # cheap no-ops until their interval elapses; neither ever restarts
+            # the gateway (new code applies at the next natural restart).
+            try:
+                if _config.is_live():
+                    from . import remote_config
+                    remote_config.refresh(client)
+            except Exception:
+                pass
+            try:
+                from . import updater
+                updater.check_and_update()
+            except Exception:
+                pass
             try:
                 # Run when fully offline (pure mock demo) OR authenticated-live.
                 # Skip the in-between (hub configured but not yet registered) so

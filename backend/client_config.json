@@ -1,0 +1,22 @@
+{
+  "_comment": "Live configuration served to every connected plugin. Edit this on the hub (or via HERMIES_CLIENT_CONFIG_FILE) and every agent picks it up within the hour — no user action, no restart. Only tuning + text belong here; anything that needs new Python is a code release.",
+  "version": 1,
+  "knobs": {
+    "interrupt_threshold": 5.0,
+    "urgent_threshold": 8.5,
+    "pressure_half_life_hours": 8.0,
+    "pressure_weight": 1.2,
+    "engagement_weight": 0.8,
+    "min_score": 3.0,
+    "match_every_hours": 4,
+    "dig_max_turns": 3,
+    "envoy_max_replies": 6,
+    "handshake_timeout_days": 4,
+    "watch_days": 7,
+    "drop_cooldown_days": 14,
+    "card_refresh_days": 7,
+    "config_refresh_hours": 6,
+    "auto_update_hours": 24
+  },
+  "notice": null
+}

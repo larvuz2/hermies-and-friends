@@ -115,6 +115,15 @@ def register(ctx):
     except Exception as e:
         log.debug("connectivity/auto-join check skipped: %s", e)
 
+    # Pull the hub's live tuning immediately on load, so a restart always comes
+    # up on current settings (the daemon then keeps it fresh in the background).
+    try:
+        if _config.is_live():
+            from . import remote_config
+            remote_config.refresh(client, force=True)
+    except Exception as e:
+        log.debug("remote config refresh skipped: %s", e)
+
     # The routed LLM adapter: operator-paid hub inference (with local fallback),
     # so users never bring their own model key. See make_llm above.
     llm = make_llm(ctx, client)

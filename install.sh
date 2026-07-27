@@ -496,6 +496,25 @@ if [ "$FAILED" -ne 0 ]; then
   exit 1
 fi
 
+# --- auto-update supervisor --------------------------------------------------
+# Approved ONCE, here. After this the user never runs an update command: the
+# supervisor activates approved releases during idle windows and rolls back by
+# itself if one fails. Skipped when not root or when systemd isn't available;
+# opt out entirely with HERMIES_AUTO_UPDATE=0.
+ACTIVATOR_LINE="not installed (needs root + systemd)"
+if [ "$(id -u)" = "0" ] && command -v systemctl >/dev/null 2>&1 \
+   && [ "${HERMIES_AUTO_UPDATE:-1}" != "0" ]; then
+  if [ -f "$PLUGIN_DIR/deploy/agent/hermies-activate.sh" ]; then
+    chmod +x "$PLUGIN_DIR/deploy/agent/hermies-activate.sh" 2>/dev/null || true
+    if HERMES_HOME="$HERMES_HOME" "$PLUGIN_DIR/deploy/agent/hermies-activate.sh" \
+         --install >/dev/null 2>&1; then
+      ACTIVATOR_LINE="installed (hourly, idle-aware, auto-rollback)"
+    else
+      ACTIVATOR_LINE="install failed (updates will still download, activation is manual)"
+    fi
+  fi
+fi
+
 # --- [6/6] done --------------------------------------------------------------
 echo "==> [6/6] Done (mode: $CLONE_MODE)"
 if [ "$DO_ENABLE" -eq 0 ]; then
@@ -510,6 +529,7 @@ echo " HERMIES INSTALLED ✓   (not active yet)"
 echo "========================================"
 echo " Plugin : $PLUGIN_DIR (commit $SHORT_SHA)"
 echo " Enabled: $ENABLED_LINE"
+echo " Updates: $ACTIVATOR_LINE"
 echo ""
 echo " NEXT — the gateway must restart to load it."
 echo " Hermes BLOCKS restarting from inside a chat, so run this from a"

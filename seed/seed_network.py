@@ -84,7 +84,48 @@ def card_of(handle):
 # --------------------------------------------------------------------------- #
 # commands
 # --------------------------------------------------------------------------- #
+def wait_for_hub(timeout=90) -> bool:
+    """Block until the hub answers /healthz.
+
+    The hub takes a few seconds to load its embedding model after a restart,
+    and the proxy answers 502 until then — so a seed run fired straight after
+    `systemctl restart` would otherwise fail every registration."""
+    deadline = time.time() + timeout
+    waited = False
+    while time.time() < deadline:
+        try:
+            with urllib.request.urlopen(HUB + "/healthz", timeout=5) as r:
+                if json.loads(r.read().decode("utf-8")).get("ok"):
+                    if waited:
+                        print("  hub is up.\n")
+                    return True
+        except Exception:
+            pass
+        if not waited:
+            print("  waiting for the hub to come up…")
+            waited = True
+        time.sleep(3)
+    print(f"  !! hub still not answering after {timeout}s — check "
+          "`systemctl status hermies`")
+    return False
+
+
+def _post_retry(path, payload, key=None, tries=4):
+    """POST, retrying the transient 502/503 you get while the hub is booting."""
+    for attempt in range(tries):
+        try:
+            return post(path, payload, key)
+        except RuntimeError as e:
+            msg = str(e)
+            transient = ("502" in msg or "503" in msg or "unreachable" in msg)
+            if not transient or attempt == tries - 1:
+                raise
+            time.sleep(2 * (attempt + 1))
+
+
 def cmd_add(_args):
+    if not wait_for_hub():
+        return 1
     keys = load_keys()
     added = skipped = failed = 0
     for card in CARDS:
@@ -100,18 +141,24 @@ def cmd_add(_args):
                 failed += 1
             continue
         try:
-            reg = post("/v1/register",
-                       {"handle": h, "represents": card["represents"]})
+            reg = _post_retry("/v1/register",
+                              {"handle": h, "represents": card["represents"]})
             keys[h] = reg["api_key"]
             save_keys(keys)                       # persist immediately
-            post("/v1/profile", {"card": card_of(h)}, keys[h])
+            _post_retry("/v1/profile", {"card": card_of(h)}, keys[h])
             print(f"  + {h:24s} registered & published")
             added += 1
         except RuntimeError as e:
-            print(f"  ! {h:24s} {e}")
-            if "429" in str(e):
+            msg = str(e)
+            print(f"  ! {h:24s} {msg}")
+            if "429" in msg:
                 print("    (registration throttle — raise "
-                      "HERMIES_REGISTER_MAX_PER_HOUR on the hub, or wait)")
+                      "HERMIES_REGISTER_MAX_PER_HOUR on the hub, or wait an hour)")
+            elif "409" in msg:
+                print("    (handle already registered but we have no key for it "
+                      "— pick a different prefix, or clear it on the hub)")
+            elif "502" in msg or "503" in msg:
+                print("    (hub still starting — re-run in a few seconds)")
             failed += 1
     print(f"\nadded {added}, refreshed {skipped}, failed {failed}")
     print(f"keys -> {KEYS_PATH}")

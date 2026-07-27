@@ -438,7 +438,8 @@ async def llm_complete(body: dict, authorization: str = Header(default="")):
     selected = db.get_setting("llm_model")     # dashboard-chosen model, if any
     result = llm_proxy.complete(messages, purpose, selected)        # 502 on failure
     tok = result["tokens"]
-    db.record_llm_usage(handle, tok["prompt"], tok["completion"])
+    db.record_llm_usage(handle, tok["prompt"], tok["completion"],
+                        model=result.get("model", ""))
     db.bump_stat("llm_calls")
     db.bump_stat("llm_tokens", tok["prompt"] + tok["completion"])
     return result
@@ -692,11 +693,41 @@ def _gather_llm_stats() -> dict:
     tokens_month = db.llm_tokens_month()
     rate = llm_proxy.cost_per_mtok()
     selected = db.get_setting("llm_model")
+    active = selected or llm_proxy.DEFAULT_MODEL
+
+    # --- what the operator is ACTUALLY paying, at each model's real price ---
+    by_model_today = db.llm_usage_by_model(1)
+    for row in by_model_today:
+        row["cost"] = llm_proxy.cost_of(row["model"], row["prompt_tokens"],
+                                        row["completion_tokens"])
+    real_cost_today = sum(r["cost"] for r in by_model_today)
+
+    week = db.llm_usage_by_model_daily(7)
+    per_day = {}
+    for row in week:
+        per_day.setdefault(row["date_utc"], 0.0)
+        per_day[row["date_utc"]] += llm_proxy.cost_of(
+            row["model"], row["prompt_tokens"], row["completion_tokens"])
+    days_seen = max(1, len(per_day))
+    avg_daily = sum(per_day.values()) / days_seen
+    active_agents = db.count_since(
+        (datetime.now(timezone.utc) - timedelta(days=1)).isoformat())
+    p_in, p_out = llm_proxy.price_for(active)
+
     return {
         "configured": llm_proxy.is_configured(),
         "models": llm_proxy.models_by_purpose(selected),
-        "selected_model": selected or llm_proxy.DEFAULT_MODEL,
+        "selected_model": active,
         "top_models": llm_proxy.TOP_MODELS,
+        "active_price_in": p_in,
+        "active_price_out": p_out,
+        "by_model_today": by_model_today,
+        "real_cost_today": real_cost_today,
+        "avg_daily_cost": avg_daily,
+        "projected_monthly": avg_daily * 30.0,
+        "active_agents_24h": active_agents,
+        "cost_per_agent_today": (real_cost_today / active_agents) if active_agents else 0.0,
+        "daily_cost_series": sorted(per_day.items()),
         "daily_cap": llm_proxy.daily_token_cap(),
         "global_cap": llm_proxy.global_token_cap(),
         "cost_per_mtok": rate,
@@ -897,9 +928,56 @@ def _render_admin(stats: dict) -> str:
             'this if set.</p>'
         )
 
+        # --- what you're covering, at the ACTIVE model's real price ---------
+        model_cost_rows = "".join(
+            "<tr>"
+            f"<td>{_e(r['model'])}</td>"
+            f"<td class=\"r\">{_e(r['calls'])}</td>"
+            f"<td class=\"r\">{_e(r['prompt_tokens'])}</td>"
+            f"<td class=\"r\">{_e(r['completion_tokens'])}</td>"
+            f"<td class=\"r\">${r['cost']:.4f}</td>"
+            "</tr>"
+            for r in llm["by_model_today"]
+        ) or '<tr><td colspan="5" class="muted">no spend today</td></tr>'
+
+        series_rows = "".join(
+            f"<tr><td>{_e(d)}</td><td class=\"r\">${c:.4f}</td></tr>"
+            for d, c in llm["daily_cost_series"]
+        ) or '<tr><td colspan="2" class="muted">no spend yet</td></tr>'
+
+        cost_tiles = "".join(
+            f'<div class="tile"><div class="num">{v}</div>'
+            f'<div class="lbl">{_e(l)}</div></div>'
+            for l, v in [
+                ("Cost today (you pay)", f"${llm['real_cost_today']:.4f}"),
+                ("Avg / day", f"${llm['avg_daily_cost']:.4f}"),
+                ("Projected / month", f"${llm['projected_monthly']:.2f}"),
+                ("Per active agent today", f"${llm['cost_per_agent_today']:.4f}"),
+                ("Active agents (24h)", str(llm["active_agents_24h"])),
+            ]
+        )
+
+        daily_cost_section = (
+            '<h3>Daily cost you are covering</h3>'
+            f'<p class="muted">Priced at each model\'s real OpenRouter rate. '
+            f'Active model <code>{_e(llm["selected_model"])}</code> costs '
+            f'<b>${llm["active_price_in"]:.3f}</b> per M input tokens and '
+            f'<b>${llm["active_price_out"]:.3f}</b> per M output tokens.</p>'
+            f'<div class="tiles">{cost_tiles}</div>'
+            '<div class="wrap"><table>'
+            '<thead><tr><th>Model</th><th class="r">Calls</th>'
+            '<th class="r">In tok</th><th class="r">Out tok</th>'
+            '<th class="r">Cost today</th></tr></thead>'
+            f'<tbody>{model_cost_rows}</tbody></table></div>'
+            '<h3>Last 7 days</h3><div class="wrap"><table>'
+            '<thead><tr><th>Date (UTC)</th><th class="r">Cost</th></tr></thead>'
+            f'<tbody>{series_rows}</tbody></table></div>'
+        )
+
         llm_section = (
             '<p class="muted"><b>LLM: configured</b> — operator-paid inference '
             'via OpenRouter.</p>'
+            + daily_cost_section
             + picker
             + '<div class="wrap"><table><tbody>' + llm_rows + '</tbody></table></div>'
             '<h3>Models in use (by purpose)</h3><div class="wrap"><table>'

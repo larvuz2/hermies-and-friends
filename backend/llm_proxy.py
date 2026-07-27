@@ -33,6 +33,31 @@ TOP_MODELS = [
 ]
 TOP_MODEL_IDS = {m for m, _ in TOP_MODELS}
 
+# Real OpenRouter list prices, USD per MILLION tokens (prompt, completion).
+# Fetched from openrouter.ai/api/v1/models — update if they change. Unknown
+# models fall back to the blended HERMIES_LLM_COST_PER_MTOK estimate.
+MODEL_PRICES_PER_MTOK = {
+    "qwen/qwen3.7-max":        (1.475, 4.425),
+    "moonshotai/kimi-k3":      (3.00, 15.00),
+    "anthropic/claude-opus-5": (5.00, 25.00),
+    "openai/gpt-5.6-sol":      (5.00, 30.00),
+    "google/gemini-3.6-flash": (1.50, 7.50),
+}
+
+
+def price_for(model: str):
+    """(prompt, completion) USD per million tokens for a model."""
+    if model in MODEL_PRICES_PER_MTOK:
+        return MODEL_PRICES_PER_MTOK[model]
+    blended = cost_per_mtok()
+    return (blended, blended)
+
+
+def cost_of(model: str, prompt_tokens: int, completion_tokens: int) -> float:
+    """Actual USD for this usage at the model's real price."""
+    p_in, p_out = price_for(model)
+    return (float(prompt_tokens) * p_in + float(completion_tokens) * p_out) / 1_000_000.0
+
 # Payload caps (defense in depth — the plugin builds small prompts).
 MAX_MESSAGES = 40
 MAX_TOTAL_CHARS = 32_000

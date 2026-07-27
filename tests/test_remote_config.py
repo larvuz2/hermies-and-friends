@@ -167,3 +167,19 @@ def test_updater_can_only_ever_shell_out_to_git(monkeypatch):
 
 class _Done:
     returncode, stdout, stderr = 0, "", ""
+
+
+# --- single-flight poller ---------------------------------------------------
+def test_only_one_process_polls(monkeypatch, tmp_path):
+    """Hermes runs subagents as separate processes; each calls register(). The
+    lease keeps exactly one of them talking to the hub."""
+    from hermies import service
+    monkeypatch.setenv("HERMIES_HOME", str(tmp_path))
+    assert service._claim_poller_lock(now=1000.0) is True      # first wins
+
+    # a DIFFERENT process arrives while the lease is fresh -> stands down
+    monkeypatch.setattr(service.os, "getpid", lambda: 999999)
+    assert service._claim_poller_lock(now=1000.0 + 30) is False
+
+    # ...but an abandoned lease is taken over, so a killed process can't wedge us
+    assert service._claim_poller_lock(now=1000.0 + service.LEASE_SECONDS + 5) is True

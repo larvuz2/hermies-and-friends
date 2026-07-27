@@ -29,7 +29,7 @@ import json
 import os
 import sqlite3
 import threading
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 DEFAULT_DB = os.path.join(os.path.dirname(os.path.abspath(__file__)), "hermies.db")
 
@@ -113,6 +113,18 @@ def init_db() -> None:
                 PRIMARY KEY (handle, date_utc)
             )"""
         )
+        # Same spend, bucketed by MODEL, so the operator's real cost can be
+        # computed at each model's actual price even after switching models.
+        conn.execute(
+            """CREATE TABLE IF NOT EXISTS llm_usage_by_model (
+                date_utc          TEXT NOT NULL,
+                model             TEXT NOT NULL,
+                calls             INTEGER NOT NULL DEFAULT 0,
+                prompt_tokens     INTEGER NOT NULL DEFAULT 0,
+                completion_tokens INTEGER NOT NULL DEFAULT 0,
+                PRIMARY KEY (date_utc, model)
+            )"""
+        )
         # Threaded agent-to-agent conversations. Guarded create so a deployment
         # that predates threads upgrades itself in place on the next boot.
         conn.execute(
@@ -191,6 +203,12 @@ def _utcnow_iso() -> str:
 
 def _utc_today() -> str:
     return datetime.now(timezone.utc).date().isoformat()
+
+
+def _utc_day_offset(days_back: int) -> str:
+    """The UTC date ``days_back`` days ago, ISO — window bound for usage queries."""
+    return (datetime.now(timezone.utc).date()
+            - timedelta(days=max(0, int(days_back)))).isoformat()
 
 
 # --- accounts -------------------------------------------------------------
@@ -602,8 +620,10 @@ def daily_stats_map() -> dict:
 
 
 # --- operator-paid LLM metering -------------------------------------------
-def record_llm_usage(handle: str, prompt_tokens: int, completion_tokens: int) -> None:
-    """Upsert one agent's LLM usage for the current UTC day (per successful call)."""
+def record_llm_usage(handle: str, prompt_tokens: int, completion_tokens: int,
+                     model: str = "") -> None:
+    """Upsert one agent's LLM usage for the current UTC day (per successful call),
+    and mirror it into the per-model bucket used for real cost accounting."""
     day = _utc_today()
     with _LOCK, _connect() as conn:
         conn.execute(
@@ -615,6 +635,40 @@ def record_llm_usage(handle: str, prompt_tokens: int, completion_tokens: int) ->
             "completion_tokens = completion_tokens + excluded.completion_tokens",
             (handle, day, int(prompt_tokens), int(completion_tokens)),
         )
+        conn.execute(
+            "INSERT INTO llm_usage_by_model (date_utc, model, calls, "
+            "prompt_tokens, completion_tokens) VALUES (?, ?, 1, ?, ?) "
+            "ON CONFLICT(date_utc, model) DO UPDATE SET "
+            "calls = calls + 1, "
+            "prompt_tokens = prompt_tokens + excluded.prompt_tokens, "
+            "completion_tokens = completion_tokens + excluded.completion_tokens",
+            (day, model or "unknown", int(prompt_tokens), int(completion_tokens)),
+        )
+
+
+def llm_usage_by_model(days: int = 1) -> list:
+    """Per-model usage for the last ``days`` UTC days (today first when days=1)."""
+    with _connect() as conn:
+        rows = conn.execute(
+            "SELECT model, SUM(calls) AS calls, SUM(prompt_tokens) AS prompt_tokens, "
+            "SUM(completion_tokens) AS completion_tokens "
+            "FROM llm_usage_by_model WHERE date_utc >= ? GROUP BY model "
+            "ORDER BY SUM(prompt_tokens + completion_tokens) DESC",
+            (_utc_day_offset(days - 1),),
+        ).fetchall()
+        return [dict(r) for r in rows]
+
+
+def llm_usage_by_model_daily(days: int = 7) -> list:
+    """[{date_utc, model, prompt_tokens, completion_tokens}] over a window, so
+    cost can be summed at each day's actual model price."""
+    with _connect() as conn:
+        rows = conn.execute(
+            "SELECT date_utc, model, prompt_tokens, completion_tokens "
+            "FROM llm_usage_by_model WHERE date_utc >= ? ORDER BY date_utc",
+            (_utc_day_offset(days - 1),),
+        ).fetchall()
+        return [dict(r) for r in rows]
 
 
 def llm_tokens_today(handle: str) -> int:

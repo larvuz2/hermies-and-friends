@@ -10,6 +10,7 @@
 thread with simple polling (v1 — swap for SSE/websocket later).
 """
 import json
+import os
 import threading
 import time
 
@@ -229,6 +230,47 @@ def _format_digest(signals) -> str:
     return "\n".join(lines)
 
 
+def _claim_poller_lock(now=None) -> bool:
+    """Only ONE poller per machine.
+
+    Hermes runs subagents as separate processes, and every one of them calls
+    register() — so without this each spawns its own polling thread and the hub
+    sees N× the traffic (measured 7× in production: ~840 req/h from a single
+    agent). We take a lease file: whoever holds a fresh lease polls, everyone
+    else stays idle. The lease is refreshed by the live loop and expires so a
+    killed process never wedges the network shut.
+    """
+    t = float(now() if callable(now) else (now if now is not None else time.time()))
+    try:
+        from . import matchmaker
+        path = matchmaker._state_path().parent / "poller.lock"
+        path.parent.mkdir(parents=True, exist_ok=True)
+    except Exception:
+        return True                      # can't coordinate -> don't block work
+    try:
+        if path.exists():
+            held = json.loads(path.read_text(encoding="utf-8"))
+            fresh = (t - float(held.get("ts", 0))) < LEASE_SECONDS
+            if fresh and int(held.get("pid", -1)) != os.getpid():
+                return False             # someone else is already polling
+    except Exception:
+        pass                             # unreadable/corrupt lease -> take it
+    try:
+        path.write_text(json.dumps({"pid": os.getpid(), "ts": int(t)}),
+                        encoding="utf-8")
+    except Exception:
+        pass
+    return True
+
+
+def _refresh_poller_lock(now=None) -> None:
+    """Keep our lease alive while we're the active poller."""
+    _claim_poller_lock(now)
+
+
+LEASE_SECONDS = 300      # a lease older than this is considered abandoned
+
+
 def start(client, card, inject, llm, interval: int = 90, matchmake=None,
           match_interval: int = None):
     """Spawn the daemon poll loop. No-op-safe: exceptions are swallowed so a
@@ -249,6 +291,13 @@ def start(client, card, inject, llm, interval: int = 90, matchmake=None,
 
     def _loop():
         while True:
+            # Single-flight: only the lease holder talks to the hub. Every other
+            # Hermes process (subagents, workers) idles here instead of
+            # multiplying the network's traffic by the process count.
+            if not _claim_poller_lock():
+                time.sleep(interval)
+                continue
+
             # Keep the agent current with ZERO user action: pull live tuning
             # from the hub, and quietly fast-forward our own code. Both are
             # cheap no-ops until their interval elapses; neither ever restarts

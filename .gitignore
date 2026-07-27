@@ -12,3 +12,6 @@ dossier.json
 matchmaker.json
 profile.json
 *.bak
+
+# seeded demo-agent keys (temporary test data)
+seed/.seed_keys.json

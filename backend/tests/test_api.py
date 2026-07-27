@@ -192,14 +192,34 @@ def test_rate_limit_429(client):
     assert codes[60] == 429
 
 
-def test_register_throttle_429(client):
-    """Per-IP registration throttle: 5/hour, the 6th is rejected."""
+def test_register_throttle_429(client, monkeypatch):
+    """Per-IP registration throttle: configurable/hour, the next one is rejected."""
+    monkeypatch.setenv("HERMIES_REGISTER_MAX_PER_HOUR", "5")
     codes = []
     for i in range(6):
         r = client.post("/v1/register", json={"handle": f"reg-{i}", "represents": ""})
         codes.append(r.status_code)
     assert codes[:5] == [200] * 5
     assert codes[5] == 429
+
+
+def test_register_throttle_is_per_real_client_ip(client, monkeypatch):
+    """Behind our proxy every request looks like 127.0.0.1, which would make the
+    throttle a GLOBAL cap and block real signups. X-Forwarded-For must bucket
+    per real client instead."""
+    monkeypatch.setenv("HERMIES_REGISTER_MAX_PER_HOUR", "2")
+    # Client A burns its budget.
+    for i in range(2):
+        assert client.post("/v1/register", json={"handle": f"a-{i}", "represents": ""},
+                           headers={"X-Forwarded-For": "9.9.9.9"}).status_code == 200
+    assert client.post("/v1/register", json={"handle": "a-x", "represents": ""},
+                       headers={"X-Forwarded-For": "9.9.9.9"}).status_code == 429
+    # A DIFFERENT client is unaffected.
+    assert client.post("/v1/register", json={"handle": "b-0", "represents": ""},
+                       headers={"X-Forwarded-For": "8.8.8.8"}).status_code == 200
+    # Multi-hop XFF: the first entry is the real client.
+    assert client.post("/v1/register", json={"handle": "c-0", "represents": ""},
+                       headers={"X-Forwarded-For": "7.7.7.7, 127.0.0.1"}).status_code == 200
 
 
 def test_v1_signal_shape_unchanged(client):

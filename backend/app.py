@@ -119,19 +119,51 @@ _rate_lock = Lock()
 
 # Public-launch hardening: throttle account creation per client IP so a single
 # source cannot spray registrations. In-memory + process-local (single worker).
-REGISTER_MAX = 5
+DEFAULT_REGISTER_MAX = 20
 REGISTER_WINDOW = 3600.0     # seconds (per hour)
 _reg_hits = defaultdict(deque)
 _reg_lock = Lock()
 
 
+def _register_max() -> int:
+    try:
+        return int(os.environ.get("HERMIES_REGISTER_MAX_PER_HOUR",
+                                  DEFAULT_REGISTER_MAX))
+    except (TypeError, ValueError):
+        return DEFAULT_REGISTER_MAX
+
+
+def _client_ip(request) -> str:
+    """The real client IP.
+
+    We run behind Caddy, so ``request.client.host`` is the PROXY (127.0.0.1) for
+    every request — which would turn the per-IP registration throttle into a
+    global cap and block real signups. Prefer the first hop in X-Forwarded-For,
+    which our own trusted proxy sets.
+    """
+    xff = ""
+    try:
+        xff = request.headers.get("x-forwarded-for", "") or ""
+    except Exception:
+        xff = ""
+    if xff:
+        first = xff.split(",")[0].strip()
+        if first:
+            return first
+    try:
+        return request.client.host if request.client else "unknown"
+    except Exception:
+        return "unknown"
+
+
 def _check_register_rate(ip: str) -> None:
     now = time.time()
+    limit = _register_max()
     with _reg_lock:
         q = _reg_hits[ip]
         while q and q[0] <= now - REGISTER_WINDOW:
             q.popleft()
-        if len(q) >= REGISTER_MAX:
+        if len(q) >= limit:
             raise HTTPException(
                 status_code=429, detail="registration rate limit exceeded")
         q.append(now)
@@ -216,8 +248,7 @@ async def healthz():
 
 @app.post("/v1/register")
 async def register(body: dict, request: Request):
-    ip = request.client.host if request.client else "unknown"
-    _check_register_rate(ip)
+    _check_register_rate(_client_ip(request))
     handle = _clip_str((body or {}).get("handle")).strip()
     represents = _clip_str((body or {}).get("represents"))
     if not handle:

@@ -67,6 +67,35 @@ def build(client, card, llm=None):
                            "about": res.get("handle", ""),
                            "note": "Thanks — that changes what I bring you next."})
 
+    def why(params, **kwargs):
+        """The trust receipt for one finding — why it matched, what was
+        verified, what the conversation could use, what never left, why now."""
+        fid = str(params.get("finding_id") or "").strip()
+        if not fid:
+            return json.dumps({"success": False, "error": "need 'finding_id'"})
+        return json.dumps({"success": True,
+                           "receipt": matchmaker.receipt(matchmaker.load_state(), fid)})
+
+    def intro_preview_tool(params, **kwargs):
+        """Show EXACTLY what an introduction would share. Sends nothing."""
+        to = str(params.get("to") or "").strip()
+        if not to:
+            return json.dumps({"success": False, "error": "need 'to'"})
+        try:
+            contact = dossier.get_contact()
+        except Exception:
+            contact = {}
+        preview = matchmaker.intro_preview(matchmaker.load_state(), to, contact)
+        return json.dumps({
+            "success": True,
+            "preview_text": matchmaker.format_intro_preview(preview),
+            "have_contact": preview["have_contact"],
+            "blocked": preview["blocked"],
+            "next": ("Show preview_text to your human verbatim. Only if they "
+                     "clearly approve, call hermies_reveal_request with "
+                     "to=<handle>, include_contact=true, human_approved=true."),
+        })
+
     def deliver_pending_tool(params, **kwargs):
         """DELIVERY ONLY — what the cron job calls.
 
@@ -355,6 +384,45 @@ def build(client, card, llm=None):
                 },
             },
             "handler": feedback,
+        },
+        {
+            "name": "hermies_why",
+            "description": ("The trust receipt for a finding: why it matched, "
+                            "what was verified vs merely claimed, what the "
+                            "conversation could draw on, what never left this "
+                            "machine, and why it interrupted now. Relay it "
+                            "verbatim when your human asks 'why'."),
+            "schema": {
+                "name": "hermies_why",
+                "description": "Explain one finding in full.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {"finding_id": {
+                        "type": "string",
+                        "description": "the [id] shown with the finding"}},
+                    "required": ["finding_id"],
+                },
+            },
+            "handler": why,
+        },
+        {
+            "name": "hermies_intro_preview",
+            "description": ("Preview an introduction BEFORE anything is sent: "
+                            "exactly which contact details would go, the note "
+                            "attached, and what stays private. Always call this "
+                            "and show it to your human before any reveal."),
+            "schema": {
+                "name": "hermies_intro_preview",
+                "description": "Preview an introduction; sends nothing.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {"to": {
+                        "type": "string",
+                        "description": "the other agent's handle"}},
+                    "required": ["to"],
+                },
+            },
+            "handler": intro_preview_tool,
         },
         {
             "name": "hermies_search_agents",

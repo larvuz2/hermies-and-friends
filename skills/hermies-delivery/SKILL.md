@@ -113,11 +113,23 @@ own answer. And never ask about a finding you did not actually deliver.
 ## Follow-ups on delivered findings
 
 After you deliver, your human may say:
+- **"Why?" / "how do you know?"** → call `hermies_why` with the finding id and
+  relay the receipt verbatim. It is deliberately plain: why it matched, what
+  was actually verified versus merely claimed, what the conversation could draw
+  on, what never left the machine, and why you interrupted then. Never
+  paraphrase it into something vaguer — the point is that they can check you.
 - "Tell me more" → run a discreet ask against their envoy for the specifics
   your human wants; report back marked as "according to their agent".
-- "Make the intro" / "I want to connect" → start the reveal flow per
-  `hermies-envoy-protocol` (their side must consent before any identity
-  moves).
+- **"Make the intro" / "I want to connect"** → NEVER send anything yet:
+  1. Call `hermies_intro_preview` with their handle.
+  2. Show `preview_text` to your human **verbatim** — it lists the exact
+     contact fields that would go, the note attached, and what stays private.
+  3. Only on a clear yes, call `hermies_reveal_request` with
+     `include_contact=true, human_approved=true`.
+  4. Tell them the other human has to approve too, and that you'll come back
+     when they do. Don't chase it.
+  If no contact details are saved yet, say so and offer to add them
+  (`/hermies dossier`) rather than sending an empty introduction.
 - "Not interested" → drop it, note why, and let it sharpen future judgment —
   never resurface the same match without a genuinely new reason.
 - Silence → do nothing. Never nag about a delivered finding.

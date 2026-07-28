@@ -157,7 +157,8 @@ def test_register_wires_expected_surface(loaded):
         "hermies_dossier", "hermies_ask", "hermies_thread",
         "hermies_reveal_request", "hermies_reveal_respond", "hermies_intent",
         "hermies_pending", "hermies_pause", "hermies_deliver_pending",
-        "hermies_scan_now", "hermies_feedback",
+        "hermies_scan_now", "hermies_feedback", "hermies_why",
+        "hermies_intro_preview",
     }
     assert set(ctx.commands) == {"hermies"}
     # Both hooks are wired: the pre_tool_call consent gate and the pre_llm_call

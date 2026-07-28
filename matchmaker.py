@@ -533,7 +533,173 @@ def _format_notification(items) -> str:
         # One-tap feedback. This is the only signal that tells us whether a
         # finding was actually any good — indirect engagement can't distinguish
         # "relevant but useless" from "exactly right".
-        lines.append(f"  [{it.get('id', '?')}] useful · wrong fit · too early · spam")
+        lines.append(f"  [{it.get('id', '?')}] useful · wrong fit · too early · "
+                     "spam · or ask me why")
+    return "\n".join(lines)
+
+
+# --------------------------------------------------------------------------- #
+# Trust receipt — makes the privacy architecture VISIBLE.
+#
+# Users can't observe architecture; they experience a message arriving from an
+# autonomous system. The receipt answers, for one finding: why it matched, what
+# was actually verified, what the conversation could draw on, what never left
+# the machine, and why we chose to interrupt now.
+# --------------------------------------------------------------------------- #
+
+def _why_now(item, state, t) -> list:
+    """The honest reasons this cleared the bar right now."""
+    why = []
+    if item.get("intent"):
+        why.append(f'you asked me to find "{sanitize.clean_text(item["intent"], 80)}"')
+    if item.get("verified"):
+        why.append("their agent replied and confirmed the fit")
+    elif item.get("cards_only"):
+        why.append("judged on profiles alone — they never replied")
+    note = (item.get("note") or "").lower()
+    hit = next((w for w in _TIME_SENSITIVE if w in note), "")
+    if hit:
+        why.append(f'it looks time-sensitive ("{hit}")')
+    score = float(item.get("score") or 0)
+    if score >= 8:
+        why.append(f"a strong two-way match ({score:.1f}/10)")
+    elif score:
+        why.append(f"match strength {score:.1f}/10")
+    if not why:
+        why.append("it cleared the bar for interrupting you")
+    return why
+
+
+def receipt(state, finding_id) -> str:
+    """A plain-language trust receipt for one finding."""
+    _ensure_shape(state)
+    item = _finding_by_id(state, finding_id)
+    if not item:
+        return (f"I don't have a finding with id {finding_id}. "
+                "Use the id shown in brackets with the finding.")
+    t = time.time()
+    handle = item.get("handle", "?")
+    ring1 = item.get("ring1_available") or []
+
+    lines = [f"Receipt for @{handle}  [{finding_id}]", ""]
+
+    lines.append("WHY IT MATCHED")
+    lines.append("  " + (sanitize.clean_text(item.get("why_matched") or
+                                             item.get("represents") or
+                                             "profile overlap", 240)))
+    if item.get("pitch"):
+        lines.append("  " + sanitize.clean_text(item["pitch"], 240))
+
+    lines.append("")
+    lines.append("WHAT WAS VERIFIED")
+    if item.get("verified"):
+        turns = item.get("turns") or 0
+        lines.append(f"  Our agents actually spoke ({turns} exchange(s) from my side).")
+        if item.get("evidence"):
+            lines.append(f'  Their words: "{sanitize.clean_text(item["evidence"], 200)}"')
+        lines.append("  Anything they said about themselves is their claim, not "
+                     "something I could independently check.")
+    else:
+        lines.append("  Nothing — their agent never replied. This is based on "
+                     "their public profile only.")
+
+    lines.append("")
+    lines.append("WHAT THE CONVERSATION COULD DRAW ON")
+    lines.append("  Your public card (which anyone on the network can see).")
+    if ring1:
+        lines.append(f"  Plus {len(ring1)} fact(s) you approved for conversations:")
+        for f in ring1[:5]:
+            lines.append(f"    - {sanitize.clean_text(f, 120)}")
+    else:
+        lines.append("  No extra approved facts — your public card only.")
+
+    lines.append("")
+    lines.append("WHAT NEVER LEFT THIS MACHINE")
+    lines.append("  Your name, contact details and socials; your private dossier; "
+                 "our conversations; anything you marked private. Contact details "
+                 "only ever move if you approve an introduction.")
+
+    lines.append("")
+    lines.append("WHY I INTERRUPTED YOU NOW")
+    for r in _why_now(item, state, t):
+        lines.append(f"  - {r}")
+    return "\n".join(lines)
+
+
+# --------------------------------------------------------------------------- #
+# Guided introduction — the last ten percent of the transaction.
+#
+# The consent architecture was the hard part and already exists. What was
+# missing is the interface: a human should see EXACTLY what is about to be
+# shared, approve once, and wait for the other side. No guessing at commands.
+# --------------------------------------------------------------------------- #
+
+def intro_preview(state, handle, contact=None) -> dict:
+    """What an introduction to ``handle`` would send — WITHOUT sending anything.
+
+    Pure: it reads state and the contact block and returns a preview. Nothing
+    leaves the machine until the human approves the actual reveal."""
+    _ensure_shape(state)
+    finding = None
+    for bucket in ("inflight", "delivered", "ready"):
+        for it in (state.get("outbox") or {}).get(bucket) or []:
+            if it.get("handle") == handle:
+                finding = it
+                break
+        if finding:
+            break
+    note = (state.get("findings", {}).get(handle) or {}).get("note", "")
+
+    contact = contact or {}
+    will_share = {k: v for k, v in {
+        "name": contact.get("name", ""),
+        "email": contact.get("email", ""),
+        "socials": ", ".join(contact.get("socials") or []),
+    }.items() if v}
+
+    # A short, factual mutual introduction built from what the dig established.
+    bits = []
+    if finding and finding.get("pitch"):
+        bits.append(sanitize.clean_text(finding["pitch"], 200))
+    if finding and finding.get("intent"):
+        bits.append(f'They were looking for: {sanitize.clean_text(finding["intent"], 120)}')
+    if not bits and note:
+        bits.append(sanitize.clean_text(note.splitlines()[0], 200))
+    intro = " ".join(bits) or "Our agents found a concrete overlap worth a direct conversation."
+
+    return {
+        "to": handle,
+        "intro": intro,
+        "will_share": will_share,
+        "never_shared": ["your private dossier", "our conversations",
+                         "anything you marked private"],
+        "blocked": bool(contact.get("never_share")),
+        "requires": "both humans must approve before contact details move",
+        "have_contact": bool(will_share),
+    }
+
+
+def format_intro_preview(p: dict) -> str:
+    """The preview a human reads before approving."""
+    if p.get("blocked"):
+        return ("Your contact details are marked never-share, so I can't offer "
+                "an introduction. Change that with /hermies dossier if you want to.")
+    lines = [f"Introduction to @{p['to']} — nothing has been sent yet.", ""]
+    lines.append("WHAT THEY WOULD RECEIVE")
+    if p["will_share"]:
+        for k, v in p["will_share"].items():
+            lines.append(f"  {k}: {v}")
+    else:
+        lines.append("  (no contact details saved yet — add them with "
+                     "/hermies dossier before introducing)")
+    lines.append(f"  plus a short note: \"{p['intro']}\"")
+    lines.append("")
+    lines.append("WHAT THEY WOULD NOT RECEIVE")
+    for n in p["never_shared"]:
+        lines.append(f"  - {n}")
+    lines.append("")
+    lines.append(f"They must approve too — {p['requires']}.")
+    lines.append(f"To go ahead, say: approve introduction to @{p['to']}")
     return "\n".join(lines)
 
 
@@ -783,6 +949,10 @@ def _notify_payload_findings(handle, dig, verdict) -> dict:
         "evidence": sanitize.clean_text(dig.get("last_their_msg", ""), max_len=200),
         "next_step": f"Ask me to reach out to @{handle}, or run /hermies matches.",
         "intent": dig.get("intent"),
+        # --- trust receipt inputs (see receipt()) ---
+        "why_matched": their.get("why", ""),          # the hub's grounded reason
+        "ring1_available": list(dig.get("ring1_available") or []),
+        "turns": int(dig.get("our_turns") or 0),
         # --- inputs to the interrupt judgement (see _value_of) ---
         "score": float(their.get("score") or 0.0),
         # the findings note is the richest signal we have about this candidate
@@ -839,6 +1009,9 @@ def _open_dig(state, client, card, s, cand, card_hash, llm, ring1, t):
         "their_card": {k: s.get(k) for k in ("kind", "agent", "why", "score")},
         "intent": s.get("_intent"),
         "last_their_msg": "",
+        # For the trust receipt: exactly what this conversation was allowed to
+        # draw on. Recorded at open time so the receipt can never overstate it.
+        "ring1_available": list(ring1 or [])[:10],
     }
     _log(state, t, cand, "dig_opened",
          ("intent: " + s["_intent"]) if s.get("_intent") else "opener sent")

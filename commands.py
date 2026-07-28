@@ -133,6 +133,23 @@ def make_handler(client, card, llm):
                 return _card_apply(state, card, client)
             return _card_view(state, card)
 
+        if sub == "why":
+            fid = rest.strip()
+            if not fid:
+                return "Usage: /hermies why <finding-id>  (the [id] with a finding)"
+            return matchmaker.receipt(matchmaker.load_state(), fid)
+
+        if sub == "intro":
+            who = rest.strip().lstrip("@")
+            if not who:
+                return "Usage: /hermies intro <handle>  — previews, sends nothing"
+            try:
+                contact = dossier.get_contact()
+            except Exception:
+                contact = {}
+            p = matchmaker.intro_preview(matchmaker.load_state(), who, contact)
+            return matchmaker.format_intro_preview(p)
+
         if sub == "feedback":
             parts2 = rest.split(maxsplit=1)
             if len(parts2) < 2:
@@ -167,8 +184,8 @@ def make_handler(client, card, llm):
 
         return (f"Unknown subcommand '{sub}'. Try: status | profile | discover | "
                 "signals | search <q> | skills | dossier | intents | matches | "
-                "log | card | card apply | feedback <id> <verdict> | update | "
-                "pause | resume | leave")
+                "log | card | card apply | why <id> | intro <handle> | "
+                "feedback <id> <verdict> | update | pause | resume | leave")
 
     return handler
 

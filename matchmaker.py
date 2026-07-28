@@ -129,6 +129,7 @@ def _ensure_shape(d: dict) -> dict:
     d.setdefault("thread_replies", {})   # {thread_id: our-reply-count} — envoy daemon 6-reply cap
     d.setdefault("notify_log", [])    # [epoch_seconds, ...] recent interruptions (social battery)
     d.setdefault("engagement", [])    # [{ts, kind, w}, ...] human leaned in -> lowers the bar
+    d.setdefault("feedback", [])      # [{id, handle, verdict, ts}, ...] one-tap match feedback
     d.setdefault("queue", [])         # scratch: items _emit held back this pass
     # Durable outbox between the two planes. The ENGINE (daemon) only appends to
     # ready; DELIVERY (cron) claims into inflight and confirms into delivered.
@@ -273,6 +274,8 @@ def _should_skip(state, handle, card_hash, t) -> bool:
     changed = rec.get("card_hash") != card_hash
     v = rec.get("verdict")
     ts = rec.get("ts", 0)
+    if v == "never":
+        return True                     # human marked them spam — never again
     if v == "drop":
         if (t - ts) < _config.drop_cooldown_days() * _DAY:
             return True                 # in cooldown: ignore even if card changed
@@ -409,15 +412,19 @@ def _pressure(state, t) -> float:
 
 
 def _engagement(state, t) -> float:
-    """How interested the human has shown themselves to be lately (0..~3).
-    Positive acts (asking for matches, requesting an intro, adding an intent)
-    decay over a few days."""
+    """How interested the human has shown themselves to be lately (-3..+3).
+
+    Positive acts (asking for matches, requesting an intro, adding an intent,
+    rating a finding useful) lower the bar. NEGATIVE feedback — wrong fit, too
+    early, spam — raises it, which is the whole point of asking: a human who
+    tells us we got it wrong should be interrupted less until we do better.
+    Everything decays over a few days."""
     half = 3 * _DAY
     total = 0.0
     for ev in state.get("engagement") or []:
         age = max(0.0, t - float(ev.get("ts", 0)))
         total += float(ev.get("w", 1.0)) * (0.5 ** (age / half))
-    return max(0.0, min(3.0, total))
+    return max(-3.0, min(3.0, total))
 
 
 def _in_quiet_hours(t) -> bool:
@@ -523,7 +530,102 @@ def _format_notification(items) -> str:
         if it.get("evidence"):
             lines.append(f"  They said: \"{it['evidence']}\"")
         lines.append(f"  Next: {it['next_step']}")
+        # One-tap feedback. This is the only signal that tells us whether a
+        # finding was actually any good — indirect engagement can't distinguish
+        # "relevant but useless" from "exactly right".
+        lines.append(f"  [{it.get('id', '?')}] useful · wrong fit · too early · spam")
     return "\n".join(lines)
+
+
+# --------------------------------------------------------------------------- #
+# Match feedback — the one signal that says whether a finding was any good.
+# --------------------------------------------------------------------------- #
+
+FEEDBACK_VERDICTS = ("useful", "wrong_fit", "too_early", "spam")
+
+# What each verdict DOES. Feedback that only gets logged is theatre; these are
+# the real consequences.
+#   engagement : moves the interrupt bar for this human (+ lowers, - raises)
+#   cooldown   : days before this counterpart may be surfaced again
+#   never      : never surface this counterpart again
+_FEEDBACK_EFFECT = {
+    "useful":    {"engagement": +2.0, "cooldown": 0,   "never": False},
+    "too_early": {"engagement": -0.5, "cooldown": 30,  "never": False},
+    "wrong_fit": {"engagement": -1.0, "cooldown": 120, "never": False},
+    "spam":      {"engagement": -2.0, "cooldown": 0,   "never": True},
+}
+
+_VERDICT_ALIASES = {
+    "yes": "useful", "good": "useful", "great": "useful", "1": "useful",
+    "wrong": "wrong_fit", "irrelevant": "wrong_fit", "no": "wrong_fit", "2": "wrong_fit",
+    "early": "too_early", "later": "too_early", "timing": "too_early", "3": "too_early",
+    "junk": "spam", "4": "spam",
+}
+
+
+def normalize_verdict(raw: str) -> str:
+    """Accept what a human actually types ('wrong', 'too early', 'spam')."""
+    v = (raw or "").strip().lower().replace(" ", "_").replace("-", "_")
+    if v in FEEDBACK_VERDICTS:
+        return v
+    return _VERDICT_ALIASES.get(v, "")
+
+
+def _finding_by_id(state, finding_id):
+    """Find a delivered/inflight/ready item by its stable id."""
+    ob = state.get("outbox") or {}
+    for bucket in ("inflight", "delivered", "ready"):
+        for item in ob.get(bucket) or []:
+            if item.get("id") == finding_id:
+                return item
+    return None
+
+
+def record_feedback(state, finding_id, verdict, now=None) -> dict:
+    """Record one-tap feedback on a finding and APPLY its consequences.
+
+    Returns {ok, verdict, handle, effect} — ok=False when the verdict or the
+    finding id is unrecognised, so the caller can say something useful."""
+    _ensure_shape(state)
+    t = float(now() if callable(now) else (now if now is not None else time.time()))
+    v = normalize_verdict(verdict)
+    if not v:
+        return {"ok": False, "error": "unknown verdict",
+                "accepted": list(FEEDBACK_VERDICTS)}
+
+    item = _finding_by_id(state, finding_id)
+    handle = (item or {}).get("handle", "")
+    effect = _FEEDBACK_EFFECT[v]
+
+    state.setdefault("feedback", []).append({
+        "id": finding_id, "handle": handle, "verdict": v, "ts": int(t),
+    })
+    state["feedback"] = state["feedback"][-200:]
+
+    # 1) Move this human's interrupt bar. Telling us something was useful is the
+    #    clearest "I want more of this" there is; spam is the opposite.
+    record_engagement(state, f"feedback:{v}", effect["engagement"], now=t)
+
+    # 2) Teach the matcher about this counterpart.
+    if handle:
+        seen = state.setdefault("seen", {})
+        rec = seen.setdefault(handle, {})
+        if effect["never"]:
+            rec["verdict"] = "never"
+            rec["never_ts"] = int(t)
+        elif effect["cooldown"]:
+            rec["verdict"] = "drop"
+            # Push the cooldown clock forward so the standard drop-cooldown
+            # logic keeps them away for the full window.
+            rec["ts"] = int(t + effect["cooldown"] * _DAY - _config.drop_cooldown_days() * _DAY)
+        _log(state, t, handle, f"feedback:{v}", "human feedback on a delivered finding")
+
+    # 3) Acknowledge delivery — feedback proves it landed.
+    try:
+        ack_delivered(state, [finding_id], now=t)
+    except Exception:
+        pass
+    return {"ok": True, "verdict": v, "handle": handle, "effect": effect}
 
 
 # --------------------------------------------------------------------------- #

@@ -13,6 +13,60 @@ from . import matchmaker, dossier, sanitize
 def build(client, card, llm=None):
     """Return a list of tool specs to register with ctx.register_tool."""
 
+    def scan_now(params, **kwargs):
+        """Run ONE matchmaking cycle immediately — execution only.
+
+        Used right after onboarding so a brand-new user's first intent starts
+        working straight away instead of waiting hours for the first cron.
+        Returns counts, never a notification: findings still have to earn their
+        way to the human through the normal judgement."""
+        try:
+            intents = [i for i in dossier.list_intents()
+                       if i.get("status") == "active"]
+        except Exception:
+            intents = []
+        try:
+            ring1 = dossier.get_ring1()
+        except Exception:
+            ring1 = []
+        try:
+            added = matchmaker.run_engine_and_persist(
+                client, card, llm, time.time, intents=intents, ring1=ring1)
+            st = matchmaker.load_state()
+            return json.dumps({
+                "success": True,
+                "digs_open": len([d for d in (st.get("digs") or {}).values()
+                                  if not d.get("concluded")]),
+                "findings_ready": len(((st.get("outbox") or {}).get("ready")) or []),
+                "new_findings": added,
+                "note": ("Scan started. Conversations take time — say nothing "
+                         "about matches now; I'll surface anything worthwhile."),
+            })
+        except Exception as e:
+            return json.dumps({"success": False, "error": str(e)[:200]})
+
+    def feedback(params, **kwargs):
+        """Record one-tap feedback on a delivered finding and act on it."""
+        fid = str(params.get("finding_id") or "").strip()
+        verdict = str(params.get("verdict") or "").strip()
+        if not fid or not verdict:
+            return json.dumps({"success": False,
+                               "error": "need 'finding_id' and 'verdict'",
+                               "accepted": list(matchmaker.FEEDBACK_VERDICTS)})
+        st = matchmaker.load_state()
+        res = matchmaker.record_feedback(st, fid, verdict)
+        matchmaker.save_state(st)
+        if not res.get("ok"):
+            return json.dumps({"success": False, **res})
+        # Share it with the hub as anonymous quality data (best-effort).
+        try:
+            client.send_feedback(fid, res["verdict"], res.get("handle", ""))
+        except Exception:
+            pass
+        return json.dumps({"success": True, "verdict": res["verdict"],
+                           "about": res.get("handle", ""),
+                           "note": "Thanks — that changes what I bring you next."})
+
     def deliver_pending_tool(params, **kwargs):
         """DELIVERY ONLY — what the cron job calls.
 
@@ -261,6 +315,46 @@ def build(client, card, llm=None):
                 "parameters": {"type": "object", "properties": {}},
             },
             "handler": deliver_pending_tool,
+        },
+        {
+            "name": "hermies_scan_now",
+            "description": ("Run one matchmaking cycle right now (used at the end "
+                            "of onboarding so a new standing intent starts working "
+                            "immediately). Returns counts only — never show the "
+                            "human matches as a result of this."),
+            "schema": {
+                "name": "hermies_scan_now",
+                "description": "Start a matchmaking cycle immediately; returns counts.",
+                "parameters": {"type": "object", "properties": {}},
+            },
+            "handler": scan_now,
+        },
+        {
+            "name": "hermies_feedback",
+            "description": ("Record the human's one-tap reaction to a delivered "
+                            "finding. This is how Hermies learns what is actually "
+                            "worth their attention — always ask after delivering."),
+            "schema": {
+                "name": "hermies_feedback",
+                "description": "Record feedback on a finding.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "finding_id": {
+                            "type": "string",
+                            "description": "the [id] shown with the finding",
+                        },
+                        "verdict": {
+                            "type": "string",
+                            "enum": list(matchmaker.FEEDBACK_VERDICTS),
+                            "description": ("useful | wrong_fit | too_early | spam "
+                                            "(plain words like 'wrong' also work)"),
+                        },
+                    },
+                    "required": ["finding_id", "verdict"],
+                },
+            },
+            "handler": feedback,
         },
         {
             "name": "hermies_search_agents",

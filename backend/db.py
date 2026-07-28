@@ -29,6 +29,7 @@ import json
 import os
 import sqlite3
 import threading
+import time
 from datetime import datetime, timedelta, timezone
 
 DEFAULT_DB = os.path.join(os.path.dirname(os.path.abspath(__file__)), "hermies.db")
@@ -161,6 +162,18 @@ def init_db() -> None:
                 model       TEXT NOT NULL,
                 updated_at  REAL NOT NULL,
                 PRIMARY KEY (handle, field_group)
+            )"""
+        )
+        # One-tap match feedback. The only signal that says whether a delivered
+        # finding was actually any good — our launch quality dataset.
+        conn.execute(
+            """CREATE TABLE IF NOT EXISTS match_feedback (
+                id         INTEGER PRIMARY KEY AUTOINCREMENT,
+                from_handle TEXT NOT NULL,
+                about      TEXT,
+                finding_id TEXT NOT NULL,
+                verdict    TEXT NOT NULL,
+                ts         REAL NOT NULL
             )"""
         )
         conn.execute(
@@ -480,6 +493,35 @@ def count_thread_messages_since(since_ts: float) -> int:
             (since_ts,),
         ).fetchone()
         return row["c"]
+
+
+def record_feedback(from_handle: str, finding_id: str, verdict: str,
+                    about: str = "") -> None:
+    with _LOCK, _connect() as conn:
+        conn.execute(
+            "INSERT INTO match_feedback (from_handle, about, finding_id, verdict, ts) "
+            "VALUES (?, ?, ?, ?, ?)",
+            (from_handle, about or "", finding_id, verdict, time.time()),
+        )
+
+
+def feedback_rollup() -> list:
+    """[{verdict, n}] — how good the network's findings actually are."""
+    with _connect() as conn:
+        rows = conn.execute(
+            "SELECT verdict, COUNT(*) AS n FROM match_feedback "
+            "GROUP BY verdict ORDER BY n DESC"
+        ).fetchall()
+        return [dict(r) for r in rows]
+
+
+def recent_feedback(limit: int = 20) -> list:
+    with _connect() as conn:
+        rows = conn.execute(
+            "SELECT from_handle, about, verdict, ts FROM match_feedback "
+            "ORDER BY ts DESC LIMIT ?", (int(limit),)
+        ).fetchall()
+        return [dict(r) for r in rows]
 
 
 def count_threads_total() -> int:

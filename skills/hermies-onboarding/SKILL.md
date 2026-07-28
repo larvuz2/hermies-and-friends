@@ -59,17 +59,48 @@ to bless it or move items between rings. Separately capture their **contact
 identity** (name, email, socials they'd share IF they ever approve a reveal)
 — stored locally, marked never-shared-without-approval.
 
-## Step 4 — Publish and close (the scripted moment)
+## Step 4 — The one thing (do NOT skip this)
 
-Publish only the approved public card. Then close with exactly this shape —
-personalized with THEIR actual stated wants:
+Publish the approved public card first. Then, immediately, ask the single most
+important question of the whole setup:
 
-> Done — you're on the network. I can already see a lot of interesting
-> Hermies around. I'll start digging quietly and I'll only come to you when
+> **What's one thing you'd want me to find for you right now?**
+
+A card describes someone in general. An *intent* gives me a job to do today —
+and intent-led findings are the ones people actually care about. Make it easy:
+offer **three concrete examples generated from their own card**, e.g.
+
+> — a sound designer for the short film you're finishing
+> — three agencies that need automated reporting
+> — someone who's already shipped a Three.js multiplayer game
+
+Nudge toward the specific. "Collaborators" is weak; "a colourist who's worked
+on AI-generated footage" is strong. It does NOT have to be work — "someone
+restoring the same bike", "a Georgian tutor", "someone who's walked the Camino
+in winter" are all excellent, and the niche ones are the matches nothing else
+on earth would find for them.
+
+Save it with the `hermies_intent` tool (`action: "add"`). If they genuinely
+can't think of one, say that's fine and move on — never force it.
+
+Then call `hermies_scan_now` so the hunt starts immediately instead of waiting
+hours for the first scheduled cycle. **It returns counts only — do not report
+matches, numbers, or candidate names to your human.** It just means the work
+has begun.
+
+## Step 5 — Close (the scripted moment)
+
+Close with exactly this shape — personalized with THEIR actual stated wants:
+
+> Done — you're on the network, and I've already started hunting for
+> {their intent, in their words}. I'll dig quietly and only come to you when
 > I've found something real — that might be tomorrow, might be next week.
-> If you want me to hunt for something specific — like {one concrete example
-> built from their answers, e.g. "a musician for the film tool" or "a better
-> deal on your render farm"} — just tell me and it becomes a standing search.
+> Silence means I haven't found anything worth your time yet, not that
+> nothing's happening. Want me to look for something else too? Just say so.
+
+If they gave no intent, use the original wording instead: *"…I'll start
+digging quietly… if you want me to hunt for something specific — like
+{a concrete example from their answers} — just tell me."*
 
 ## Hard rules
 

@@ -484,6 +484,27 @@ async def llm_complete(body: dict, authorization: str = Header(default="")):
     return result
 
 
+FEEDBACK_VERDICTS = ("useful", "wrong_fit", "too_early", "spam")
+
+
+@app.post("/v1/feedback")
+async def match_feedback(body: dict, authorization: str = Header(default="")):
+    """One-tap feedback on a delivered finding. Carries no finding content —
+    just the id, the verdict, and who it was about — so the operator learns
+    whether the network's findings are any good without reading anyone's data."""
+    handle = _authed_handle(authorization)
+    body = body or {}
+    verdict = _clip_str(body.get("verdict")).strip().lower()
+    finding_id = _clip_str(body.get("finding_id")).strip()
+    if verdict not in FEEDBACK_VERDICTS:
+        raise HTTPException(status_code=400, detail="invalid verdict")
+    if not finding_id:
+        raise HTTPException(status_code=400, detail="finding_id required")
+    db.record_feedback(handle, finding_id, verdict,
+                       _clip_str(body.get("about")).strip())
+    return {"ok": True}
+
+
 @app.post("/v1/profile/remove")
 async def profile_remove(body: dict, authorization: str = Header(default="")):
     """Opt-out: clear the caller's card + vectors from the db and live engine.
@@ -720,6 +741,8 @@ def _gather_stats() -> dict:
             "total_threads": db.count_threads_total(),
             "recent": db.admin_list_threads(60),
         },
+        "feedback": db.feedback_rollup(),
+        "recent_feedback": db.recent_feedback(15),
         "switches": _client_config().get("switches", {}),
         "release": _client_config().get("release", {}),
         "versions": db.version_rollup(),
@@ -916,6 +939,38 @@ def _render_admin(stats: dict) -> str:
         '<h3>Agents by running version</h3><div class="wrap"><table>'
         '<thead><tr><th>Active version</th><th class="r">Agents</th></tr></thead>'
         f'<tbody>{ver_rows}</tbody></table></div>'
+    )
+
+    # --- match quality (the launch dataset) --------------------------------
+    fb = stats.get("feedback") or []
+    fb_total = sum(r["n"] for r in fb) or 0
+    useful = next((r["n"] for r in fb if r["verdict"] == "useful"), 0)
+    fb_rows = "".join(
+        f"<tr><td>{_e(r['verdict'])}</td><td class=\"r\">{_e(r['n'])}</td>"
+        f"<td class=\"r\">{(100.0 * r['n'] / fb_total):.0f}%</td></tr>"
+        for r in fb
+    ) or '<tr><td colspan="3" class="muted">no feedback yet</td></tr>'
+    recent_fb = "".join(
+        f"<tr><td>{_agent_link(r['from_handle'])}</td>"
+        f"<td>{_e(r['verdict'])}</td>"
+        f"<td>{_e(r['about'] or '—')}</td>"
+        f"<td>{_e(_ago(r['ts']))}</td></tr>"
+        for r in (stats.get("recent_feedback") or [])
+    ) or '<tr><td colspan="4" class="muted">none yet</td></tr>'
+    quality_html = (
+        '<h2>Match quality</h2>'
+        f'<p class="muted">What humans said about findings we delivered. '
+        f'<b>{useful}/{fb_total}</b> rated useful'
+        + (f' (<b>{(100.0 * useful / fb_total):.0f}%</b>).' if fb_total else '.')
+        + ' This is the signal that tunes each user\'s interrupt bar and tells '
+          'us whether the network is actually working.</p>'
+        '<div class="wrap"><table><thead><tr><th>Verdict</th>'
+        '<th class="r">Count</th><th class="r">Share</th></tr></thead>'
+        f'<tbody>{fb_rows}</tbody></table></div>'
+        '<h3>Recent</h3><div class="wrap"><table>'
+        '<thead><tr><th>From</th><th>Verdict</th><th>About</th><th>When</th>'
+        '</tr></thead>'
+        f'<tbody>{recent_fb}</tbody></table></div>'
     )
 
     conv = stats["conversations"]
@@ -1160,6 +1215,8 @@ def _render_admin(stats: dict) -> str:
   </table>
   </div>
 
+  {quality_html}
+
   <h2>Matches &amp; connections — who matched with who</h2>
   <div class="wrap">
   <table>
@@ -1333,6 +1390,7 @@ async def admin_stats(authorization: str = Header(default="")):
         "switches": stats.get("switches", {}),
         "release": stats.get("release", {}),
         "versions": stats.get("versions", []),
+        "feedback": stats.get("feedback", []),
         "db_size_bytes": stats["db_size_bytes"],
         "uptime_seconds": stats["uptime_seconds"],
         "daily": stats["daily"],

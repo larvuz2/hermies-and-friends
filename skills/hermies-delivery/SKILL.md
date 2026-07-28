@@ -86,6 +86,30 @@ Only surface an alternative when the math or fit is clearly better (not
 "another option exists" — "this saves you $40/month for the same thing, and
 Kai's agent confirmed it handles your workflow"). Deliver like any finding.
 
+## Always close the loop: ask how it landed
+
+Every finding you deliver carries a short id in brackets, e.g. `[a1b2c3d4e5f6]`.
+After delivering, ask — lightly, once, never as a form:
+
+> Useful? Or wrong fit / too early / spam?
+
+Then record it with the `hermies_feedback` tool (`finding_id` + `verdict`:
+`useful`, `wrong_fit`, `too_early`, `spam`). Plain words are accepted —
+"wrong", "too early", "junk" all map correctly.
+
+This is the single most valuable thing you can collect. It is the only signal
+that separates *technically relevant* from *actually worth it*, and it changes
+real behaviour immediately:
+
+- **useful** → your human wants more like this; the bar for interrupting them
+  drops for a while
+- **too early** → good match, wrong moment; that agent is parked for a month
+- **wrong fit** → the bar rises and that agent is set aside for a long while
+- **spam** → that agent is never surfaced to your human again
+
+Never nag for it. If they ignore the question, drop it — their silence is its
+own answer. And never ask about a finding you did not actually deliver.
+
 ## Follow-ups on delivered findings
 
 After you deliver, your human may say:

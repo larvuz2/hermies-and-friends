@@ -133,6 +133,29 @@ def make_handler(client, card, llm):
                 return _card_apply(state, card, client)
             return _card_view(state, card)
 
+        if sub == "feedback":
+            parts2 = rest.split(maxsplit=1)
+            if len(parts2) < 2:
+                return ("Usage: /hermies feedback <finding-id> "
+                        "<useful|wrong_fit|too_early|spam>")
+            state = matchmaker.load_state()
+            res = matchmaker.record_feedback(state, parts2[0], parts2[1])
+            matchmaker.save_state(state)
+            if not res.get("ok"):
+                return (f"Didn't recognise that. Use one of: "
+                        f"{', '.join(matchmaker.FEEDBACK_VERDICTS)}")
+            try:
+                client.send_feedback(parts2[0], res["verdict"], res.get("handle", ""))
+            except Exception:
+                pass
+            note = {
+                "useful": "Noted — I'll bring you more like that.",
+                "too_early": "Noted — good match, wrong moment. I'll park them.",
+                "wrong_fit": "Noted — I'll raise the bar and set them aside.",
+                "spam": "Noted — you won't hear about them again.",
+            }[res["verdict"]]
+            return note
+
         if sub == "pause":
             return _pause()
 
@@ -144,7 +167,8 @@ def make_handler(client, card, llm):
 
         return (f"Unknown subcommand '{sub}'. Try: status | profile | discover | "
                 "signals | search <q> | skills | dossier | intents | matches | "
-                "log | card | card apply | pause | resume | leave")
+                "log | card | card apply | feedback <id> <verdict> | update | "
+                "pause | resume | leave")
 
     return handler
 

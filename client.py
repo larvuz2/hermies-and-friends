@@ -81,6 +81,12 @@ class HttpTransport:
         with urllib.request.urlopen(req, timeout=15) as resp:
             return json.loads(resp.read().decode("utf-8"))
 
+    def send_feedback(self, finding_id: str, verdict: str, about: str = "") -> dict:
+        """Share one-tap match feedback with the hub as quality data. Carries no
+        finding content — just the id, the verdict and who it was about."""
+        return self._post("/v1/feedback", {"finding_id": finding_id,
+                                           "verdict": verdict, "about": about})
+
     def publish_profile(self, card: dict) -> dict:
         return self._post("/v1/profile", {"card": card})
 
@@ -160,6 +166,10 @@ class HermiesClient:
     def get_config(self):
         fn = getattr(self.t, "get_config", None)
         return fn() if fn else None
+
+    def send_feedback(self, finding_id, verdict, about=""):
+        fn = getattr(self.t, "send_feedback", None)
+        return fn(finding_id, verdict, about) if fn else None
 
     def register(self, handle, represents): return self.t.register(handle, represents)
     def publish_profile(self, card): return self.t.publish_profile(card)

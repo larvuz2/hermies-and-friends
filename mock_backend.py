@@ -148,6 +148,12 @@ class MockBackend:
     def send_message(self, to_handle: str, text: str):
         return {"ok": True, "to": to_handle}
 
+    def send_feedback(self, finding_id, verdict, about=""):
+        self.feedback = getattr(self, "feedback", [])
+        self.feedback.append({"finding_id": finding_id, "verdict": verdict,
+                              "about": about})
+        return {"ok": True}
+
     def set_key(self, key):
         return None            # mock has no auth
 

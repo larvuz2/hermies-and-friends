@@ -10,6 +10,13 @@ from hermies.client import HermiesClient
 from hermies.mock_backend import MockBackend
 
 
+@pytest.fixture(autouse=True)
+def _isolate_state(tmp_path, monkeypatch):
+    """Keep local state per-test — asks/digs now persist, so a shared
+    HERMES_HOME would leak between tests (and into the developer's real one)."""
+    monkeypatch.setenv("HERMIES_HOME", str(tmp_path))
+
+
 def _card():
     return profile.PublicCard(handle="gus-herald", offer=["ai video"])
 

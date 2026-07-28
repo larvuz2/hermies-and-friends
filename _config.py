@@ -240,6 +240,13 @@ def dig_max_turns() -> int:
     return _int_env("HERMIES_DIG_MAX_TURNS", 3)
 
 
+def checkin_after_hours() -> int:
+    """Hours after joining before the one-time "here's what I've been doing"
+    check-in. A brand-new user cannot tell disciplined silence apart from a
+    broken plugin, so we prove we're alive exactly once. 0 disables it."""
+    return _int_env("HERMIES_CHECKIN_AFTER_HOURS", 24)
+
+
 def ask_max_turns() -> int:
     """Max messages WE send in a user-requested investigation before reporting
     back. Enough to clarify, not enough to become a pen-pal."""

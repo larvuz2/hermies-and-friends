@@ -134,6 +134,8 @@ def _ensure_shape(d: dict) -> dict:
     # background. {handle: {question, thread_id, our_turns, awaiting,
     #                       concluded, report, asked_at, last_their_msg}}
     d.setdefault("asks", {})
+    d.setdefault("network_since", None)     # first engine cycle — clock for the check-in
+    d.setdefault("checkin_sent_at", None)   # the one-time proof-of-life note
     d.setdefault("queue", [])         # scratch: items _emit held back this pass
     # Durable outbox between the two planes. The ENGINE (daemon) only appends to
     # ready; DELIVERY (cron) claims into inflight and confirms into delivered.
@@ -522,9 +524,16 @@ def _emit(state, pending, t):
 
 
 def _format_notification(items) -> str:
-    lines = ["\U0001f54a️  Hermies found something worth your attention:"]
+    # A check-in on its own is not a finding — don't oversell it.
+    only_checkin = items and all(i.get("kind") == "checkin" for i in items)
+    header = ("\U0001f54a️  A quick note from me, not a match:" if only_checkin
+              else "\U0001f54a️  Hermies found something worth your attention:")
+    lines = [header]
     for it in items:
         lines.append("")
+        if it.get("kind") == "checkin":
+            lines.extend(_format_checkin(it))
+            continue
         if it.get("kind") == "ask_result":
             # An answer to something they asked for — report it, don't pitch it.
             lines.append(f'• You asked me to find out from @{it["handle"]}: '
@@ -553,6 +562,104 @@ def _format_notification(items) -> str:
         lines.append(f"  [{it.get('id', '?')}] useful · wrong fit · too early · "
                      "spam · or ask me why")
     return "\n".join(lines)
+
+
+# --------------------------------------------------------------------------- #
+# First check-in — proof of life for a brand-new user.
+#
+# Silence is the right long-run behaviour, but on day one a human cannot tell
+# "disciplined silence" from "this thing is broken". So exactly once, about a
+# day after joining, we report what we have actually been doing — real numbers,
+# real names, and an honest word if the network is thin. Never repeated, never
+# a status feed.
+# --------------------------------------------------------------------------- #
+
+def _maybe_checkin(state, card, t) -> dict:
+    """Return the one-time check-in payload when it is due, else None."""
+    # Start the clock on the first cycle regardless, so enabling the check-in
+    # later still measures from when this agent actually joined.
+    since = state.get("network_since")
+    if not since:
+        state["network_since"] = int(t)
+        return None
+    hours = _config.checkin_after_hours()
+    if hours <= 0 or state.get("checkin_sent_at"):
+        return None
+    if (t - float(since)) < hours * 3600:
+        return None
+
+    seen = state.get("seen") or {}
+    digs = state.get("digs") or {}
+    talked = [h for h, d in digs.items() if d.get("our_turns", 0) > 0]
+    concluded = [h for h, d in digs.items() if d.get("concluded")]
+    open_now = [h for h, d in digs.items() if not d.get("concluded")]
+    held = list((state.get("outbox") or {}).get("ready") or []) + \
+        list(state.get("queue") or [])
+
+    # A few real names, so this reads as work rather than a progress bar.
+    names = []
+    for h, d in list(digs.items())[:3]:
+        who = (d.get("their_card") or {}).get("why") or ""
+        names.append(f"@{h}" + (f" ({sanitize.clean_text(who, 70)})" if who else ""))
+
+    state["checkin_sent_at"] = int(t)
+    return {
+        "id": _finding_id({"handle": "hermies", "pitch": "checkin"}, t),
+        "kind": "checkin",
+        "handle": "hermies",
+        "represents": "",
+        "seen_count": len(seen) or len(digs),
+        "talked_count": len(talked),
+        "concluded_count": len(concluded),
+        "open_count": len(open_now),
+        "held_count": len(held),
+        "names": names,
+        "intents": [],          # filled by the caller (it owns the dossier)
+        "pitch": "", "reason": "", "evidence": "",
+        "next_step": "",
+        "score": 10.0, "note": "", "verified": False, "cards_only": False,
+        "intent": None,
+        "requested": True,      # must reach the human; that IS the point
+    }
+
+
+def _format_checkin(it) -> list:
+    """The check-in, in the agent's own voice: what I did, what I found, what
+    happens next, and nothing for you to do."""
+    lines = []
+    talked = it.get("talked_count", 0)
+    seen = it.get("seen_count", 0)
+
+    if talked:
+        lines.append(f"• Quick update on Hermies — nothing urgent, just so you "
+                     f"know I'm working.")
+        lines.append(f"  I've come across {seen} agent(s) and actually talked "
+                     f"with {talked} of them.")
+        if it.get("names"):
+            lines.append("  Among them: " + "; ".join(it["names"][:3]))
+        if it.get("open_count"):
+            lines.append(f"  {it['open_count']} conversation(s) still going.")
+        if it.get("held_count"):
+            lines.append(f"  {it['held_count']} maybe(s) I didn't think were "
+                         "worth interrupting you for yet.")
+        lines.append("  Nothing I'd call genuinely useful for you so far — "
+                     "I'll come to you the moment there is.")
+    else:
+        lines.append("• Quick update on Hermies — I'm set up and looking, but "
+                     "I haven't found anyone worth talking to yet.")
+        lines.append(f"  I've come across {seen} agent(s); the network is still "
+                     "small in your areas.")
+        lines.append("  That's expected this early. I'll keep watching and "
+                     "tell you the moment something real shows up.")
+
+    if it.get("intents"):
+        lines.append("  Still hunting: " + "; ".join(
+            f'"{sanitize.clean_text(i, 80)}"' for i in it["intents"][:2]))
+    else:
+        lines.append("  If you tell me something specific to hunt for, I'll "
+                     "work on that too.")
+    lines.append("  Nothing needed from you.")
+    return lines
 
 
 # --------------------------------------------------------------------------- #
@@ -698,7 +805,7 @@ def _followup_ask(state, client, card, ask, question, ring1, llm, t) -> dict:
     ask["concluded"] = False
     ask["report"] = ""
     return {"ok": True, "handle": ask.get("handle", ""), "question": question,
-            "status": "follow-up sent"}
+            "thread_id": ask.get("thread_id"), "status": "follow-up sent"}
 
 
 def _advance_asks(state, client, card, llm, ring1, t) -> list:
@@ -1620,6 +1727,13 @@ def run_engine(state, client, card, llm, now, intents=None, ring1=None) -> int:
         hb["last_error"] = str(exc)[:200]
         hb["last_completed_at"] = int(t)
         raise
+
+    # One-time proof of life for a new user (see _maybe_checkin).
+    checkin = _maybe_checkin(state, card, t)
+    if checkin:
+        checkin["intents"] = [i.get("text", "") for i in (intents or [])
+                              if i.get("status", "active") == "active"][:2]
+        fresh = list(fresh) + [checkin]
 
     ready = state.setdefault("outbox", {}).setdefault("ready", [])
     known = {i.get("id") for i in ready}

@@ -1329,6 +1329,10 @@ async def admin_stats(authorization: str = Header(default="")):
         "signals_served_today": stats["signals_served_today"],
         "requests_today": stats["requests_today"],
         "registrations_today": stats["registrations_today"],
+        # Operator controls + fleet state (the HTML page renders these too).
+        "switches": stats.get("switches", {}),
+        "release": stats.get("release", {}),
+        "versions": stats.get("versions", []),
         "db_size_bytes": stats["db_size_bytes"],
         "uptime_seconds": stats["uptime_seconds"],
         "daily": stats["daily"],

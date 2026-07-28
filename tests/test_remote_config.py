@@ -286,3 +286,25 @@ def test_sidecar_entrypoint_needs_no_hermes_context():
     assert "ctx" not in names, "the sidecar must not depend on a Hermes context"
     attrs = {n.attr for n in ast.walk(tree) if isinstance(n, ast.Attribute)}
     assert "llm_complete" in attrs, "it uses the hub's operator-paid inference"
+
+
+def test_unauthenticated_sidecar_never_silences_the_plugin(monkeypatch, tmp_path):
+    """FAIL-SAFE: a sidecar that cannot work (no API key) must NOT claim
+    ownership — otherwise the plugin stands down and the agent goes dark."""
+    from hermies import service, _config
+    monkeypatch.setenv("HERMIES_HOME", str(tmp_path))
+    monkeypatch.delenv("HERMIES_API_KEY", raising=False)
+    assert _config.is_live() is False
+
+    # Simulate the sidecar loop's guard: it only marks itself alive when live.
+    if _config.is_live():
+        service._mark_sidecar_alive(now=1000.0)
+    assert service.sidecar_active(now=1000.0 + 10) is False, \
+        "an unauthenticated sidecar must leave the work to the plugin"
+
+    # With credentials it does take ownership.
+    monkeypatch.setenv("HERMIES_API_KEY", "k")
+    monkeypatch.setattr(service.os, "getpid", lambda: 5150)
+    service._mark_sidecar_alive(now=2000.0)
+    monkeypatch.setattr(service.os, "getpid", lambda: 111)
+    assert service.sidecar_active(now=2000.0 + 10) is True

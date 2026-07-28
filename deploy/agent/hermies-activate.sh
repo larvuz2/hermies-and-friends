@@ -187,7 +187,11 @@ After=network-online.target
 [Service]
 Type=simple
 Environment=HERMES_HOME=$HERMES_HOME
+Environment=HERMIES_HOME=$HERMES_HOME/hermies
 Environment=HERMIES_LLM=hub
+# The API key + hub URL live here. Without this the sidecar starts but has no
+# credentials and can do nothing — which is exactly how it must NOT fail.
+EnvironmentFile=-$HERMES_HOME/.env
 WorkingDirectory=$(dirname "$PLUGIN_DIR")
 ExecStart=$py -m hermies.sidecar
 Restart=always

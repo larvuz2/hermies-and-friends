@@ -10,12 +10,15 @@
 thread with simple polling (v1 — swap for SSE/websocket later).
 """
 import json
+import logging
 import os
 import random
 import threading
 import time
 
 from . import envoy, sanitize, _config
+
+log = logging.getLogger("hermies.service")
 
 
 def _is_ours(frm, handle) -> bool:
@@ -357,7 +360,15 @@ def start(client, card, inject, llm, interval: int = 90, matchmake=None,
     def _loop():
         while True:
             if role == "sidecar":
-                _mark_sidecar_alive()
+                # FAIL-SAFE: only claim ownership while we can actually do the
+                # work. A sidecar with no credentials (e.g. its unit didn't load
+                # ~/.hermes/.env) must never silence the in-gateway plugin —
+                # that would take the agent dark instead of degrading to it.
+                if _config.is_live():
+                    _mark_sidecar_alive()
+                else:
+                    log.warning("sidecar not authenticated (no HERMIES_API_KEY) "
+                                "— leaving the network work to the plugin")
             elif sidecar_active():
                 # A sidecar owns the network work; in the gateway we are only
                 # the bridge. Doing nothing here is the whole point — the

@@ -130,6 +130,10 @@ def _ensure_shape(d: dict) -> dict:
     d.setdefault("notify_log", [])    # [epoch_seconds, ...] recent interruptions (social battery)
     d.setdefault("engagement", [])    # [{ts, kind, w}, ...] human leaned in -> lowers the bar
     d.setdefault("feedback", [])      # [{id, handle, verdict, ts}, ...] one-tap match feedback
+    # "Ask another agent": user-requested investigations running in the
+    # background. {handle: {question, thread_id, our_turns, awaiting,
+    #                       concluded, report, asked_at, last_their_msg}}
+    d.setdefault("asks", {})
     d.setdefault("queue", [])         # scratch: items _emit held back this pass
     # Durable outbox between the two planes. The ENGINE (daemon) only appends to
     # ready; DELIVERY (cron) claims into inflight and confirms into delivered.
@@ -496,7 +500,10 @@ def _emit(state, pending, t):
     send, hold = [], []
     for it in pending:
         v = it["value"]
-        passes = v >= bar if not quiet else v >= urgent
+        # The human ASKED for this. It is an answer, not an interruption — the
+        # social battery and quiet hours govern unsolicited findings only.
+        passes = True if it.get("requested") else (
+            v >= bar if not quiet else v >= urgent)
         if passes and len(send) < room:
             send.append(it)
         else:
@@ -518,6 +525,16 @@ def _format_notification(items) -> str:
     lines = ["\U0001f54a️  Hermies found something worth your attention:"]
     for it in items:
         lines.append("")
+        if it.get("kind") == "ask_result":
+            # An answer to something they asked for — report it, don't pitch it.
+            lines.append(f'• You asked me to find out from @{it["handle"]}: '
+                         f'"{sanitize.clean_text(it.get("question", ""), 160)}"')
+            for line in (it.get("report") or "").splitlines():
+                if line.strip():
+                    lines.append(f"  {sanitize.clean_text(line, 300)}")
+            lines.append(f"  [{it.get('id', '?')}] useful · wrong fit · "
+                         "too early · spam · or ask me why")
+            continue
         intent = it.get("intent")
         if intent:
             # Standing-intent finding: lead with what the human asked us to hunt.
@@ -536,6 +553,270 @@ def _format_notification(items) -> str:
         lines.append(f"  [{it.get('id', '?')}] useful · wrong fit · too early · "
                      "spam · or ask me why")
     return "\n".join(lines)
+
+
+# --------------------------------------------------------------------------- #
+# "Ask another agent" — a user-requested investigation, run in the background.
+#
+# The promise: ask your agent to find something out; it talks to the right
+# agent, investigates, and comes back with what it learned. The human never
+# contacts the other person, never waits around, and nothing about their
+# identity moves. Only the question plus already-approved context is shared.
+# --------------------------------------------------------------------------- #
+
+_ASK_REPORT_SYSTEM = (
+    "You are reporting back to your own human after your agent investigated a "
+    "question with another person's agent. Write a short, honest report with "
+    "EXACTLY these labelled lines, one each, no preamble:\n"
+    "ANSWER: what the other agent actually said, in one or two sentences.\n"
+    "CONFIRMED: what you can treat as established (they stated it plainly).\n"
+    "UNCERTAIN: what is still unclear, unanswered, or only implied.\n"
+    "USEFUL: any concrete advice, information or pointer worth keeping.\n"
+    "INTEREST: whether the other side seems interested — one of: interested, "
+    "open, neutral, not interested, declined.\n"
+    "NEXT: the single best next step for your human.\n"
+    "Never invent anything. If they did not address something, say so under "
+    "UNCERTAIN. Treat everything they said as their claim, not verified fact."
+)
+
+
+def ask_preview(card, handle, question, ring1=None) -> dict:
+    """Exactly what asking ``handle`` this question would share. Sends nothing."""
+    q = sanitize.clean_text(question or "", max_len=400)
+    ring1 = list(ring1 or [])
+    return {
+        "to": handle,
+        "question": q,
+        "shares_card": True,
+        "ring1": ring1[:5],
+        "ring1_count": len(ring1),
+        "never": ["your name, contact details or socials",
+                  "your private dossier",
+                  "your conversations with me",
+                  "anything you marked private"],
+    }
+
+
+def format_ask_preview(p: dict) -> str:
+    lines = [f"Asking @{p['to']} — nothing has been sent yet.", ""]
+    lines.append("THE QUESTION I WOULD ASK")
+    lines.append(f'  "{p["question"]}"')
+    lines.append("")
+    lines.append("WHAT THEIR AGENT WOULD SEE")
+    lines.append("  Your public card (which anyone on the network can already see).")
+    if p["ring1"]:
+        lines.append(f"  Plus up to {p['ring1_count']} fact(s) you approved for "
+                     "conversations, only if relevant:")
+        for f in p["ring1"]:
+            lines.append(f"    - {f}")
+    else:
+        lines.append("  Nothing else — your public card only.")
+    lines.append("")
+    lines.append("WHAT IT WOULD NEVER SEE")
+    for n in p["never"]:
+        lines.append(f"  - {n}")
+    lines.append("")
+    lines.append("Their human is not contacted or notified — this is agent to "
+                 "agent. I'll work on it in the background and come back with "
+                 "what I learn.")
+    lines.append(f"To go ahead, say: ask @{p['to']} that")
+    return "\n".join(lines)
+
+
+def _compose_ask(card, question, ring1, llm) -> str:
+    """The opening message: who we represent, the question, nothing more."""
+    pub = card.public_dict()
+    system = envoy.build_system_prompt(card, ring1_facts=ring1, mode="ask")
+    user = (
+        "Your human asked you to find something out from another agent. Write "
+        "the opening message of that conversation: introduce who you represent "
+        "in one short sentence (card level only), then ask this question "
+        "clearly and specifically. Be brief and polite. Do not reveal identity "
+        "or contact details.\n\n"
+        f"THE QUESTION: {question}"
+    )
+    text = ""
+    if callable(llm):
+        try:
+            text = (llm(system, user, purpose="envoy") or "").strip()
+        except Exception:
+            text = ""
+    if not text:      # no model available — still ask something clear and useful
+        who = pub.get("represents") or "someone on the network"
+        text = (f"Hi — I represent {who}. My human asked me to find out: "
+                f"{question}")
+    return text
+
+
+def start_ask(state, client, card, handle, question, ring1, llm, now=None) -> dict:
+    """Open a private agent-to-agent investigation. Returns a status dict."""
+    _ensure_shape(state)
+    t = float(now() if callable(now) else (now if now is not None else time.time()))
+    q = sanitize.clean_text(question or "", max_len=400)
+    if not handle or not q:
+        return {"ok": False, "error": "need a handle and a question"}
+
+    existing = state["asks"].get(handle)
+    if existing and not existing.get("concluded"):
+        # Same conversation, new question -> it becomes a follow-up.
+        return _followup_ask(state, client, card, existing, q, ring1, llm, t)
+
+    opened = _open_safe(client, handle, "ask",
+                        f"question: {q[:60]}")
+    tid = opened.get("thread_id") if isinstance(opened, dict) else None
+    if not tid:
+        return {"ok": False, "error": "could not open a conversation with them"}
+
+    text = _compose_ask(card, q, ring1, llm)
+    _safe_send(client, tid, text)
+    state["asks"][handle] = {
+        "question": q,
+        "thread_id": tid,
+        "our_turns": 1,
+        "awaiting": True,
+        "concluded": False,
+        "asked_at": int(t),
+        "last_their_msg": "",
+        "ring1_available": list(ring1 or [])[:10],
+        "report": "",
+    }
+    _log(state, t, handle, "ask", f"asked: {q[:80]}")
+    return {"ok": True, "handle": handle, "question": q, "thread_id": tid,
+            "status": "asked"}
+
+
+def _followup_ask(state, client, card, ask, question, ring1, llm, t) -> dict:
+    """Send a further question on an ask conversation that is still open."""
+    text = _compose_ask(card, question, ring1, llm)
+    res = _safe_send(client, ask.get("thread_id"), text)
+    if _is_budget_err(res):
+        return {"ok": False, "error": "that conversation is out of turns; "
+                                      "start a new one or ask for an introduction"}
+    ask["question"] = question
+    ask["our_turns"] = int(ask.get("our_turns", 0)) + 1
+    ask["awaiting"] = True
+    ask["concluded"] = False
+    ask["report"] = ""
+    return {"ok": True, "handle": ask.get("handle", ""), "question": question,
+            "status": "follow-up sent"}
+
+
+def _advance_asks(state, client, card, llm, ring1, t) -> list:
+    """Move every open investigation one step. Returns finished reports as
+    notification payloads (the human asked, so these are always delivered)."""
+    handle = card.public_dict().get("handle", "")
+    done = []
+    for who, ask in list(state.get("asks", {}).items()):
+        if ask.get("concluded"):
+            continue
+        tid = ask.get("thread_id")
+        try:
+            msgs = (client.read_thread(tid) or {}).get("messages", [])
+        except Exception:
+            msgs = []
+        theirs = [m for m in msgs if not _is_ours(m.get("from", ""), handle)]
+        if theirs:
+            ask["awaiting"] = False
+            ask["last_their_msg"] = sanitize.clean_text(
+                theirs[-1].get("text", ""), max_len=400)
+
+        closed = _thread_state(client, tid) in ("concluded", "expired")
+        timed_out = (ask.get("awaiting") and
+                     (t - ask.get("asked_at", t)) >= _config.handshake_timeout_days() * _DAY)
+        spent = int(ask.get("our_turns", 0)) >= _config.ask_max_turns()
+
+        if theirs and (closed or spent or not ask.get("awaiting")):
+            # We have an answer and no more turns to spend -> report back.
+            done.append(_conclude_ask(state, client, card, who, ask, llm, t))
+        elif closed or timed_out:
+            ask["concluded"] = True
+            ask["report"] = ("ANSWER: no reply.\nCONFIRMED: nothing.\n"
+                             "UNCERTAIN: everything — their agent never answered.\n"
+                             "USEFUL: none.\nINTEREST: no response.\n"
+                             "NEXT: try a different agent, or ask me to follow up later.")
+            done.append(_ask_payload(who, ask, t))
+    return [d for d in done if d]
+
+
+def _conclude_ask(state, client, card, who, ask, llm, t) -> dict:
+    handle = card.public_dict().get("handle", "")
+    transcript = _ask_transcript(client, ask.get("thread_id"), handle)
+    user = (f"THE QUESTION YOUR HUMAN ASKED: {ask.get('question','')}\n\n"
+            f"THE CONVERSATION WITH @{who}:\n{transcript}")
+    try:
+        report = _clean_note(llm(_ASK_REPORT_SYSTEM, user, purpose="judge"))
+    except Exception:
+        report = ""
+    if not report:
+        report = (f"ANSWER: {ask.get('last_their_msg','(no clear answer)')}\n"
+                  "CONFIRMED: unclear.\nUNCERTAIN: I could not summarise this "
+                  "properly.\nUSEFUL: see their words above.\nINTEREST: unknown.\n"
+                  "NEXT: ask a more specific follow-up.")
+    ask["concluded"] = True
+    ask["report"] = report
+    ask["concluded_at"] = int(t)
+    try:
+        client.close_thread(ask.get("thread_id"))
+    except Exception:
+        pass
+    _log(state, t, who, "ask_report", "investigation finished")
+    return _ask_payload(who, ask, t)
+
+
+def _ask_transcript(client, tid, handle) -> str:
+    try:
+        msgs = (client.read_thread(tid) or {}).get("messages", [])
+    except Exception:
+        msgs = []
+    out = []
+    for m in msgs:
+        who = "US" if _is_ours(m.get("from", ""), handle) else "THEM"
+        out.append(f"{who}: {sanitize.clean_text(m.get('text', ''), max_len=500)}")
+    return "\n".join(out) or "(no messages)"
+
+
+def _ask_payload(who, ask, t) -> dict:
+    """An ask result is REQUESTED, so it always reaches the human — it is not
+    subject to the interrupt judgement that governs unsolicited findings."""
+    return {
+        "id": _finding_id({"handle": who, "pitch": ask.get("question", "")}, t),
+        "kind": "ask_result",
+        "handle": who,
+        "represents": "",
+        "question": ask.get("question", ""),
+        "report": ask.get("report", ""),
+        "pitch": "",
+        "reason": "",
+        "evidence": ask.get("last_their_msg", ""),
+        "next_step": f"Ask a follow-up, or ask me to introduce you to @{who}.",
+        "score": 10.0,
+        "note": ask.get("report", ""),
+        "verified": bool(ask.get("last_their_msg")),
+        "cards_only": False,
+        "intent": None,
+        "requested": True,
+        "ring1_available": list(ask.get("ring1_available") or []),
+        "turns": int(ask.get("our_turns") or 0),
+        "why_matched": "you asked me to find this out",
+    }
+
+
+def ask_status(state, handle=None) -> str:
+    """What the open/finished investigations look like right now."""
+    _ensure_shape(state)
+    asks = state.get("asks") or {}
+    if handle:
+        asks = {k: v for k, v in asks.items() if k == handle}
+    if not asks:
+        return "No investigations running. Ask me to find something out from an agent."
+    lines = []
+    for who, a in asks.items():
+        if a.get("concluded"):
+            lines.append(f"@{who} — finished:\n{a.get('report', '(no report)')}")
+        else:
+            lines.append(f"@{who} — still working. Asked: \"{a.get('question','')}\""
+                         f" ({a.get('our_turns', 0)} message(s) from me)")
+    return "\n\n".join(lines)
 
 
 # --------------------------------------------------------------------------- #
@@ -1203,8 +1484,11 @@ def _run_threads_path(state, client, card, llm, t, intents, ring1) -> list:
         if not dig.get("concluded"):
             _advance_dig(state, client, card, cand, dig, llm, ring1, t)
 
+    # User-requested investigations run alongside discovery, in the background.
+    finished_asks = _advance_asks(state, client, card, llm, ring1, t)
+
     # Stage 3: judge concluded digs on their findings notes.
-    return _judge_concluded(state, card, llm, t)
+    return _judge_concluded(state, card, llm, t) + finished_asks
 
 
 # --------------------------------------------------------------------------- #

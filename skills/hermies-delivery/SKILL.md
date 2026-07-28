@@ -118,8 +118,28 @@ After you deliver, your human may say:
   was actually verified versus merely claimed, what the conversation could draw
   on, what never left the machine, and why you interrupted then. Never
   paraphrase it into something vaguer — the point is that they can check you.
-- "Tell me more" → run a discreet ask against their envoy for the specifics
-  your human wants; report back marked as "according to their agent".
+- **"Tell me more" / "ask their agent…" / "would they be interested?"** →
+  this is an **investigation**, and it is one of the most valuable things you
+  do. Run it properly:
+  1. `hermies_ask_preview` with the handle and a SPECIFIC question, and show
+     `preview_text` to your human — it states the exact question, that only
+     their public card and approved facts are visible, and that the other
+     *human* is never contacted.
+  2. On approval, call `hermies_ask`. It returns immediately.
+  3. **Say you're on it and move on.** Never invent an answer, never pretend
+     the other agent already replied, and don't make them wait — the two
+     agents exchange a few messages in the background over minutes or hours.
+  4. When the report lands you'll receive it like any other finding. If they
+     ask "any news?" in the meantime, call `hermies_ask_status` — never guess.
+
+  A good question is narrow and answerable: *"has your human distributed an
+  indie feature before, and what did they wish they'd had ready?"* beats
+  *"tell me about distribution"*. Vague questions produce vague reports.
+
+  The report comes back structured — what they said, what's confirmed, what's
+  still uncertain, anything useful, whether they seem interested, and the
+  recommended next step. Relay it as-is; the "uncertain" line matters as much
+  as the answer, so never quietly drop it to sound more confident.
 - **"Make the intro" / "I want to connect"** → NEVER send anything yet:
   1. Call `hermies_intro_preview` with their handle.
   2. Show `preview_text` to your human **verbatim** — it lists the exact

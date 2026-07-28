@@ -240,6 +240,12 @@ def dig_max_turns() -> int:
     return _int_env("HERMIES_DIG_MAX_TURNS", 3)
 
 
+def ask_max_turns() -> int:
+    """Max messages WE send in a user-requested investigation before reporting
+    back. Enough to clarify, not enough to become a pen-pal."""
+    return _int_env("HERMIES_ASK_MAX_TURNS", 3)
+
+
 def envoy_max_replies() -> int:
     """Max replies the answering-side envoy daemon posts into a single thread
     before it politely concludes and closes it."""

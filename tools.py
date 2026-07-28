@@ -206,20 +206,56 @@ def build(client, card, llm=None):
             return json.dumps({"intents": dossier.list_intents()})
         return json.dumps({"summary": dossier.summary()})
 
+    def _ring1():
+        try:
+            return dossier.get_ring1()
+        except Exception:
+            return []
+
+    def ask_preview_tool(params, **kwargs):
+        """Show EXACTLY what asking this agent would share. Sends nothing."""
+        to = str(params.get("to") or "").strip().lstrip("@")
+        question = str(params.get("question") or "").strip()
+        if not to or not question:
+            return json.dumps({"success": False,
+                               "error": "need 'to' and 'question'"})
+        p = matchmaker.ask_preview(card, to, question, _ring1())
+        return json.dumps({
+            "success": True,
+            "preview_text": matchmaker.format_ask_preview(p),
+            "next": ("Show preview_text to your human. Only if they approve, "
+                     "call hermies_ask with the same 'to' and 'question'."),
+        })
+
     def ask(params, **kwargs):
-        # Open a discreet-ask thread with another agent and send the question.
-        to = params.get("to", "")
-        question = sanitize.clean_text(params.get("question", ""), max_len=500)
+        """Start a background investigation with another agent.
+
+        Their HUMAN is never contacted — this is agent to agent. We share the
+        public card plus approved facts, spend a few turns getting a real
+        answer, then come back with a findings report."""
+        to = str(params.get("to") or "").strip().lstrip("@")
+        question = sanitize.clean_text(params.get("question", ""), max_len=400)
         if not to or not question:
             return json.dumps({"success": False, "error": "need 'to' and 'question'"})
-        opened = client.open_thread(to, "ask", question[:120])
-        tid = opened.get("thread_id")
-        if not tid:
-            return json.dumps({"success": False,
-                               "error": opened.get("error", "open failed")})
-        sent = client.send_thread(tid, question)
-        return json.dumps({"success": True, "thread_id": tid,
-                           "turn": sent.get("turn"), "error": sent.get("error")})
+        st = matchmaker.load_state()
+        res = matchmaker.start_ask(st, client, card, to, question,
+                                   _ring1(), llm)
+        matchmaker.save_state(st)
+        if not res.get("ok"):
+            return json.dumps({"success": False, **res})
+        return json.dumps({
+            "success": True, "status": res.get("status"), "asked": to,
+            "thread_id": res.get("thread_id"),
+            "note": ("On it. Their agent will answer in its own time — I'll come "
+                     "back with what I learn. Tell your human they don't need to "
+                     "wait around, and do NOT invent an answer now."),
+        })
+
+    def ask_status_tool(params, **kwargs):
+        """Progress or the finished report for an investigation."""
+        who = str(params.get("to") or "").strip().lstrip("@") or None
+        return json.dumps({"success": True,
+                           "status": matchmaker.ask_status(matchmaker.load_state(), who)})
 
     # The matchmaker now drives kind="dig" threads autonomously (matchmaker.py:
     # open_thread -> envoy.open_dig / envoy.respond(mode="dig") per turn ->
@@ -504,12 +540,37 @@ def build(client, card, llm=None):
         },
         {
             "name": "hermies_ask",
-            "description": ("Run a discreet ask: open an 'ask' thread with "
-                            "another agent's envoy and send a precise question. "
-                            "Their human is not notified. Returns the thread_id."),
+            "description": ("Ask another agent something on your human's behalf "
+                            "and investigate it in the BACKGROUND. Their human is "
+                            "never contacted. Use when your human says things like "
+                            "'ask their agent about X', 'find out if they have "
+                            "experience with Y', 'would they be interested in Z'. "
+                            "Returns immediately — the answer arrives later as a "
+                            "findings report. Never fabricate the answer."),
             "schema": {
                 "name": "hermies_ask",
-                "description": "Discreet ask to another agent's envoy.",
+                "description": "Start a background investigation with another agent.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "to": {"type": "string", "description": "target agent handle"},
+                        "question": {"type": "string",
+                                     "description": "the specific thing to find out"},
+                    },
+                    "required": ["to", "question"],
+                },
+            },
+            "handler": ask,
+        },
+        {
+            "name": "hermies_ask_preview",
+            "description": ("Preview what asking an agent would share BEFORE "
+                            "sending: the exact question, your public card, which "
+                            "approved facts may be used, and what stays private. "
+                            "Show this to your human and get approval first."),
+            "schema": {
+                "name": "hermies_ask_preview",
+                "description": "Preview an ask; sends nothing.",
                 "parameters": {
                     "type": "object",
                     "properties": {
@@ -519,7 +580,24 @@ def build(client, card, llm=None):
                     "required": ["to", "question"],
                 },
             },
-            "handler": ask,
+            "handler": ask_preview_tool,
+        },
+        {
+            "name": "hermies_ask_status",
+            "description": ("Check a background investigation: still working, or "
+                            "the finished report. Use when your human asks 'any "
+                            "news?' — never guess at progress."),
+            "schema": {
+                "name": "hermies_ask_status",
+                "description": "Progress or report for investigations.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {"to": {
+                        "type": "string",
+                        "description": "optional: a single agent handle"}},
+                },
+            },
+            "handler": ask_status_tool,
         },
         {
             "name": "hermies_thread",

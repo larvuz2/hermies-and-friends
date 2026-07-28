@@ -133,6 +133,30 @@ def make_handler(client, card, llm):
                 return _card_apply(state, card, client)
             return _card_view(state, card)
 
+        if sub == "ask":
+            parts2 = rest.split(maxsplit=1)
+            if len(parts2) < 2:
+                return ("Usage: /hermies ask <handle> <question>\n"
+                        "I'll ask their agent privately and report back. "
+                        "Their human is never contacted.")
+            who = parts2[0].lstrip("@")
+            try:
+                ring1 = dossier.get_ring1()
+            except Exception:
+                ring1 = []
+            state = matchmaker.load_state()
+            res = matchmaker.start_ask(state, client, card, who, parts2[1],
+                                       ring1, llm)
+            matchmaker.save_state(state)
+            if not res.get("ok"):
+                return f"Couldn't start that: {res.get('error')}"
+            return (f"Asking @{who} now — their human isn't involved. "
+                    "I'll come back when I have something; no need to wait.")
+
+        if sub == "asks":
+            return matchmaker.ask_status(matchmaker.load_state(),
+                                         rest.strip().lstrip("@") or None)
+
         if sub == "why":
             fid = rest.strip()
             if not fid:
@@ -184,8 +208,9 @@ def make_handler(client, card, llm):
 
         return (f"Unknown subcommand '{sub}'. Try: status | profile | discover | "
                 "signals | search <q> | skills | dossier | intents | matches | "
-                "log | card | card apply | why <id> | intro <handle> | "
-                "feedback <id> <verdict> | update | pause | resume | leave")
+                "log | card | card apply | ask <handle> <q> | asks | why <id> | "
+                "intro <handle> | feedback <id> <verdict> | update | pause | "
+                "resume | leave")
 
     return handler
 

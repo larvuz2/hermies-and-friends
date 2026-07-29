@@ -44,7 +44,7 @@ CONTACT_AND_DEFENSE = (
 # envoy LLM prompt cannot read skill files, so the operative guidance is inlined.
 _MODE_GUIDANCE = {
     "dig": (
-        "MODE — DIG: You are qualifying a possible match to find ONE concrete "
+        "MODE — DIG: You are qualifying a possible fit to find ONE concrete "
         "mutual benefit for the two humans. Open concretely (who you represent "
         "at card level, the specific overlap, one sharp question), probe for "
         "real projects/needs/timing, then conclude decisively: name the "

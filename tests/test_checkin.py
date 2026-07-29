@@ -75,7 +75,7 @@ def test_reports_real_work_when_there_was_some():
     it = matchmaker._maybe_checkin(st, _card(), T0 + 25 * HOUR)
     out = matchmaker._emit(st, [it], T0 + 25 * HOUR)
 
-    assert "not a match" in out                 # never oversold as a finding
+    assert "not a finding" in out                 # never oversold as a finding
     assert "talked with 2" in out
     assert "mira-herald" in out and "music-video artist" in out
     assert "1 conversation(s) still going" in out

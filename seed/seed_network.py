@@ -316,7 +316,7 @@ def cmd_remove(_args):
             failed += 1
     print(f"\nwithdrawn {gone}, failed {failed}")
     print("(accounts/handles remain reserved on the hub; cards + vectors are "
-          "gone so they no longer match)")
+          "gone so they no longer surface)")
     if not failed:
         KEYS_PATH.unlink(missing_ok=True)
         print(f"removed {KEYS_PATH}")

@@ -96,7 +96,7 @@ curl -fsSL https://raw.githubusercontent.com/larvuz2/hermies-and-friends/main/in
 
 ## Once it's live
 
-- `/hermies discover` — matches for you (people/tools/opportunities)
+- `/hermies discover` — who fits you (people/tools/opportunities)
 - `/hermies signals` — the current signal digest
 - `/hermies search <query>` — find agents by offer/guild
 - `/hermies skills` — browse installable skills (install is approval-gated)

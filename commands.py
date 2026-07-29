@@ -81,7 +81,7 @@ def make_handler(client, card, llm):
             ensure_registered(client, card)
             client.publish_profile(card.public_dict())
             rejoined = _resume_matchmaking()  # publishing re-joins after a leave
-            note = ("\n(Re-joined the network — matchmaking resumed.)"
+            note = ("\n(Re-joined the network — I'm looking again.)"
                     if rejoined else "")
             return ("Updated & published your PUBLIC card:\n"
                     + json.dumps(card.public_dict(), indent=2) + note)
@@ -89,7 +89,7 @@ def make_handler(client, card, llm):
         if sub == "discover":
             signals = client.discover(card.public_dict())
             if not signals:
-                return "No matches yet. Flesh out your `need`/`offer`/`guilds` and try again."
+                return "Nothing yet. Flesh out your `need`/`offer`/`guilds` and try again."
             return service._format_digest(signals)
 
         if sub == "signals":
@@ -121,7 +121,7 @@ def make_handler(client, card, llm):
         if sub == "intents":
             return _intents_view(rest)
 
-        if sub == "matches":
+        if sub in ("findings", "matches"):   # "matches" kept as a silent alias
             return _matches_view(matchmaker.load_state())
 
         if sub == "log":
@@ -191,7 +191,7 @@ def make_handler(client, card, llm):
                 pass
             note = {
                 "useful": "Noted — I'll bring you more like that.",
-                "too_early": "Noted — good match, wrong moment. I'll park them.",
+                "too_early": "Noted — right person, wrong moment. I'll park them.",
                 "wrong_fit": "Noted — I'll raise the bar and set them aside.",
                 "spam": "Noted — you won't hear about them again.",
             }[res["verdict"]]
@@ -207,7 +207,7 @@ def make_handler(client, card, llm):
             return _leave(client)
 
         return (f"Unknown subcommand '{sub}'. Try: status | profile | discover | "
-                "signals | search <q> | skills | dossier | intents | matches | "
+                "signals | search <q> | skills | dossier | intents | findings | "
                 "log | card | card apply | ask <handle> <q> | asks | why <id> | "
                 "intro <handle> | feedback <id> <verdict> | update | pause | "
                 "resume | leave")
@@ -217,7 +217,7 @@ def make_handler(client, card, llm):
 
 # --------------------------------------------------------------------------- #
 # Opt-out: pause / resume / leave. These flip the matchmaker's ``paused`` flag
-# (run_cycle returns SILENT while set, so the daemon + hermies_matchmake tool
+# (run_cycle returns SILENT while set, so the daemon + hermies_scout tool
 # no-op) and, for leave, remove the published card from the hub. The local
 # dossier is NEVER touched by any of these.
 # --------------------------------------------------------------------------- #
@@ -226,7 +226,7 @@ def _pause() -> str:
     state = matchmaker.load_state()
     state["paused"] = True
     matchmaker.save_state(state)
-    return ("Paused. I've stopped matchmaking — no digs, no new outreach, and "
+    return ("Paused. I've stopped looking — no digs, no new outreach, and "
             "I won't interrupt you. Your public card is still up. Say "
             "`/hermies resume` to start again.")
 
@@ -237,7 +237,7 @@ def _resume() -> str:
     state["paused"] = False
     matchmaker.save_state(state)
     if not was:
-        return "Matchmaking was already running — nothing to resume."
+        return "I was already looking — nothing to resume."
     return ("Resumed. I'll go back to quietly digging for you and only surface "
             "something when it's genuinely worth it.")
 
@@ -270,10 +270,10 @@ def _leave(client) -> str:
     head = ("Left the network. I removed your public card and discovery vectors "
             "from the hub"
             if removed else
-            "Stopped matchmaking and paused you locally, but I couldn't reach "
+            "Stopped looking and paused you locally, but I couldn't reach "
             "the hub to remove your public card — I'll treat you as off the "
             "network here")
-    return (head + ", and I've stopped all matchmaking.\n\n"
+    return (head + ", and I've stopped looking for you.\n\n"
             "Your private dossier stays right here on this machine — nothing "
             "local was deleted. Whenever you want back in, just re-publish a "
             "card with `/hermies profile {...}` and you'll re-join.")
@@ -357,12 +357,12 @@ def _engine_line() -> str:
     try:
         st = matchmaker.load_state()
     except Exception:
-        return "Matchmaker: state unavailable."
+        return "Scouting: state unavailable."
     if st.get("paused"):
-        return "Matchmaker: PAUSED (say `/hermies resume` to restart)."
+        return "Scouting: PAUSED (say `/hermies resume` to restart)."
     hb = st.get("engine") or {}
     last = hb.get("last_success_at")
-    lines = [f"Matchmaker: last cycle {_ago(last)}"
+    lines = [f"Scouting: last cycle {_ago(last)}"
              f" · {hb.get('cycles_total', 0)} total"]
     if last is None:
         lines[0] += "  ← never run; the background daemon should do this"
@@ -390,7 +390,7 @@ def _note_engagement(kind: str, weight: float = 1.0) -> None:
 def _matches_view(state) -> str:
     """Everything held back for the next natural conversation, plus recent
     verdicts. All candidate content already passed sanitize on the way in."""
-    # Asking to see matches IS interest — it lowers the bar for a while.
+    # Asking to see findings IS interest — it lowers the bar for a while.
     _note_engagement("asked_for_matches", 1.0)
     lines = []
     queue = state.get("queue") or []

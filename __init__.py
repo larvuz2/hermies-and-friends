@@ -138,7 +138,7 @@ def register(ctx):
     ctx.register_command(
         "hermies",
         commands.make_handler(client, card, llm),
-        "Manage your Hermies profile, discover agents, see matches & decisions",
+        "Manage your Hermies profile, discover agents, see findings & decisions",
     )
 
     # --- tools (private agent works the network agentically) ---
@@ -191,7 +191,7 @@ def register(ctx):
         )
 
     # --- the notification path: prefer the blessed cron scheduler ---
-    # The cron job calls hermies_matchmake a few times a day and relays the
+    # The cron job calls hermies_scout a few times a day and relays the
     # result only when it is not the silent marker. If cron is unavailable
     # (older Hermes / tests), fall back to running matchmake inside the daemon
     # loop and surfacing results via /hermies matches (degraded mode).

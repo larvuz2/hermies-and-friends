@@ -53,7 +53,7 @@ _DAY = 86400
 # Distinctive system prompts so a fake llm (and the real one) can tell the two
 # call sites apart, and so the judge is unambiguous about output shape.
 _JUDGE_SYSTEM = (
-    "You are a matchmaking analyst for a human's agent on the Hermies network. "
+    "You are a connection analyst for a human's agent on the Hermies network. "
     "Given OUR public card, THEIR public card, and a short handshake exchange, "
     "decide whether this other party is worth interrupting the human for RIGHT "
     "NOW. Interrupt only for a genuinely interesting AND viable fit. "
@@ -85,10 +85,10 @@ _FINDINGS_SYSTEM = (
     "it."
 )
 
-# Judge that runs on the findings note (not raw reply). Shares the "matchmaking
+# Judge that runs on the findings note (not raw reply). Shares the "connection
 # analyst" prefix with _JUDGE_SYSTEM so verdict-routing in tests keeps working.
 _JUDGE_FINDINGS_SYSTEM = (
-    "You are a matchmaking analyst for a human's agent on the Hermies network. "
+    "You are a connection analyst for a human's agent on the Hermies network. "
     "Given OUR public card, THEIR public card, and a FINDINGS NOTE from a "
     "completed dig, decide whether this other party is worth interrupting the "
     "human for RIGHT NOW. Interrupt only for a genuinely interesting AND viable "
@@ -129,7 +129,7 @@ def _ensure_shape(d: dict) -> dict:
     d.setdefault("thread_replies", {})   # {thread_id: our-reply-count} — envoy daemon 6-reply cap
     d.setdefault("notify_log", [])    # [epoch_seconds, ...] recent interruptions (social battery)
     d.setdefault("engagement", [])    # [{ts, kind, w}, ...] human leaned in -> lowers the bar
-    d.setdefault("feedback", [])      # [{id, handle, verdict, ts}, ...] one-tap match feedback
+    d.setdefault("feedback", [])      # [{id, handle, verdict, ts}, ...] one-tap finding feedback
     # "Ask another agent": user-requested investigations running in the
     # background. {handle: {question, thread_id, our_turns, awaiting,
     #                       concluded, report, asked_at, last_their_msg}}
@@ -359,7 +359,7 @@ def _notify_payload(handle, their_card, verdict, reply_text) -> dict:
         "pitch": verdict.get("pitch", ""),                 # our own model output
         "reason": verdict.get("reason", ""),
         "evidence": sanitize.clean_text(reply_text or "", max_len=200),
-        "next_step": f"Ask me to reach out to @{handle}, or run /hermies matches.",
+        "next_step": f"Ask me to reach out to @{handle}, or run /hermies findings.",
         # --- inputs to the interrupt judgement (see _value_of) ---
         "score": float(their_card.get("score") or 0.0),
         "note": (verdict.get("reason", "") or ""),
@@ -526,7 +526,7 @@ def _emit(state, pending, t):
 def _format_notification(items) -> str:
     # A check-in on its own is not a finding — don't oversell it.
     only_checkin = items and all(i.get("kind") == "checkin" for i in items)
-    header = ("\U0001f54a️  A quick note from me, not a match:" if only_checkin
+    header = ("\U0001f54a️  A quick note from me, not a finding:" if only_checkin
               else "\U0001f54a️  Hermies found something worth your attention:")
     lines = [header]
     for it in items:
@@ -950,9 +950,9 @@ def _why_now(item, state, t) -> list:
         why.append(f'it looks time-sensitive ("{hit}")')
     score = float(item.get("score") or 0)
     if score >= 8:
-        why.append(f"a strong two-way match ({score:.1f}/10)")
+        why.append(f"a strong two-way fit ({score:.1f}/10)")
     elif score:
-        why.append(f"match strength {score:.1f}/10")
+        why.append(f"fit strength {score:.1f}/10")
     if not why:
         why.append("it cleared the bar for interrupting you")
     return why
@@ -971,7 +971,7 @@ def receipt(state, finding_id) -> str:
 
     lines = [f"Receipt for @{handle}  [{finding_id}]", ""]
 
-    lines.append("WHY IT MATCHED")
+    lines.append("WHY THIS FITS YOU")
     lines.append("  " + (sanitize.clean_text(item.get("why_matched") or
                                              item.get("represents") or
                                              "profile overlap", 240)))
@@ -1335,7 +1335,7 @@ def _notify_payload_findings(handle, dig, verdict) -> dict:
         "pitch": verdict.get("pitch", ""),
         "reason": verdict.get("reason", ""),
         "evidence": sanitize.clean_text(dig.get("last_their_msg", ""), max_len=200),
-        "next_step": f"Ask me to reach out to @{handle}, or run /hermies matches.",
+        "next_step": f"Ask me to reach out to @{handle}, or run /hermies findings.",
         "intent": dig.get("intent"),
         # --- trust receipt inputs (see receipt()) ---
         "why_matched": their.get("why", ""),          # the hub's grounded reason

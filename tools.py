@@ -40,7 +40,7 @@ def build(client, card, llm=None):
                 "findings_ready": len(((st.get("outbox") or {}).get("ready")) or []),
                 "new_findings": added,
                 "note": ("Scan started. Conversations take time — say nothing "
-                         "about matches now; I'll surface anything worthwhile."),
+                         "about findings now; I'll surface anything worthwhile."),
             })
         except Exception as e:
             return json.dumps({"success": False, "error": str(e)[:200]})
@@ -168,7 +168,7 @@ def build(client, card, llm=None):
             "success": True,
             "paused": True,
             "already_paused": already,
-            "note": ("Matchmaking and onboarding reminders are off. Resume "
+            "note": ("Scouting and onboarding reminders are off. Resume "
                      "anytime with /hermies resume."),
         })
 
@@ -353,14 +353,14 @@ def build(client, card, llm=None):
 
     return [
         {
-            "name": "hermies_matchmake",
-            "description": ("Run one autonomous matchmaking cycle. Returns "
+            "name": "hermies_scout",
+            "description": ("Run one autonomous scouting cycle. Returns "
                             '{"result": <text>} where <text> is either a human '
                             "notification or the marker HERMIES_SILENT (say "
                             "nothing to the human in that case)."),
             "schema": {
-                "name": "hermies_matchmake",
-                "description": ("Run one matchmaking cycle; relay the result only "
+                "name": "hermies_scout",
+                "description": ("Run one scouting cycle; relay the result only "
                                 "if it is not HERMIES_SILENT."),
                 "parameters": {"type": "object", "properties": {}},
             },
@@ -383,13 +383,13 @@ def build(client, card, llm=None):
         },
         {
             "name": "hermies_scan_now",
-            "description": ("Run one matchmaking cycle right now (used at the end "
+            "description": ("Run one scouting cycle right now (used at the end "
                             "of onboarding so a new standing intent starts working "
                             "immediately). Returns counts only — never show the "
-                            "human matches as a result of this."),
+                            "human any findings as a result of this."),
             "schema": {
                 "name": "hermies_scan_now",
-                "description": "Start a matchmaking cycle immediately; returns counts.",
+                "description": "Start a scouting cycle immediately; returns counts.",
                 "parameters": {"type": "object", "properties": {}},
             },
             "handler": scan_now,
@@ -423,7 +423,7 @@ def build(client, card, llm=None):
         },
         {
             "name": "hermies_why",
-            "description": ("The trust receipt for a finding: why it matched, "
+            "description": ("The trust receipt for a finding: why it fits, "
                             "what was verified vs merely claimed, what the "
                             "conversation could draw on, what never left this "
                             "machine, and why it interrupted now. Relay it "
@@ -476,7 +476,7 @@ def build(client, card, llm=None):
         },
         {
             "name": "hermies_list_signals",
-            "description": "List current signals/matches surfaced for your human.",
+            "description": "List current signals/findings surfaced for your human.",
             "schema": {
                 "name": "hermies_list_signals",
                 "description": "List current Hermies signals for your human.",
@@ -668,7 +668,7 @@ def build(client, card, llm=None):
         },
         {
             "name": "hermies_pending",
-            "description": ("Surface findings the matchmaker composed but hasn't "
+            "description": ("Surface findings Hermies composed but hasn't "
                             "delivered yet (the deliver-on-next-interaction "
                             "queue), plus any reveal requests awaiting your "
                             "human's approval. action='peek' to view without "
@@ -688,13 +688,13 @@ def build(client, card, llm=None):
         },
         {
             "name": "hermies_pause",
-            "description": ("Pause Hermies for your human: stop all matchmaking "
+            "description": ("Pause Hermies for your human: stop all scouting "
                             "and silence the first-run onboarding nudge. Call "
                             "this when your human declines onboarding or asks to "
                             "opt out. Reversible with /hermies resume."),
             "schema": {
                 "name": "hermies_pause",
-                "description": ("Pause matchmaking + onboarding reminders "
+                "description": ("Pause scouting + onboarding reminders "
                                 "(human declined / opted out)."),
                 "parameters": {"type": "object", "properties": {}},
             },

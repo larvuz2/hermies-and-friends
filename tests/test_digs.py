@@ -50,7 +50,7 @@ class DigLlm:
             return "{}"
         if system.startswith("You are writing a FINDINGS NOTE"):
             return self.note
-        if system.startswith("You are a matchmaking analyst"):
+        if system.startswith("You are a connection analyst"):
             return self.verdict
         # envoy dig opener / turn
         return "Tell me about your current projects and timing — is there a fit?"
@@ -170,7 +170,7 @@ def test_dig_opens_thread_converses_concludes_with_findings_and_notifies(monkeyp
 
     # The judge ran on the FINDINGS NOTE, not the raw reply.
     judged = [u for (s, u) in llm.calls
-              if s.startswith("You are a matchmaking analyst")]
+              if s.startswith("You are a connection analyst")]
     assert judged and "FINDINGS NOTE:" in judged[-1]
 
 
@@ -416,7 +416,7 @@ def test_delivery_holds_subbar_findings_without_consuming_them(monkeypatch):
 def test_cron_prompt_is_delivery_only():
     """Cron must not be able to trigger discovery/digs/judging."""
     assert "hermies_deliver_pending" in matchmaker.CRON_PROMPT
-    assert "hermies_matchmake" not in matchmaker.CRON_PROMPT
+    assert "hermies_scout" not in matchmaker.CRON_PROMPT
 
 
 # --------------------------------------------------------------------------- #

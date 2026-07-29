@@ -7,7 +7,7 @@ Two things are pinned here:
      (ctx.llm). We assert every mode/liveness combination, and that ``purpose``
      ("envoy" | "judge" | "refresh") rides along to the hub from each call site.
   2. Opt-out: /hermies pause & leave flip the matchmaker's ``paused`` flag so
-     run_cycle returns SILENT (daemon + hermies_matchmake tool go quiet); leave
+     run_cycle returns SILENT (daemon + hermies_scout tool go quiet); leave
      also calls client.remove_profile() while leaving the local dossier intact.
 """
 import json
@@ -279,7 +279,7 @@ def test_republish_profile_rejoins_after_leave(monkeypatch, tmp_path):
 
 
 def test_paused_matchmake_tool_is_silent(monkeypatch, tmp_path):
-    """The hermies_matchmake tool no-ops (SILENT) while paused."""
+    """The hermies_scout tool no-ops (SILENT) while paused."""
     monkeypatch.setenv("HERMIES_HOME", str(tmp_path))
     from hermies import tools
     from hermies.client import HermiesClient
@@ -292,5 +292,5 @@ def test_paused_matchmake_tool_is_silent(monkeypatch, tmp_path):
     h = {s["name"]: s["handler"]
          for s in tools.build(HermiesClient(MockBackend()), _card(),
                               llm=lambda s, u, **_: "x")}
-    out = json.loads(h["hermies_matchmake"]({}))
+    out = json.loads(h["hermies_scout"]({}))
     assert out["result"] == matchmaker.SILENT

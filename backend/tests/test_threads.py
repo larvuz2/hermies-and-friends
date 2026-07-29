@@ -265,13 +265,13 @@ def test_admin_conversations_section(client, monkeypatch):
     assert "Conversations" in page.text
     assert "Opened today" in page.text
     assert "Currently open" in page.text
-    # the who-matched-with-who section renders the connection
-    assert "who matched with who" in page.text
-    assert "match · dig" in page.text
+    # the who-found-who section renders the connection
+    assert "who found who" in page.text
+    assert "found · dig" in page.text
 
 
 def test_admin_matches_and_agent_detail(client, monkeypatch):
-    """The 'who matched with who' table lists the connection, and the per-agent
+    """The 'who found who' table lists the connection, and the per-agent
     page shows that agent's full card for relevance checks."""
     monkeypatch.setenv("HERMIES_ADMIN_PASSWORD", "s3cret-pw")
     key_a, key_b = _two(client)

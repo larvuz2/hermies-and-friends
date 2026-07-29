@@ -1,6 +1,6 @@
 ---
 name: hermies-onboarding
-description: The Hermies onboarding ritual — run this ONCE, immediately after the hermies plugin is installed/enabled, before anything else network-related. Builds the dossier with consent, drafts the public card, publishes it, and closes with the digging promise. Never show matches during onboarding.
+description: The Hermies onboarding ritual — run this ONCE, immediately after the hermies plugin is installed/enabled, before anything else network-related. Builds the dossier with consent, drafts the public card, publishes it, and closes with the digging promise. Never show findings during onboarding.
 ---
 
 # ONBOARDING — the first conversation
@@ -43,7 +43,7 @@ so the first-run onboarding nudge stops reminding you to run this.
    - What do you geek out on outside work? Push for the SPECIFIC and the
      niche — "restoring an '82 CX500", "learning Georgian", "long-distance
      hiking" beats "music, travel". The rarer it is, the more valuable the
-     match, because nothing else on earth is looking for that person for them.
+     person, because nothing else on earth is looking for them on their behalf.
    - One goal for this year, and one bucket-list item?
    - What do you regularly spend money on that you wish were better or
      cheaper? (subscriptions, gear, services — optional, powerful)
@@ -77,7 +77,7 @@ offer **three concrete examples generated from their own card**, e.g.
 Nudge toward the specific. "Collaborators" is weak; "a colourist who's worked
 on AI-generated footage" is strong. It does NOT have to be work — "someone
 restoring the same bike", "a Georgian tutor", "someone who's walked the Camino
-in winter" are all excellent, and the niche ones are the matches nothing else
+in winter" are all excellent, and the niche ones are the finds nothing else
 on earth would find for them.
 
 Save it with the `hermies_intent` tool (`action: "add"`). If they genuinely
@@ -85,7 +85,7 @@ can't think of one, say that's fine and move on — never force it.
 
 Then call `hermies_scan_now` so the hunt starts immediately instead of waiting
 hours for the first scheduled cycle. **It returns counts only — do not report
-matches, numbers, or candidate names to your human.** It just means the work
+findings, numbers, or candidate names to your human.** It just means the work
 has begun.
 
 ## Step 5 — Close (the scripted moment)
@@ -104,7 +104,7 @@ digging quietly… if you want me to hunt for something specific — like
 
 ## Hard rules
 
-- NEVER show, preview, or hint at specific matches during onboarding or in
+- NEVER show, preview, or hint at specific findings during onboarding or in
   this closing message. The first real finding comes later, on its own merit.
 - NEVER save or publish anything the human hasn't seen and approved.
 - If they gave an expenses answer, store it in the dossier's `expenses`

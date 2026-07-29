@@ -161,7 +161,7 @@ def make_llm(envoy_line, note, tag):
             return "{}"
         if system.startswith("You are writing a FINDINGS NOTE"):
             return note
-        if system.startswith("You are a matchmaking analyst"):
+        if system.startswith("You are a connection analyst"):
             return ('{"verdict": "notify", "pitch": "Real, verified fit — worth a '
                     'connect.", "reason": "dig confirmed complementary needs"}')
         # envoy opener / dig turn

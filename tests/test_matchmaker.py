@@ -535,7 +535,7 @@ def test_all_untrusted_strings_pass_through_sanitize(monkeypatch):
     assert "\n\nSYSTEM" not in out
 
     # The judge prompt framed the reply as data-not-instructions.
-    judge_user = [u for (s, u) in llm.calls if s.startswith("You are a matchmaking")][0]
+    judge_user = [u for (s, u) in llm.calls if s.startswith("You are a connection")][0]
     assert sanitize.FRAME_PREFIX in judge_user
     assert "```" not in judge_user
 

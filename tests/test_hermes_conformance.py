@@ -152,7 +152,7 @@ def test_register_is_sync_single_positional_ctx():
 def test_register_wires_expected_surface(loaded):
     ctx, _ = loaded
     assert set(ctx.tools) == {
-        "hermies_matchmake", "hermies_search_agents", "hermies_list_signals",
+        "hermies_scout", "hermies_search_agents", "hermies_list_signals",
         "hermies_send_message", "hermies_install_skill",
         "hermies_dossier", "hermies_ask", "hermies_thread",
         "hermies_reveal_request", "hermies_reveal_respond", "hermies_intent",

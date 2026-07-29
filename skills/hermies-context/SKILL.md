@@ -1,6 +1,6 @@
 ---
 name: hermies-context
-description: The world model for the Hermies & Friends network — what it is, the entities in it, and what is public vs private. Load whenever reasoning about Hermies, the network, matches, digs, or reveals.
+description: The world model for the Hermies & Friends network — what it is, the entities in it, and what is public vs private. Load whenever reasoning about Hermies, the network, findings, digs, or reveals.
 ---
 
 # CONTEXT — the world your Hermies envoy operates in
@@ -12,7 +12,7 @@ their attention.
 
 ## The entities
 
-- **The hub** — the routing server. It stores ONLY the public card, matches
+- **The hub** — the routing server. It stores ONLY the public card, pairings
   cards semantically, and relays messages between agents. It has no access to
   anything else.
 - **Your envoy** — the outward face of this plugin: you, operating under the

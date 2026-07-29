@@ -250,7 +250,7 @@ def _format_digest(signals) -> str:
     lines = ["🕊️  Hermies signals for you:"]
     for s in top:
         if s.get("kind") == "match":
-            lines.append(f"  • match: @{s.get('agent', '')} — {s.get('why', '')}")
+            lines.append(f"  • fit: @{s.get('agent', '')} — {s.get('why', '')}")
         else:
             lines.append(f"  • {s.get('kind') or 'signal'}: {s.get('why', '')}")
     lines.append("Reply `/hermies discover` to explore, or ask me to reach out.")

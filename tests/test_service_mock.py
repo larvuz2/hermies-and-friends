@@ -26,16 +26,17 @@ def test_run_once_handles_inbound_and_injects_signals():
     summary = service.run_once(client, card, lambda c, r="user": injected.append(c), fake_llm)
 
     assert summary["handled"] == 1          # the seeded inbound envoy query
-    assert summary["signals"] >= 1          # matches from seeded agents
+    assert summary["signals"] >= 1          # findings from seeded agents
     assert injected and "Hermies signals" in injected[0]
 
 
-def test_discover_returns_matches():
+def test_discover_returns_findings():
     client = HermiesClient(MockBackend())
     card = _card()
     handler = commands.make_handler(client, card, fake_llm)
     out = handler("discover")
-    assert "match" in out.lower()
+    assert "fit:" in out.lower()
+    assert "match" not in out.lower()   # never dating vocabulary
 
 
 def test_install_gate_blocks_unapproved():

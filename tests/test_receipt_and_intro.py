@@ -42,7 +42,7 @@ def _finding(state, **kw):
 def test_receipt_covers_all_five_questions():
     st = _finding(matchmaker.new_state())
     r = matchmaker.receipt(st, "abc123")
-    for section in ("WHY IT MATCHED", "WHAT WAS VERIFIED",
+    for section in ("WHY THIS FITS YOU", "WHAT WAS VERIFIED",
                     "WHAT THE CONVERSATION COULD DRAW ON",
                     "WHAT NEVER LEFT THIS MACHINE",
                     "WHY I INTERRUPTED YOU NOW"):
@@ -86,7 +86,7 @@ def test_why_tool_returns_the_receipt():
                 for s in tools.build(HermiesClient(MockBackend()), _card(),
                                      llm=lambda s, u, **k: "")}
     res = json.loads(handlers["hermies_why"]({"finding_id": "abc123"}))
-    assert res["success"] and "WHY IT MATCHED" in res["receipt"]
+    assert res["success"] and "WHY THIS FITS YOU" in res["receipt"]
 
 
 # --- #5 guided introduction -------------------------------------------------

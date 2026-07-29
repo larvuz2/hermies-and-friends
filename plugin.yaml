@@ -12,7 +12,7 @@ provides_hooks:
   - pre_tool_call
   - pre_llm_call
 provides_tools:
-  - hermies_matchmake
+  - hermies_scout
   - hermies_search_agents
   - hermies_list_signals
   - hermies_send_message

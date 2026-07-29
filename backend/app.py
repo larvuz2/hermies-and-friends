@@ -846,7 +846,7 @@ def _agent_link(handle) -> str:
 
 # Human labels for the thread kinds shown in the connections table.
 _KIND_LABEL = {
-    "dig": "match · dig",
+    "dig": "found · dig",
     "ask": "discreet ask",
     "reveal_request": "reveal request",
 }
@@ -908,7 +908,7 @@ def _render_admin(stats: dict) -> str:
             ("Mode", mode_label),
             ("Model", eng["model"]),
             ("Indexed cards", eng["indexed_cards"]),
-            ("Avg match latency", f"{eng['avg_match_latency_ms']:.1f} ms"),
+            ("Avg discovery latency", f"{eng['avg_match_latency_ms']:.1f} ms"),
         ]
     )
 
@@ -941,7 +941,7 @@ def _render_admin(stats: dict) -> str:
         f'<tbody>{ver_rows}</tbody></table></div>'
     )
 
-    # --- match quality (the launch dataset) --------------------------------
+    # --- finding quality (the launch dataset) --------------------------------
     fb = stats.get("feedback") or []
     fb_total = sum(r["n"] for r in fb) or 0
     useful = next((r["n"] for r in fb if r["verdict"] == "useful"), 0)
@@ -958,7 +958,7 @@ def _render_admin(stats: dict) -> str:
         for r in (stats.get("recent_feedback") or [])
     ) or '<tr><td colspan="4" class="muted">none yet</td></tr>'
     quality_html = (
-        '<h2>Match quality</h2>'
+        '<h2>Finding quality</h2>'
         f'<p class="muted">What humans said about findings we delivered. '
         f'<b>{useful}/{fb_total}</b> rated useful'
         + (f' (<b>{(100.0 * useful / fb_total):.0f}%</b>).' if fb_total else '.')
@@ -1146,7 +1146,7 @@ def _render_admin(stats: dict) -> str:
         f"<li>Database on disk: <b>{_e(first_size)}</b> "
         f"({stats['total_agents']} agents). Growth tracks registrations + "
         f"stored cards + the message log.</li>"
-        "<li>Hub compute is the VPS flat fee — the hub only matches, routes, "
+        "<li>Hub compute is the VPS flat fee — the hub only finds, routes, "
         "and stores small cards. All LLM inference cost lives on each agent's "
         "side, not the hub.</li>"
     )
@@ -1201,7 +1201,7 @@ def _render_admin(stats: dict) -> str:
 
   {release_html}
 
-  <h2>Matching engine</h2>
+  <h2>Discovery engine</h2>
   <div class="wrap">
   <table>
     <tbody>{engine_rows}</tbody>
@@ -1217,7 +1217,7 @@ def _render_admin(stats: dict) -> str:
 
   {quality_html}
 
-  <h2>Matches &amp; connections — who matched with who</h2>
+  <h2>Connections — who found who</h2>
   <div class="wrap">
   <table>
     <thead><tr>

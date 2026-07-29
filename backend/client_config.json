@@ -32,7 +32,11 @@
     "drop_cooldown_days": 14,
     "card_refresh_days": 7,
     "config_refresh_hours": 6,
-    "auto_update_hours": 24
+    "auto_update_hours": 24,
+    "redig_after_days": 14,
+    "redig_max": 3,
+    "startup_gate_seconds": 300,
+    "checkin_after_hours": 24
   },
   "notice": null
 }

@@ -49,6 +49,7 @@ from . import _config, envoy, profile, sanitize
 SILENT = "HERMIES_SILENT"
 
 _DAY = 86400
+_OPENER_RETRIES = 2      # re-sends before a silent dig is abandoned
 
 # Distinctive system prompts so a fake llm (and the real one) can tell the two
 # call sites apart, and so the judge is unambiguous about output shape.
@@ -1368,12 +1369,55 @@ def _adopt_dig(state, s, cand, card_hash, prior, t):
         "our_turns": max(1, (turns + 1) // 2),
         "awaiting": bool(open_ones),
         "concluded": not open_ones,
+        # Adopting a finished thread also has to date it, or the re-look clock
+        # below has nothing to measure from.
+        "concluded_ts": int(t) if not open_ones else None,
         "card_hash": card_hash,
         "their_card": their,
         "intent": s.get("_intent"),
         "last_their_msg": "",
         "adopted": True,
     }
+
+
+def _redig_due(state, cand, t) -> bool:
+    """May we open a NEW conversation with someone we already concluded with?
+
+    A small network dies of its own success: once every pair has talked once,
+    discovery has nothing left to return and the agents go quiet forever — which
+    is exactly what happened in production (24 threads, then 42 hours of
+    silence). People's projects, needs and timing change, so a re-look after a
+    while is what a real contact would do. Bounded by ``redig_max`` so it can
+    never become pestering, and never applied to someone the human rejected.
+    """
+    dig = (state.get("digs") or {}).get(cand)
+    if not dig or not dig.get("concluded"):
+        return False
+    days = _config.redig_after_days()
+    if days <= 0:
+        return False
+    if int(dig.get("redigs") or 0) >= _config.redig_max():
+        return False
+    verdict = (state.get("seen", {}).get(cand) or {}).get("verdict")
+    if verdict in ("never", "drop"):
+        return False              # spam or an explicit no — respect it
+    since = float(dig.get("concluded_ts") or dig.get("opened_at") or 0)
+    return since > 0 and (t - since) >= days * _DAY
+
+
+def _redig(state, client, card, s, cand, card_hash, llm, ring1, t):
+    """Start a fresh conversation with a previously-concluded counterpart,
+    carrying the re-look count forward so the cap survives."""
+    prior = state["digs"].get(cand) or {}
+    count = int(prior.get("redigs") or 0) + 1
+    state["digs"].pop(cand, None)
+    _open_dig(state, client, card, s, cand, card_hash, llm, ring1, t)
+    fresh = state["digs"].get(cand)
+    if fresh is None:
+        state["digs"][cand] = prior          # open failed — keep what we had
+        return
+    fresh["redigs"] = count
+    _log(state, t, cand, "redig_opened", f"re-look #{count} after the cooldown")
 
 
 def _open_dig(state, client, card, s, cand, card_hash, llm, ring1, t):
@@ -1386,6 +1430,19 @@ def _open_dig(state, client, card, s, cand, card_hash, llm, ring1, t):
         return
     opener = envoy.open_dig(card, s.get("why", ""), llm, ring1_facts=ring1)
     res = _safe_send(client, tid, opener)
+    if _is_budget_err(res):
+        # The thread exists on the hub but our opening line never landed. Left
+        # alone this becomes a zombie: 0 turns, "open" forever, blocking any
+        # future dig with this agent and re-read every cycle. Close it and let
+        # discovery try again cleanly rather than waiting on a silence we caused
+        # (observed in production: three such threads with the same counterpart).
+        try:
+            client.close_thread(tid)
+        except Exception:
+            pass
+        _log(state, t, cand, "dig_opener_failed",
+             str((res or {}).get("error", "send failed"))[:80])
+        return
     state["digs"][cand] = {
         "thread_id": tid,
         "subject": subject,
@@ -1405,6 +1462,34 @@ def _open_dig(state, client, card, s, cand, card_hash, llm, ring1, t):
          ("intent: " + s["_intent"]) if s.get("_intent") else "opener sent")
     if _is_budget_err(res):
         _conclude_dig(state, client, card, cand, state["digs"][cand], llm, ring1, t)
+
+
+def _revive_silent_dig(state, client, card, cand, dig, llm, ring1, t):
+    """A dig thread with zero messages: our opener never reached the hub.
+
+    We believe we spoke (our_turns=1, awaiting=True) so nothing else in the
+    engine will ever touch it again. Re-send the opener; after
+    ``_OPENER_RETRIES`` failures close the thread and drop the dig so the
+    candidate becomes available again.
+    """
+    tries = int(dig.get("opener_retries") or 0)
+    if tries < _OPENER_RETRIES:
+        dig["opener_retries"] = tries + 1
+        opener = envoy.open_dig(card, (dig.get("their_card") or {}).get("why", ""),
+                                llm, ring1_facts=ring1)
+        res = _safe_send(client, dig.get("thread_id"), opener)
+        if not _is_budget_err(res):
+            dig["our_turns"] = 1
+            dig["awaiting"] = True
+            dig["opener_retries"] = 0
+            _log(state, t, cand, "dig_opener_resent", "first message had been lost")
+        return
+    try:
+        client.close_thread(dig.get("thread_id"))
+    except Exception:
+        pass
+    state["digs"].pop(cand, None)
+    _log(state, t, cand, "dig_abandoned", "opener never landed; freeing candidate")
 
 
 def _advance_dig(state, client, card, cand, dig, llm, ring1, t):
@@ -1428,6 +1513,10 @@ def _advance_dig(state, client, card, cand, dig, llm, ring1, t):
         return
 
     if not msgs:
+        # Nobody has said anything at all — including us. Our opener was lost,
+        # so waiting is waiting on ourselves. Re-send once, then give up and
+        # free the candidate instead of holding an empty thread open forever.
+        _revive_silent_dig(state, client, card, cand, dig, llm, ring1, t)
         return
     last = msgs[-1]
     if _is_ours(last.get("from", ""), handle):
@@ -1438,7 +1527,12 @@ def _advance_dig(state, client, card, cand, dig, llm, ring1, t):
             _conclude_dig(state, client, card, cand, dig, llm, ring1, t)
         return
 
-    # Our turn. Spend up to dig_max_turns OUTBOUND turns, then conclude.
+    # Our turn. Conclude before the hub's budget runs out, so the conversation
+    # ends with our findings note instead of an expiry.
+    if len(msgs) >= max(2, _config.thread_budget() - 2):
+        _conclude_dig(state, client, card, cand, dig, llm, ring1, t)
+        return
+    # Spend up to dig_max_turns OUTBOUND turns, then conclude.
     if dig.get("our_turns", 0) >= _config.dig_max_turns():
         _conclude_dig(state, client, card, cand, dig, llm, ring1, t)
         return
@@ -1565,7 +1659,7 @@ def _run_threads_path(state, client, card, llm, t, intents, ring1) -> list:
         if s.get("score", 0.0) < floor:
             continue
         card_hash = _hash({k: s.get(k) for k in ("kind", "agent", "why", "score")})
-        if _should_skip(state, cand, card_hash, t):
+        if _should_skip(state, cand, card_hash, t) and not _redig_due(state, cand, t):
             continue
         s["_card_hash"] = card_hash
         dig = state["digs"].get(cand)
@@ -1580,7 +1674,10 @@ def _run_threads_path(state, client, card, llm, t, intents, ring1) -> list:
                 _adopt_dig(state, s, cand, card_hash, prior, t)
             else:
                 _open_dig(state, client, card, s, cand, card_hash, llm, ring1, t)
-        elif not dig.get("concluded"):
+        elif dig.get("concluded"):
+            if _redig_due(state, cand, t) and _switch("digs_enabled"):
+                _redig(state, client, card, s, cand, card_hash, llm, ring1, t)
+        else:
             dig["card_hash"] = card_hash
             dig["their_card"] = {k: s.get(k) for k in ("kind", "agent", "why", "score")}
             if s.get("_intent"):

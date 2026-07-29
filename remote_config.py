@@ -110,6 +110,24 @@ def revision():
     return (_load_cache() or {}).get("plugin_revision")
 
 
+def _disk_fetched_at() -> float:
+    """When ANY process last fetched, so a restart doesn't refetch needlessly."""
+    try:
+        from . import throttle
+        raw = throttle._gate_path("config-fetch").read_text(encoding="utf-8")
+        return float(json.loads(raw).get("ts", 0))
+    except Exception:
+        return 0.0
+
+
+def _stamp_disk_fetch(t: float) -> None:
+    try:
+        from . import throttle
+        throttle.stamp("config-fetch", t)
+    except Exception:
+        pass
+
+
 def refresh(client, now=None, force=False) -> bool:
     """Poll the hub if the cached copy is stale. Returns True if updated.
 
@@ -117,7 +135,10 @@ def refresh(client, now=None, force=False) -> bool:
     global _FETCHED_AT
     t = float(now() if callable(now) else (now if now is not None else time.time()))
     every = max(0.25, float(knob("config_refresh_hours", 6.0))) * 3600.0
-    if not force and (t - _FETCHED_AT) < every:
+    # The staleness clock must be SHARED, not per-process. As a module global it
+    # reset to 0 in every freshly spawned Hermes process, so each one refetched
+    # the config on startup — a large part of the hub traffic we were seeing.
+    if not force and (t - max(_FETCHED_AT, _disk_fetched_at())) < every:
         return False
     fetch = getattr(client, "get_config", None)
     if fetch is None:
@@ -129,6 +150,7 @@ def refresh(client, now=None, force=False) -> bool:
     if not isinstance(doc, dict) or "knobs" not in doc:
         return False
     _FETCHED_AT = t
+    _stamp_disk_fetch(t)
     if doc != _load_cache():
         _save_cache(doc)
         return True

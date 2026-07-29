@@ -106,21 +106,32 @@ def register(ctx):
     # we already have an onboarded card but no key (e.g. upgraded from an offline
     # install), claim the handle now. Fresh users register on first publish.
     from .client import ensure_registered
+    from . import throttle
     connected = False
+    # Every Hermes process — including every subagent — runs register(). These
+    # two calls are the only hub traffic here, and unguarded they scaled with
+    # the process count rather than the agent count (measured: ~48 req/min from
+    # two agents). A shared gate lets the first process in the window do it and
+    # the rest come up on the cached copy. Joining is NEVER gated: an agent
+    # without a key has to be able to claim its handle immediately.
+    needs_join = bool(card.public_dict().get("handle")) and not _config.api_key()
     try:
-        if _config.has_hub():
+        if _config.has_hub() and (needs_join
+                                  or throttle.due("startup", _config.startup_gate_seconds())):
             connected = client.healthz()
-            if connected and card.public_dict().get("handle") and not _config.api_key():
+            if connected and needs_join:
                 ensure_registered(client, card)
     except Exception as e:
         log.debug("connectivity/auto-join check skipped: %s", e)
 
-    # Pull the hub's live tuning immediately on load, so a restart always comes
-    # up on current settings (the daemon then keeps it fresh in the background).
+    # Pull the hub's live tuning on load so a restart comes up on current
+    # settings. Not forced: refresh() now shares its staleness clock across
+    # processes, so this is a no-op for the rest of the interval instead of one
+    # fetch per spawned process.
     try:
         if _config.is_live():
             from . import remote_config
-            remote_config.refresh(client, force=True)
+            remote_config.refresh(client)
     except Exception as e:
         log.debug("remote config refresh skipped: %s", e)
 

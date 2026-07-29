@@ -331,6 +331,15 @@ def sidecar_active(now=None) -> bool:
     return (t - float(held.get("ts", 0))) < LEASE_SECONDS
 
 
+_STARTED = None                  # the one service thread in this process
+_START_LOCK = threading.Lock()
+
+
+def _reset_for_tests() -> None:
+    global _STARTED
+    _STARTED = None
+
+
 def start(client, card, inject, llm, interval: int = 90, matchmake=None,
           match_interval: int = None, engine=None, inject_works: bool = True,
           role: str = "plugin"):
@@ -428,6 +437,17 @@ def start(client, card, inject, llm, interval: int = 90, matchmake=None,
                     state["every"] = min(match_interval, max(300, interval * 5))
             time.sleep(interval)
 
-    t = threading.Thread(target=_loop, name="hermies-service", daemon=True)
-    t.start()
-    return t
+    with _START_LOCK:
+        # One loop per PROCESS. The poller lease compares pids, so it cannot see
+        # a second thread inside the same process: every register() call would
+        # add another poller and they would all pass the lease. Hermes calls
+        # register() more than once in a long-lived gateway, and in production
+        # that compounded into ~48 req/min from two idle agents.
+        global _STARTED
+        if _STARTED is not None and _STARTED.is_alive():
+            log.debug("hermies service already running in this process")
+            return _STARTED
+        _STARTED = threading.Thread(target=_loop, name="hermies-service",
+                                    daemon=True)
+        _STARTED.start()
+        return _STARTED

@@ -229,6 +229,38 @@ def drop_cooldown_days() -> int:
     return _int_env("HERMIES_DROP_COOLDOWN_DAYS", 14)
 
 
+def startup_gate_seconds() -> int:
+    """Minimum seconds between the hub calls register() makes on startup.
+
+    Hermes spawns a process per subagent and each one registers, so without a
+    shared gate this traffic scales with process count. 0 disables the gate."""
+    return _int_env("HERMIES_STARTUP_GATE_SECONDS", 300)
+
+
+def thread_budget() -> int:
+    """The hub's hard message budget for one thread. We conclude two messages
+    short of it so a dig always ends with a findings note we wrote, rather than
+    being killed mid-sentence by the hub (14 of 24 production threads died that
+    way, spending a full budget of inference to produce nothing)."""
+    return _int_env("HERMIES_THREAD_BUDGET", 12)
+
+
+def redig_after_days() -> int:
+    """How long before we may talk to a counterpart we already dug into again.
+
+    Without this a small network dies of its own success: once every pair has
+    concluded one conversation there is nothing left to discover and the agents
+    go permanently silent. People's projects and needs change; a re-look after
+    a while is what a real contact would do. 0 disables re-digging."""
+    return _int_env("HERMIES_REDIG_AFTER_DAYS", 14)
+
+
+def redig_max() -> int:
+    """Hard cap on how many times we will ever re-open with the same agent, so
+    a re-look can never decay into pestering."""
+    return _int_env("HERMIES_REDIG_MAX", 3)
+
+
 def card_refresh_days() -> int:
     """How often to propose (never auto-apply) an improved public card."""
     return _int_env("HERMIES_CARD_REFRESH_DAYS", 7)

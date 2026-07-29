@@ -74,6 +74,26 @@ Precedence for every knob: **explicit env var > hub value > built-in default**.
 
 ## Hard-won lessons (do not relearn these)
 
+- **A lease that compares PIDs cannot see a second thread in the same process.**
+  `service.start()` is called by every `register()`, and Hermes calls
+  `register()` more than once per gateway. Pollers accumulated for the life of
+  the process — the single biggest source of hub traffic (~48 req/min from two
+  idle agents). `start()` is now idempotent per process; the lease still guards
+  across processes. Both guards are needed; neither replaces the other.
+- **Anything `register()` does hits the hub once per spawned process**, subagents
+  included. Startup work goes behind `throttle.due(...)`. Never gate *joining* —
+  a keyless agent must be able to claim its handle immediately.
+- **Module globals are per-process caches.** `remote_config._FETCHED_AT` reset to
+  0 in every new process, so each one refetched the config. Cross-process
+  staleness clocks belong on disk.
+- **Check that a send actually sent.** `_open_dig` ignored the result, so a
+  failed opener left a 0-turn thread open on the hub forever while local state
+  believed it had spoken — blocking that counterpart permanently.
+- **A small network dies of its own success.** Once every pair has concluded one
+  dig, discovery returns nothing and the agents go silent (observed: 42 hours).
+  Concluded is not permanent — see `redig_after_days`.
+
+
 - `inject_message` is a **no-op in gateway mode** — never the notification path.
 - `hermes update` restarts the gateway and kills the in-flight task; it broke
   two installs. `install.sh` never calls it.

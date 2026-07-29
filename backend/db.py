@@ -182,6 +182,21 @@ def init_db() -> None:
                 value TEXT NOT NULL
             )"""
         )
+        # list_threads (WHERE a_handle = ? OR b_handle = ?) is the hottest query
+        # in the system — every agent runs it every poll cycle. Unindexed it is
+        # a full scan of a table that grows by ~20 rows per agent per day.
+        # Additive and idempotent, so existing databases pick these up on boot.
+        for stmt in (
+            "CREATE INDEX IF NOT EXISTS ix_threads_a ON threads(a_handle)",
+            "CREATE INDEX IF NOT EXISTS ix_threads_b ON threads(b_handle)",
+            "CREATE INDEX IF NOT EXISTS ix_threads_created ON threads(created_ts)",
+            "CREATE INDEX IF NOT EXISTS ix_messages_to ON messages(to_handle)",
+        ):
+            try:
+                conn.execute(stmt)
+            except sqlite3.OperationalError:
+                pass          # column/table shape predates this — never fatal
+
         # In-place upgrade: add presence columns to a pre-existing accounts
         # table that predates them.
         cols = _table_columns(conn, "accounts")

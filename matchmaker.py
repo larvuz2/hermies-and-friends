@@ -809,7 +809,7 @@ def _followup_ask(state, client, card, ask, question, ring1, llm, t) -> dict:
             "thread_id": ask.get("thread_id"), "status": "follow-up sent"}
 
 
-def _advance_asks(state, client, card, llm, ring1, t) -> list:
+def _advance_asks(state, client, card, llm, ring1, t, states=None) -> list:
     """Move every open investigation one step. Returns finished reports as
     notification payloads (the human asked, so these are always delivered)."""
     handle = card.public_dict().get("handle", "")
@@ -828,7 +828,7 @@ def _advance_asks(state, client, card, llm, ring1, t) -> list:
             ask["last_their_msg"] = sanitize.clean_text(
                 theirs[-1].get("text", ""), max_len=400)
 
-        closed = _thread_state(client, tid) in ("concluded", "expired")
+        closed = _thread_state(client, tid, states) in ("concluded", "expired")
         timed_out = (ask.get("awaiting") and
                      (t - ask.get("asked_at", t)) >= _config.handshake_timeout_days() * _DAY)
         spent = int(ask.get("our_turns", 0)) >= _config.ask_max_turns()
@@ -1230,9 +1230,27 @@ def _is_budget_err(res) -> bool:
     return bool(res.get("error")) and "ok" not in res and "turn" not in res
 
 
-def _thread_state(client, thread_id):
+def _thread_states(client) -> dict:
+    """{thread_id: state} from ONE listing.
+
+    _thread_state used to re-list every thread for every dig and every ask. At
+    20 active digs that was 20 full listings per cycle per agent — enough for an
+    agent to trip the hub's own 60-req/min limit and stall its conversations.
+    Fetch once per cycle, pass it down."""
+    try:
+        listing = client.list_threads()
+    except Exception:
+        return {}
+    return {th.get("thread_id"): th.get("state")
+            for th in (listing.get("threads", []) if isinstance(listing, dict) else [])
+            if th.get("thread_id")}
+
+
+def _thread_state(client, thread_id, states=None):
     """Fetch a thread's lifecycle state ('open'/'concluded'/'expired') from the
-    listing, or None if it can't be determined."""
+    listing, or None if it can't be determined. Prefers a prefetched map."""
+    if states is not None:
+        return states.get(thread_id)
     try:
         listing = client.list_threads()
     except Exception:
@@ -1492,7 +1510,7 @@ def _revive_silent_dig(state, client, card, cand, dig, llm, ring1, t):
     _log(state, t, cand, "dig_abandoned", "opener never landed; freeing candidate")
 
 
-def _advance_dig(state, client, card, cand, dig, llm, ring1, t):
+def _advance_dig(state, client, card, cand, dig, llm, ring1, t, states=None):
     """Continue (or conclude) an in-flight dig by one step this cycle."""
     handle = card.public_dict().get("handle", "")
     tid = dig.get("thread_id")
@@ -1508,7 +1526,7 @@ def _advance_dig(state, client, card, cand, dig, llm, ring1, t):
                                                     max_len=200)
 
     # Counterpart closed the thread, or the hub expired it (budget): conclude.
-    if _thread_state(client, tid) in ("concluded", "expired"):
+    if _thread_state(client, tid, states) in ("concluded", "expired"):
         _conclude_dig(state, client, card, cand, dig, llm, ring1, t)
         return
 
@@ -1647,8 +1665,11 @@ def _existing_dig_threads(client) -> dict:
 
 def _run_threads_path(state, client, card, llm, t, intents, ring1) -> list:
     handle = card.public_dict().get("handle", "")
-    # One lookup per cycle, used as an idempotence guard when opening digs.
+    # One lookup per cycle, used as an idempotence guard when opening digs, and
+    # one state map reused by every dig/ask below instead of re-listing per item.
     existing = _existing_dig_threads(client)
+    states = _thread_states(client)
+    budget = _config.max_new_digs_per_cycle()      # anti thundering-herd
 
     # Stage 1 + 2: filter candidates, open a dig thread for genuinely new ones.
     for s in _collect_candidates(client, card, intents, handle):
@@ -1666,6 +1687,8 @@ def _run_threads_path(state, client, card, llm, t, intents, ring1) -> list:
         if dig is None:
             if not _switch("digs_enabled"):
                 continue          # operator brake: stop starting new conversations
+            if budget <= 0:
+                continue          # start the rest next cycle, not all at once
             prior = existing.get(cand) or []
             if prior:
                 # We already have a thread with them that local state forgot.
@@ -1674,6 +1697,7 @@ def _run_threads_path(state, client, card, llm, t, intents, ring1) -> list:
                 _adopt_dig(state, s, cand, card_hash, prior, t)
             else:
                 _open_dig(state, client, card, s, cand, card_hash, llm, ring1, t)
+                budget -= 1
         elif dig.get("concluded"):
             if _redig_due(state, cand, t) and _switch("digs_enabled"):
                 _redig(state, client, card, s, cand, card_hash, llm, ring1, t)
@@ -1686,10 +1710,10 @@ def _run_threads_path(state, client, card, llm, t, intents, ring1) -> list:
     # Advance every in-flight dig by one step (they may not resurface in signals).
     for cand, dig in list(state["digs"].items()):
         if not dig.get("concluded"):
-            _advance_dig(state, client, card, cand, dig, llm, ring1, t)
+            _advance_dig(state, client, card, cand, dig, llm, ring1, t, states)
 
     # User-requested investigations run alongside discovery, in the background.
-    finished_asks = _advance_asks(state, client, card, llm, ring1, t)
+    finished_asks = _advance_asks(state, client, card, llm, ring1, t, states)
 
     # Stage 3: judge concluded digs on their findings notes.
     return _judge_concluded(state, card, llm, t) + finished_asks

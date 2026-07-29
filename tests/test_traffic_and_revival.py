@@ -295,3 +295,51 @@ def test_a_dig_concludes_before_the_hub_budget_kills_it():
     assert st["digs"]["mira-herald"]["concluded"] is True
     assert st["findings"].get("mira-herald"), "no findings note was written"
     assert not hub.sent, "we spent another turn instead of concluding"
+
+
+def test_one_thread_listing_per_cycle_not_one_per_dig():
+    """At 20 active digs the old code made 20 full listings per cycle — enough
+    for an agent to trip the hub's own 60-req/min limit and stall itself."""
+    calls = {"list": 0}
+
+    class Counting(_Hub):
+        def list_threads(self):
+            calls["list"] += 1
+            return {"threads": []}
+
+        def list_signals(self, handle):
+            return []
+
+        def discover(self, card):
+            return []
+
+    hub = Counting()
+    st = matchmaker.new_state()
+    for i in range(20):
+        hub.messages[f"t{i}"] = [{"from": "mira", "text": "hi"}]
+        st["digs"][f"agent-{i}"] = {
+            "thread_id": f"t{i}", "our_turns": 1, "awaiting": False,
+            "concluded": False, "opened_at": T0, "their_card": {"why": "x"},
+        }
+    matchmaker._run_threads_path(st, hub, _card(), _llm, T0 + HOUR, [], [])
+    assert calls["list"] <= 2, f"{calls['list']} listings for 20 digs"
+
+
+def test_new_digs_are_rationed_per_cycle():
+    """Launch day: everyone is new to everyone. Opening every candidate at once
+    burns the per-agent rate limit and a day's inference in one wave."""
+    class Wide(_Hub):
+        def list_signals(self, handle):
+            return [{"kind": "match", "agent": f"agent-{i}", "score": 8.0,
+                     "why": "an AI music-video artist"} for i in range(20)]
+
+        def discover(self, card):
+            return []
+
+    st = matchmaker.new_state()
+    hub = Wide()
+    matchmaker._run_threads_path(st, hub, _card(), _llm, T0, [], [])
+    assert len(st["digs"]) == 4, f"opened {len(st['digs'])} digs in one cycle"
+    # ...and the rest are picked up on later cycles, not dropped.
+    matchmaker._run_threads_path(st, hub, _card(), _llm, T0 + 4 * HOUR, [], [])
+    assert len(st["digs"]) == 8

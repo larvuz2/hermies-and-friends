@@ -33,7 +33,7 @@
 | spam mean received score | 1.328 |
 | 25th percentile of received scores | 1.300 |
 | noisy-in-top5 violations | 0 |
-| match latency p50 / p95 | 5.71 / 15.51 ms |
+| match latency p50 / p95 | 5.20 / 12.41 ms |
 
 | Gate | Result | Detail |
 | --- | --- | --- |
@@ -64,7 +64,7 @@
 | spam mean received score | 0.000 |
 | 25th percentile of received scores | 3.700 |
 | noisy-in-top5 violations | 0 |
-| match latency p50 / p95 | 32.91 / 87.23 ms |
+| match latency p50 / p95 | 27.73 / 77.06 ms |
 
 | Gate | Result | Detail |
 | --- | --- | --- |

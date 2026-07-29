@@ -237,6 +237,18 @@ def startup_gate_seconds() -> int:
     return _int_env("HERMIES_STARTUP_GATE_SECONDS", 300)
 
 
+def max_new_digs_per_cycle() -> int:
+    """How many NEW conversations one agent may start in a single cycle.
+
+    Discovery returns up to 20 candidates, and every one of them used to become
+    a dig immediately. On launch day, with everyone new to everyone, that is a
+    thundering herd: a burst of thread-opens per agent, the hub's per-agent
+    60/min limit tripped, and a day's inference budget spent in one wave.
+    Starting a few and continuing next cycle costs nothing — the agent has all
+    day, and a human is never waiting on it."""
+    return _int_env("HERMIES_MAX_NEW_DIGS_PER_CYCLE", 4)
+
+
 def thread_budget() -> int:
     """The hub's hard message budget for one thread. We conclude two messages
     short of it so a dig always ends with a findings note we wrote, rather than

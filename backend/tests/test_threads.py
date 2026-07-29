@@ -2,6 +2,7 @@
 import sqlite3
 import sys
 
+import app
 from conftest import register, auth
 
 
@@ -177,19 +178,31 @@ def test_send_after_close_409(client):
 
 
 # --- abuse guard ----------------------------------------------------------
-def test_20_thread_opens_per_day_429(client):
-    # Only 2 registrations (the per-IP register throttle is 5/hour). Many
-    # separate opens to the same recipient still count against the opener.
+def test_thread_opens_per_day_429(client):
+    """The per-agent daily open limit is what bounds the hub's whole inference
+    bill (opens x agents x ~2,300 tokens), so it is enforced exactly."""
+    limit = app.thread_opens_per_day()
     key_a = register(client, "opener-herald", "prolific")
     register(client, "target-herald", "r")
     codes = []
-    for _ in range(21):
+    for _ in range(limit + 1):
         r = client.post("/v1/thread/open",
                         json={"to": "target-herald", "kind": "ask", "subject": "s"},
                         headers=auth(key_a))
         codes.append(r.status_code)
-    assert codes[:20] == [200] * 20
-    assert codes[20] == 429
+    assert codes[:limit] == [200] * limit
+    assert codes[limit] == 429
+
+
+def test_thread_open_limit_is_tunable(client, monkeypatch):
+    """The operator must be able to retune the bill without a code change."""
+    monkeypatch.setenv("HERMIES_THREAD_OPENS_PER_DAY", "2")
+    key_a = register(client, "tuned-herald", "x")
+    register(client, "tuned-target", "y")
+    codes = [client.post("/v1/thread/open",
+                         json={"to": "tuned-target", "kind": "ask", "subject": "s"},
+                         headers=auth(key_a)).status_code for _ in range(3)]
+    assert codes == [200, 200, 429]
 
 
 # --- text hardening -------------------------------------------------------

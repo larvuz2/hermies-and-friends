@@ -65,6 +65,24 @@ systemctl daemon-reload
 systemctl enable --now hermies
 systemctl restart hermies
 
+echo "==> [4b/6] daily database backup"
+# The database is the only copy of every account key, handle and card. This is
+# installed here rather than left as a manual step precisely because a backup
+# nobody remembered to set up is the same as no backup.
+apt-get install -y --no-install-recommends sqlite3 >/dev/null 2>&1 || true
+cat > /etc/cron.daily/hermies-backup <<EOF
+#!/bin/sh
+HERMIES_DB=$DATA_DIR/hermies.db exec sh $APP_DIR/deploy/hostinger/backup.sh
+EOF
+chmod +x /etc/cron.daily/hermies-backup
+# Take one immediately so a fresh deploy is never a day away from its first
+# backup, and so a broken setup is discovered now instead of after an incident.
+if HERMIES_DB="$DATA_DIR/hermies.db" sh "$APP_DIR/deploy/hostinger/backup.sh"; then
+  echo "    first backup taken; restore with deploy/hostinger/restore.sh"
+else
+  echo "    WARNING: the first backup FAILED — fix this before going public."
+fi
+
 if [ -n "$PORT80_OWNER" ]; then
   echo "==> [5/6] Existing web server '$PORT80_OWNER' already owns port 80 — not touching it."
   echo "==> [6/6] Add the hub as a vhost to your existing proxy, pointing at 127.0.0.1:$PORT."

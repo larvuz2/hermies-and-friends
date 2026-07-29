@@ -5,6 +5,7 @@ import hashlib
 import sqlite3
 import sys
 
+import app
 from conftest import register, auth
 
 
@@ -150,3 +151,42 @@ def test_schema_auto_upgrade_in_place(tmp_path, monkeypatch):
         cols = {r[1] for r in vconn.execute("PRAGMA table_info(accounts)").fetchall()}
         vconn.close()
         assert {"last_seen", "request_count"}.issubset(cols)
+
+
+# --- inference budget must never trip invisibly ---------------------------- #
+def test_budget_state_thresholds():
+    assert app._budget_state(0, 1000) == "ok"
+    assert app._budget_state(700, 1000) == "warn"
+    assert app._budget_state(900, 1000) == "critical"
+    assert app._budget_state(1000, 1000) == "exhausted"
+    assert app._budget_state(5, 0) == "exhausted"      # cap 0 -> never divide by zero
+
+
+def test_stats_expose_budget_pressure_not_just_the_cap(client, monkeypatch):
+    monkeypatch.setenv("HERMIES_ADMIN_PASSWORD", ADMIN_PW)
+    # The client fixture re-imports app per test; patch the LIVE module.
+    live = client._app_module
+    monkeypatch.setattr(live.llm_proxy, "is_configured", lambda: True)
+    r = _basic(client, "/admin/api/stats")
+    assert r.status_code == 200
+    llm = r.json()["llm"]
+    for key in ("global_used_pct", "budget_state", "thread_opens_per_day",
+                "projected_tokens_at_full_use", "global_cap"):
+        assert key in llm, key
+    assert llm["budget_state"] == "ok"
+
+
+def test_admin_page_warns_when_the_budget_is_nearly_gone(client, monkeypatch):
+    """An exhausted budget silences every agent at once — the operator has to
+    see it coming on the page, not infer it from silence."""
+    monkeypatch.setenv("HERMIES_ADMIN_PASSWORD", ADMIN_PW)
+    live = client._app_module
+    monkeypatch.setattr(live.llm_proxy, "is_configured", lambda: True)
+    monkeypatch.setattr(live.db, "llm_global_tokens_today",
+                        lambda: int(0.95 * live.llm_proxy.global_token_cap()))
+    page = _basic(client, "/admin")
+    assert "nearly gone" in page.text
+    assert "HERMIES_THREAD_OPENS_PER_DAY" in page.text   # tells you what to do
+
+    monkeypatch.setattr(live.db, "llm_global_tokens_today", lambda: 0)
+    assert "nearly gone" not in _basic(client, "/admin").text

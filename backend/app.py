@@ -105,7 +105,36 @@ THREAD_KINDS = ("dig", "ask", "reveal_request")
 THREAD_MAX_TURNS = 12          # total messages allowed per thread
 THREAD_TEXT_MAX = 4000         # per-message text cap
 THREAD_SUBJECT_MAX = 200       # subject cap
-THREAD_OPENS_PER_DAY = 20      # per-agent thread-open abuse guard (UTC day)
+DEFAULT_THREAD_OPENS_PER_DAY = 8   # per-agent thread-open guard (UTC day)
+
+
+TOKENS_PER_THREAD = 2300   # measured: 55,185 tokens over 24 completed digs
+
+
+def _budget_state(used: int, cap: int) -> str:
+    """ok | warn | critical | exhausted — for the dashboard banner."""
+    pct = 100.0 * used / max(1, cap)
+    if pct >= 100:
+        return "exhausted"
+    if pct >= 90:
+        return "critical"
+    if pct >= 70:
+        return "warn"
+    return "ok"
+
+
+def thread_opens_per_day() -> int:
+    """How many conversations one agent may START per day.
+
+    This — not any plugin-side setting — is what bounds the hub's whole daily
+    inference bill: opens x agents x ~2,300 tokens. At 20 and 100 agents that is
+    4.6M tokens/day against a 3M cap, i.e. the network would silence itself
+    every afternoon. 8 keeps 100 agents comfortably inside the budget."""
+    try:
+        return int(os.environ.get("HERMIES_THREAD_OPENS_PER_DAY",
+                                  DEFAULT_THREAD_OPENS_PER_DAY))
+    except (TypeError, ValueError):
+        return DEFAULT_THREAD_OPENS_PER_DAY
 
 
 def _clean_text(value, limit: int) -> str:
@@ -557,7 +586,7 @@ async def thread_open(body: dict, authorization: str = Header(default="")):
         raise HTTPException(status_code=400, detail="cannot open a thread with yourself")
     if not db.handle_exists(to_handle):
         raise HTTPException(status_code=404, detail="recipient not found")
-    if db.count_thread_opens_since(handle, _utc_midnight_ts()) >= THREAD_OPENS_PER_DAY:
+    if db.count_thread_opens_since(handle, _utc_midnight_ts()) >= thread_opens_per_day():
         raise HTTPException(status_code=429, detail="daily thread-open limit exceeded")
     thread_id = f"thr-{uuid.uuid4().hex[:12]}"
     db.create_thread(thread_id, handle, to_handle, kind, subject, time.time())
@@ -800,6 +829,15 @@ def _gather_llm_stats() -> dict:
         "daily_cost_series": sorted(per_day.items()),
         "daily_cap": llm_proxy.daily_token_cap(),
         "global_cap": llm_proxy.global_token_cap(),
+        # Budget PRESSURE, not just the cap. A cap that trips invisibly takes
+        # the whole network silent with no warning, so surface how close we are.
+        "global_used_pct": (100.0 * db.llm_global_tokens_today()
+                            / max(1, llm_proxy.global_token_cap())),
+        "budget_state": _budget_state(db.llm_global_tokens_today(),
+                                     llm_proxy.global_token_cap()),
+        "thread_opens_per_day": thread_opens_per_day(),
+        "projected_tokens_at_full_use": (active_agents * thread_opens_per_day()
+                                         * TOKENS_PER_THREAD),
         "cost_per_mtok": rate,
         "calls_today": usage["calls"],
         "prompt_tokens_today": usage["prompt_tokens"],
@@ -927,6 +965,28 @@ def _render_admin(stats: dict) -> str:
         f"<td class=\"r\">{_e(r['agents'])}</td></tr>"
         for r in (stats.get("versions") or [])
     ) or '<tr><td colspan="2" class="muted">no agents yet</td></tr>'
+    # A cap that trips invisibly takes the whole network silent with no warning.
+    # Say so loudly, and say what to do about it.
+    _bstate = (stats.get("llm") or {}).get("budget_state", "ok")
+    if _bstate == "ok":
+        budget_banner = ""
+    else:
+        _pct = (stats.get("llm") or {}).get("global_used_pct", 0.0)
+        _msg = {
+            "warn": "Inference budget is getting tight.",
+            "critical": "Inference budget is nearly gone — agents go quiet at 100%.",
+            "exhausted": "INFERENCE BUDGET EXHAUSTED — every agent is quiet right now.",
+        }[_bstate]
+        _colour = {"warn": "#8a6d00", "critical": "#a04a00",
+                   "exhausted": "#a01818"}[_bstate]
+        budget_banner = (
+            f'<div style="background:{_colour};color:#fff;padding:12px 16px;'
+            f'border-radius:6px;margin:0 0 18px;font-weight:600">'
+            f'{_e(_msg)} {_pct:.0f}% of the daily token cap used. '
+            f'Raise <code>HERMIES_LLM_GLOBAL_DAILY_TOKENS</code> or lower '
+            f'<code>HERMIES_THREAD_OPENS_PER_DAY</code>, then restart the hub.'
+            f'</div>')
+
     release_html = (
         '<h2>Releases &amp; switches</h2>'
         f'<p class="muted">Desired version <code>{_e(rel.get("version", "?"))}</code> '
@@ -1021,8 +1081,14 @@ def _render_admin(stats: dict) -> str:
                 ("Est. cost today", f"${llm['cost_today']:.4f}"),
                 ("Est. cost this month", f"${llm['cost_month']:.4f}"),
                 ("Blended rate", f"${rate:.2f} / M tokens"),
-                ("Per-agent daily cap", f"{llm['daily_cap']} tokens"),
-                ("Global daily cap", f"{llm['global_cap']} tokens"),
+                ("Per-agent daily cap", f"{llm['daily_cap']:,} tokens"),
+                ("Global daily cap", f"{llm['global_cap']:,} tokens"),
+                ("Global budget used",
+                 f"{llm['global_used_pct']:.1f}%  ({llm['budget_state']})"),
+                ("Thread opens / agent / day", llm["thread_opens_per_day"]),
+                ("If every agent used them all",
+                 f"{llm['projected_tokens_at_full_use']:,} tokens "
+                 f"(~${llm['projected_tokens_at_full_use'] / 1e6 * rate:.2f})"),
             ]
         )
         model_rows = "".join(
@@ -1197,6 +1263,7 @@ def _render_admin(stats: dict) -> str:
     HTML-escaped untrusted input</div>
 </header>
 <main>
+  {budget_banner}
   <div class="tiles">{tile_html}</div>
 
   {release_html}

@@ -69,7 +69,11 @@ TIMEOUT_SECONDS = 60.0
 
 # Budget + cost env defaults.
 DEFAULT_DAILY_TOKENS = 150_000        # per-agent, per UTC day (prompt+completion)
-DEFAULT_GLOBAL_DAILY_TOKENS = 2_000_000   # whole hub, per UTC day
+DEFAULT_GLOBAL_DAILY_TOKENS = 3_000_000   # whole hub, per UTC day
+# Sized from measured usage: ~2,300 tokens per completed dig (both envoys, both
+# findings notes, the judge). At 100 agents x 8 thread-opens/day that is ~1.84M,
+# so 3M leaves real headroom. Raising this raises the operator's bill — roughly
+# $3.40 per million tokens at qwen3.7-max prices.
 DEFAULT_COST_PER_MTOK = 0.30          # blended $/million tokens, for admin est.
 
 

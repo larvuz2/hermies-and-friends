@@ -39,6 +39,18 @@ def _result_text(res) -> str:
     return getattr(res, "text", res) or ""
 
 
+def _is_budget_429(exc) -> bool:
+    """True when the hub refused because the OPERATOR is over budget.
+
+    Distinguished from a transient 503/network failure because the two deserve
+    opposite responses: a hub hiccup is worth falling back for, an exhausted
+    operator budget is not the user's to pay for."""
+    code = getattr(exc, "code", None) or getattr(exc, "status", None)
+    if code == 429:
+        return True
+    return "budget" in str(exc).lower()
+
+
 def make_llm(ctx, client):
     """Build the routed LLM callable the plugin hands to the envoy, matchmaker,
     and service. It decides — per ``_config.llm_mode()`` — whether the network's
@@ -84,6 +96,14 @@ def make_llm(ctx, client):
                 return _result_text(res)
             except Exception as e:  # 503/429/network — hub unavailable
                 log.debug("hub llm_complete(%s) failed: %s", purpose, e)
+                if _is_budget_429(e):
+                    # OUR cap, not their problem. Falling back here would quietly
+                    # spend the user's own model budget on network work — the one
+                    # thing Hermies promises never to do. Go quiet instead; the
+                    # operator sees the budget on the dashboard and raises it.
+                    log.warning("hermies: hub inference budget exhausted — "
+                                "staying quiet rather than billing the user")
+                    return ""
                 if mode == "hub":
                     return ""             # fail toward silence; never bill user
                 return _via_ctx(system, user)   # auto: fall back to local

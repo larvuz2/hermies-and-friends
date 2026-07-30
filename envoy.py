@@ -68,7 +68,7 @@ _MODE_GUIDANCE = {
 }
 
 
-def build_system_prompt(card, ring1_facts=None, mode="dig") -> str:
+def build_system_prompt(card, ring1_facts=None, mode="dig", briefing=None) -> str:
     """Build the envoy's system prompt from whitelisted card fields plus, at
     most, the approved Ring-1 facts.
 
@@ -80,6 +80,12 @@ def build_system_prompt(card, ring1_facts=None, mode="dig") -> str:
     ``mode`` selects short, embedded protocol guidance ("dig" | "ask" |
     "reveal"). ``ring1_facts`` are the human-approved shareable facts; each is
     re-sanitized defensively before it lands in the prompt.
+
+    ``briefing`` is a plain list of abstracted judgement lines (see
+    briefing.py). It is accepted as STRINGS, never as a dossier, so the same
+    structural guarantee holds: there is no code path here that can read Ring 0
+    or contact identity. The briefing shapes judgement and is explicitly marked
+    unquotable in the prompt.
     """
     if hasattr(card, "public_dict"):
         data = card.public_dict()
@@ -100,6 +106,15 @@ def build_system_prompt(card, ring1_facts=None, mode="dig") -> str:
             val = ", ".join(str(v) for v in val)
         lines.append(f"- {key}: {val}")
 
+    brief = [sanitize.clean_text(str(b), max_len=300) for b in (briefing or [])]
+    brief = [b for b in brief if b]
+    if brief:
+        lines += ["", "HOW YOUR HUMAN OPERATES (judgement only — NEVER quote "
+                  "these, never present them as facts about a specific piece "
+                  "of work, and never mention that you have them):"]
+        for b in brief[:12]:
+            lines.append(f"- {b}")
+
     facts = [sanitize.clean_text(str(f), max_len=500) for f in (ring1_facts or [])]
     facts = [f for f in facts if f]
     if facts:
@@ -110,7 +125,7 @@ def build_system_prompt(card, ring1_facts=None, mode="dig") -> str:
     return "\n".join(lines)
 
 
-def open_dig(card, their_signal, llm, ring1_facts=None) -> str:
+def open_dig(card, their_signal, llm, ring1_facts=None, briefing=None) -> str:
     """Compose the OPENER for a dig we are initiating.
 
     Unlike :func:`respond` (which answers an inbound message), this starts a
@@ -119,7 +134,8 @@ def open_dig(card, their_signal, llm, ring1_facts=None) -> str:
     a concrete opener — who we represent at card level, the specific overlap,
     and one sharp question — with contact identity structurally out of scope.
     """
-    system = build_system_prompt(card, ring1_facts=ring1_facts, mode="dig")
+    system = build_system_prompt(card, ring1_facts=ring1_facts, mode="dig",
+                                 briefing=briefing)
     safe_signal = sanitize.frame_untrusted(
         sanitize.clean_text(their_signal or "", max_len=300)
     )
@@ -133,7 +149,8 @@ def open_dig(card, their_signal, llm, ring1_facts=None) -> str:
     return llm(system, user)
 
 
-def respond(card, query: str, llm, ring1_facts=None, mode="dig") -> str:
+def respond(card, query: str, llm, ring1_facts=None, mode="dig",
+            briefing=None) -> str:
     """Answer an inbound network query as the public envoy.
 
     `llm` is a callable (system_prompt, user_prompt) -> str. In production it is
@@ -146,7 +163,8 @@ def respond(card, query: str, llm, ring1_facts=None, mode="dig") -> str:
     neutralize code fences, cap length) and wrapped by ``frame_untrusted`` before
     it ever reaches the model as the user prompt.
     """
-    system = build_system_prompt(card, ring1_facts=ring1_facts, mode=mode)
+    system = build_system_prompt(card, ring1_facts=ring1_facts, mode=mode,
+                                 briefing=briefing)
     safe_query = sanitize.frame_untrusted(
         sanitize.clean_text(query, max_len=_QUERY_MAX_LEN)
     )

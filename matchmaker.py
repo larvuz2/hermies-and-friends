@@ -1438,6 +1438,21 @@ def _redig(state, client, card, s, cand, card_hash, llm, ring1, t):
     _log(state, t, cand, "redig_opened", f"re-look #{count} after the cooldown")
 
 
+def _briefing() -> list:
+    """The envoy's judgement lines, or [] when there is no briefing.
+
+    Read at the IO boundary and passed down as plain strings, exactly like
+    ring1: the membrane guarantee is that envoy.build_system_prompt never
+    receives anything richer than a list of sanitized lines. Failure here is
+    silent and simply means card-only behaviour.
+    """
+    try:
+        from . import briefing
+        return briefing.lines()
+    except Exception:
+        return []
+
+
 def _open_dig(state, client, card, s, cand, card_hash, llm, ring1, t):
     subject = _overlap_subject(card.public_dict(), s)
     opened = _open_safe(client, cand, "dig", subject)
@@ -1446,7 +1461,8 @@ def _open_dig(state, client, card, s, cand, card_hash, llm, ring1, t):
         _log(state, t, cand, "dig_open_failed",
              (opened or {}).get("error", "open failed"))
         return
-    opener = envoy.open_dig(card, s.get("why", ""), llm, ring1_facts=ring1)
+    opener = envoy.open_dig(card, s.get("why", ""), llm, ring1_facts=ring1,
+                            briefing=_briefing())
     res = _safe_send(client, tid, opener)
     if _is_budget_err(res):
         # The thread exists on the hub but our opening line never landed. Left
@@ -1494,7 +1510,7 @@ def _revive_silent_dig(state, client, card, cand, dig, llm, ring1, t):
     if tries < _OPENER_RETRIES:
         dig["opener_retries"] = tries + 1
         opener = envoy.open_dig(card, (dig.get("their_card") or {}).get("why", ""),
-                                llm, ring1_facts=ring1)
+                                llm, ring1_facts=ring1, briefing=_briefing())
         res = _safe_send(client, dig.get("thread_id"), opener)
         if not _is_budget_err(res):
             dig["our_turns"] = 1
@@ -1555,7 +1571,7 @@ def _advance_dig(state, client, card, cand, dig, llm, ring1, t, states=None):
         _conclude_dig(state, client, card, cand, dig, llm, ring1, t)
         return
     reply = envoy.respond(card, last.get("text", ""), llm,
-                          ring1_facts=ring1, mode="dig")
+                          ring1_facts=ring1, mode="dig", briefing=_briefing())
     res = _safe_send(client, tid, reply)
     if _is_budget_err(res):
         _conclude_dig(state, client, card, cand, dig, llm, ring1, t)
@@ -2032,6 +2048,16 @@ def run_engine_and_persist(client, card, llm, now, path=None, intents=None,
         except Exception:
             intents = intents or []
             ring1 = ring1 or []
+    # Keep the envoy's judgement current with the human's life. Principal-side
+    # by construction: this is the only place that holds both the dossier and a
+    # model, and the envoy has no code path that can write a briefing itself.
+    # A cheap no-op until it goes stale (~7 days).
+    try:
+        from . import briefing as _briefing_mod, dossier as _dossier
+        _briefing_mod.refresh_if_due(_dossier.load(), card, llm, now=now)
+    except Exception:
+        pass                          # never block a cycle on this
+
     state = load_state(path)
     try:
         added = run_engine(state, client, card, llm, now,

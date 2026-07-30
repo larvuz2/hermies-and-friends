@@ -1,6 +1,7 @@
 """`/hermies` slash-command handlers and the skill-install approval gate."""
 import datetime
 import json
+import pathlib
 import time
 
 from . import profile, service, sanitize, matchmaker, dossier
@@ -197,6 +198,21 @@ def make_handler(client, card, llm):
             }[res["verdict"]]
             return note
 
+        if sub == "briefing":
+            return _briefing_view(rest, card, llm)
+
+        if sub == "doctor":
+            if rest.strip().lower() in ("repair", "fix"):
+                from . import envoy_profile
+                res = envoy_profile.ensure()
+                envoy_profile.install_skills(
+                    pathlib.Path(__file__).resolve().parent / "skills")
+                head = ("Created the envoy profile." if res.get("created")
+                        else ("Repaired: " + ", ".join(res["repaired"])
+                              if res.get("repaired") else "Nothing to repair."))
+                return head + "\n\n" + _doctor_view()
+            return _doctor_view()
+
         if sub == "pause":
             return _pause()
 
@@ -209,8 +225,8 @@ def make_handler(client, card, llm):
         return (f"Unknown subcommand '{sub}'. Try: status | profile | discover | "
                 "signals | search <q> | skills | dossier | intents | findings | "
                 "log | card | card apply | ask <handle> <q> | asks | why <id> | "
-                "intro <handle> | feedback <id> <verdict> | update | pause | "
-                "resume | leave")
+                "intro <handle> | feedback <id> <verdict> | briefing | doctor | "
+                "update | pause | resume | leave")
 
     return handler
 
@@ -622,3 +638,84 @@ def onboarding_nudge(**kwargs):
     matchmaker.save_state(state)
     _last_nudge_ts = now
     return {"context": ONBOARDING_NUDGE_CONTEXT}
+
+
+def _briefing_view(rest: str, card, llm) -> str:
+    """Show, rebuild or delete what the envoy believes about its human.
+
+    This command is the whole trust story for the briefing: if the human cannot
+    read it, they have no way to know what their envoy thinks of them.
+    """
+    from . import briefing, dossier
+    arg = (rest or "").strip().lower()
+
+    if arg in ("clear", "delete", "off"):
+        briefing.clear()
+        return ("Briefing deleted. Your envoy now represents you from your "
+                "public card alone — less able to judge what you'd care "
+                "about, but it will never guess.")
+
+    if arg in ("refresh", "rebuild", "update"):
+        try:
+            doc = briefing.generate(dossier.load(), card, llm)
+        except Exception as e:
+            return f"Couldn't rebuild the briefing: {sanitize.clean_text(str(e), max_len=120)}"
+        if not doc.get("lines"):
+            reason = doc.get("reason") or "nothing abstract enough survived the check"
+            return (f"No briefing written — {reason}.\n"
+                    "Your envoy keeps working from your public card.")
+        briefing.save(doc)
+        note = ""
+        if doc.get("dropped"):
+            note = (f"\n\n({doc['dropped']} generated line(s) were dropped for "
+                    "naming something concrete — that check is deliberately strict.)")
+        return briefing.format_for_human(doc) + note
+
+    if arg:
+        return "Usage: /hermies briefing [refresh | clear]"
+    return briefing.format_for_human()
+
+
+def _doctor_view() -> str:
+    """Assert the envoy profile is still locked down.
+
+    The tool denylist is the ONLY thing standing between the envoy and the
+    dossier (Hermes profiles are not a sandbox), so a missing entry is reported
+    as a fault, never as a warning.
+    """
+    from . import envoy_profile, briefing
+    lines = ["Hermies doctor", ""]
+
+    info = envoy_profile.info()
+    lines.append(f"Envoy profile: {info['path']}")
+    if not info["exists"]:
+        lines += [
+            "  NOT PRESENT — your envoy is running from your public card only.",
+            "  This is degraded, not broken. `/hermies doctor repair` or a "
+            "plugin restart will create it.",
+        ]
+    else:
+        problems = info["problems"]
+        if problems:
+            lines.append(f"  {len(problems)} PROBLEM(S) — fix before trusting the membrane:")
+            for prob in problems:
+                lines.append(f"    ! {prob}")
+            lines.append("  Restart the plugin (or run `/hermies doctor repair`) "
+                         "to restore the pinned files.")
+        else:
+            lines.append(f"  OK — SOUL pinned at {info['soul']}, tools locked "
+                         "down, no credentials, real HOME hidden.")
+
+    doc = briefing.load()
+    n = len(doc.get("lines") or [])
+    lines.append("")
+    lines.append(f"Briefing: {n} line(s)" if n else
+                 "Briefing: none (card-only judgement)")
+    if n:
+        lines.append("  `/hermies briefing` to read exactly what it says.")
+
+    try:
+        lines += ["", _engine_line()]
+    except Exception:
+        pass
+    return "\n".join(lines)

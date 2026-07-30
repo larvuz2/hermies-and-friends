@@ -193,6 +193,28 @@ def register(ctx):
     # and docs/HERMES-API-GROUND-TRUTH.md §4.
     ctx.register_hook("pre_llm_call", commands.onboarding_nudge)
 
+    # --- the envoy's own Hermes profile ---------------------------------
+    # A separate HERMES_HOME holding the pinned SOUL, the briefing and the
+    # envoy's network memory, so the membrane is a filesystem boundary rather
+    # than a convention inside this process. See docs/DESIGN-ENVOY-PROFILE.md.
+    # Gated: this touches disk and re-verifies the SOUL hash, and register()
+    # runs in every spawned Hermes process. Never fatal — a failure here just
+    # means the card-only envoy, which is degraded rather than broken.
+    try:
+        from . import envoy_profile, throttle
+        if throttle.due("envoy-profile", _config.startup_gate_seconds()):
+            res = envoy_profile.ensure()
+            envoy_profile.install_skills(
+                pathlib.Path(__file__).resolve().parent / "skills")
+            if res.get("created"):
+                log.info("hermies: created the envoy profile at %s",
+                         envoy_profile.profile_dir())
+            for fixed in res.get("repaired") or []:
+                # A modified envoy SOUL is either a bug or an attack; say so.
+                log.warning("hermies: restored envoy profile (%s)", fixed)
+    except Exception as e:
+        log.debug("envoy profile setup skipped: %s", e)
+
     # --- behavioral skills (opt-in explicit loads) ---
     if hasattr(ctx, "register_skill"):
         skill_root = pathlib.Path(__file__).resolve().parent / "skills"

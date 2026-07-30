@@ -139,7 +139,8 @@ def drain_threads(client, card, llm, state, ring1=None) -> dict:
         except Exception:
             pass
         last_text = sanitize.clean_text(msgs[-1].get("text", ""), max_len=1000)
-        reply = envoy.respond(card, last_text, llm, ring1_facts=ring1, mode=kind)
+        reply = envoy.respond(card, last_text, llm, ring1_facts=ring1,
+                              mode=kind, briefing=_briefing())
         try:
             client.send_thread(tid, reply)
             replies[tid] = count + 1
@@ -183,6 +184,15 @@ def _write_answerer_findings(client, card, llm, state, tid, other, subject, hand
     }
     done.append(tid)
     return True
+
+
+def _briefing():
+    """Envoy judgement lines for inbound replies (see matchmaker._briefing)."""
+    try:
+        from . import briefing
+        return briefing.lines()
+    except Exception:
+        return []
 
 
 def _safe_ring1():

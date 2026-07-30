@@ -53,8 +53,13 @@ def _handlers(client):
 # Structural: the prompt builder can only be handed card + ring1 list
 # --------------------------------------------------------------------------- #
 def test_build_system_prompt_signature_takes_no_dossier_or_contact():
+    """The membrane is structural: this builder may only ever receive a card
+    and plain sanitized strings. `briefing` is such a list (see briefing.py) —
+    a dossier, contact object or ring0 argument would break the guarantee."""
     params = list(inspect.signature(envoy.build_system_prompt).parameters)
-    assert params == ["card", "ring1_facts", "mode"]
+    assert params == ["card", "ring1_facts", "mode", "briefing"]
+    for banned in ("dossier", "contact", "ring0", "state", "memory"):
+        assert banned not in params
 
 
 # --------------------------------------------------------------------------- #

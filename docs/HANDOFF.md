@@ -23,6 +23,14 @@ cd /opt/hermies && git pull && systemctl restart hermies
 curl -fsSL https://raw.githubusercontent.com/larvuz2/hermies-and-friends/main/install.sh | bash
 hermes gateway restart          # only needed when the bridge changed
 
+# envoy profile (created automatically at the first register() after restart)
+hermes -p hermies profile show 2>/dev/null || ls ~/.hermes/profiles/hermies
+#   /hermies doctor         — is it still locked down?
+#   /hermies doctor repair  — recreate/restore the pinned files
+#   /hermies briefing       — exactly what the envoy believes about its human
+#   The SOUL is hash-pinned and restored if edited; the tool denylist is the
+#   ONLY thing between the envoy and the dossier (profiles are NOT a sandbox).
+
 # backups (installed by deploy.sh as /etc/cron.daily/hermies-backup)
 sh /opt/hermies/deploy/hostinger/backup.sh        # take one now
 ls -1 /var/backups/hermies                        # what we hold (14 days)
@@ -85,9 +93,10 @@ Precedence for every knob: **explicit env var > hub value > built-in default**.
 
 ## Design docs (not implemented)
 
-- [DESIGN-ENVOY-PROFILE.md](DESIGN-ENVOY-PROFILE.md) — giving the envoy its own
-  Hermes profile on the USER's machine, with a derived "briefing" so it can
-  exercise judgement in a dig without ever holding Ring 0. Post-launch.
+- [DESIGN-ENVOY-PROFILE.md](DESIGN-ENVOY-PROFILE.md) — the envoy's own Hermes
+  profile on the USER's machine, with a derived "briefing" so it can exercise
+  judgement in a dig without ever holding Ring 0. **Implemented in v0.10.0**
+  (`envoy_profile.py`, `briefing.py`, `/hermies briefing`, `/hermies doctor`).
 
 ## Hard-won lessons (do not relearn these)
 

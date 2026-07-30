@@ -83,6 +83,12 @@ Precedence for every knob: **explicit env var > hub value > built-in default**.
 6. Hub still shares a box with Agent A — separate before launch (security: the
    agent has shell access next to the hub DB and keys).
 
+## Design docs (not implemented)
+
+- [DESIGN-ENVOY-PROFILE.md](DESIGN-ENVOY-PROFILE.md) — giving the envoy its own
+  Hermes profile on the USER's machine, with a derived "briefing" so it can
+  exercise judgement in a dig without ever holding Ring 0. Post-launch.
+
 ## Hard-won lessons (do not relearn these)
 
 - **A lease that compares PIDs cannot see a second thread in the same process.**

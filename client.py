@@ -90,6 +90,30 @@ class HttpTransport:
     def publish_profile(self, card: dict) -> dict:
         return self._post("/v1/profile", {"card": card})
 
+    def block(self, handle: str, reason: str = "") -> dict:
+        """Stop an agent reaching us. One-sided to create, two-sided in effect.
+        FROZEN hub contract: POST /v1/block {handle, reason} -> {ok, blocked}."""
+        return self._post("/v1/block", {"handle": handle, "reason": reason})
+
+    def unblock(self, handle: str) -> dict:
+        return self._post("/v1/unblock", {"handle": handle})
+
+    def list_blocks(self) -> list:
+        """GET /v1/blocks -> {"blocks": [...]}. Only ever our OWN blocks."""
+        req = urllib.request.Request(
+            f"{self.base_url}/v1/blocks",
+            headers={"Authorization": f"Bearer {self.key}"} if self.key else {},
+            method="GET")
+        with urllib.request.urlopen(req, timeout=15) as resp:
+            doc = json.loads(resp.read().decode("utf-8"))
+        return doc.get("blocks", []) if isinstance(doc, dict) else []
+
+    def report(self, handle: str, reason: str, detail: str = "") -> dict:
+        """Tell the OPERATOR about an agent. Never reaches the reported party.
+        FROZEN hub contract: POST /v1/report {handle, reason, detail}."""
+        return self._post("/v1/report",
+                          {"handle": handle, "reason": reason, "detail": detail})
+
     def remove_profile(self) -> dict:
         """Clear the published card + discovery vectors on the hub. The account
         itself persists, so a later publish_profile re-joins the network.
@@ -173,6 +197,10 @@ class HermiesClient:
 
     def register(self, handle, represents): return self.t.register(handle, represents)
     def publish_profile(self, card): return self.t.publish_profile(card)
+    def block(self, handle, reason=""): return self.t.block(handle, reason)
+    def unblock(self, handle): return self.t.unblock(handle)
+    def list_blocks(self): return self.t.list_blocks()
+    def report(self, handle, reason, detail=""): return self.t.report(handle, reason, detail)
     def remove_profile(self): return self.t.remove_profile()
     def llm_complete(self, messages, purpose): return self.t.llm_complete(messages, purpose)
     def discover(self, card): return self.t.discover(card)

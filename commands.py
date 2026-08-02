@@ -198,6 +198,9 @@ def make_handler(client, card, llm):
             }[res["verdict"]]
             return note
 
+        if sub in ("block", "unblock", "blocked", "report"):
+            return _safety_view(sub, rest, client)
+
         if sub == "briefing":
             return _briefing_view(rest, card, llm)
 
@@ -225,8 +228,9 @@ def make_handler(client, card, llm):
         return (f"Unknown subcommand '{sub}'. Try: status | profile | discover | "
                 "signals | search <q> | skills | dossier | intents | findings | "
                 "log | card | card apply | ask <handle> <q> | asks | why <id> | "
-                "intro <handle> | feedback <id> <verdict> | briefing | doctor | "
-                "update | pause | resume | leave")
+                "intro <handle> | feedback <id> <verdict> | block <handle> | "
+                "unblock <handle> | blocked | report <handle> <reason> | "
+                "briefing | doctor | update | pause | resume | leave")
 
     return handler
 
@@ -719,3 +723,78 @@ def _doctor_view() -> str:
     except Exception:
         pass
     return "\n".join(lines)
+
+
+REPORT_REASONS = ("spam", "harassment", "impersonation", "scam", "other")
+
+
+def _safety_view(sub: str, rest: str, client) -> str:
+    """Block, unblock, list blocks, report.
+
+    Blocking is enforced by the HUB, not by us: a counterpart runs their own
+    client, so "stop contacting me" can never depend on their goodwill. It is
+    one-sided to create and two-sided in effect — they disappear from our
+    discovery and we from theirs, and neither can open a thread with the other.
+    They are never told.
+    """
+    parts = (rest or "").split(maxsplit=1)
+    who = parts[0].lstrip("@") if parts else ""
+    extra = parts[1] if len(parts) > 1 else ""
+
+    if sub == "blocked":
+        try:
+            rows = client.list_blocks()
+        except Exception as e:
+            return f"Couldn't read your block list: {sanitize.clean_text(str(e), max_len=120)}"
+        if not rows:
+            return "You haven't blocked anyone."
+        out = ["Blocked — they can't reach you and won't be surfaced to you:"]
+        for r in rows:
+            reason = sanitize.clean_text(str(r.get("reason") or ""), max_len=80)
+            out.append(f"  • @{sanitize.clean_text(str(r.get('blocked','')))}"
+                       + (f" — {reason}" if reason else ""))
+        return "\n".join(out)
+
+    if not who:
+        if sub == "report":
+            return ("Usage: /hermies report <handle> <reason> [detail]\n"
+                    f"Reasons: {', '.join(REPORT_REASONS)}. This goes to the "
+                    "network operator, never to them. It does NOT block them — "
+                    "use `/hermies block` for that.")
+        return f"Usage: /hermies {sub} <handle>"
+
+    if sub == "block":
+        try:
+            client.block(who, extra.strip()[:200])
+        except Exception as e:
+            return f"Couldn't block @{who}: {sanitize.clean_text(str(e), max_len=120)}"
+        _note_engagement("blocked", 0.0)
+        return (f"Blocked @{who}. They can't open a conversation with you, they "
+                "won't appear in what I look through, and you won't appear in "
+                "theirs. They are not told.\n"
+                "`/hermies unblock " + who + "` to undo it.")
+
+    if sub == "unblock":
+        try:
+            res = client.unblock(who)
+        except Exception as e:
+            return f"Couldn't unblock @{who}: {sanitize.clean_text(str(e), max_len=120)}"
+        return (f"Unblocked @{who}." if res.get("removed")
+                else f"@{who} wasn't blocked.")
+
+    # report
+    bits = extra.split(maxsplit=1)
+    reason = (bits[0].lower() if bits else "")
+    detail = bits[1] if len(bits) > 1 else ""
+    if reason not in REPORT_REASONS:
+        return ("Which reason? " + ", ".join(REPORT_REASONS)
+                + f"\n  /hermies report {who} spam <what happened>")
+    try:
+        res = client.report(who, reason, detail[:1000])
+    except Exception as e:
+        return f"Couldn't send that report: {sanitize.clean_text(str(e), max_len=120)}"
+    n = int(res.get("distinct_reporters") or 1)
+    tail = (f" You're the {n}th person to report them." if n > 1 else "")
+    return (f"Reported @{who} to the network operator.{tail} They are not told, "
+            "and this does not block them — say `/hermies block " + who + "` "
+            "if you also want them to stop reaching you.")

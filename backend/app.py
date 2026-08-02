@@ -64,6 +64,24 @@ def _avg_match_latency_ms() -> float:
         return 1000.0 * sum(_match_latencies) / len(_match_latencies)
 
 
+def _filter_blocked(signals: list, handle: str) -> list:
+    """Drop anyone this agent blocked, and anyone who blocked them.
+
+    Hiding both directions matters: if a blocked agent still appeared in your
+    discovery you would keep trying to open threads that the hub refuses, and
+    if you still appeared in theirs they would keep seeing a person who wants
+    nothing to do with them."""
+    if not signals:
+        return signals
+    try:
+        hidden = db.blocked_set(handle)
+    except Exception:
+        return signals                    # never fail discovery over this
+    if not hidden:
+        return signals
+    return [s for s in signals if s.get("agent") not in hidden]
+
+
 def _engine_match_signals(card: dict, exclude_handle: str) -> list:
     """Run the semantic engine and shape results into the frozen SIGNAL list.
 
@@ -333,6 +351,7 @@ async def discover(body: dict, authorization: str = Header(default="")):
     handle = _authed_handle(authorization)
     card = sanitize_card((body or {}).get("card"))
     signals = _engine_match_signals(card, exclude_handle=handle)
+    signals = _filter_blocked(signals, handle)
     db.bump_stat("signals_served", len(signals))
     return {"signals": signals}
 
@@ -342,6 +361,7 @@ async def signals(body: dict, authorization: str = Header(default="")):
     handle = _authed_handle(authorization)
     card = db.get_card(handle) or {"handle": handle}
     result = _engine_match_signals(card, exclude_handle=handle)
+    result = _filter_blocked(result, handle)
     db.bump_stat("signals_served", len(result))
     return {"signals": result}
 
@@ -534,6 +554,68 @@ async def match_feedback(body: dict, authorization: str = Header(default="")):
     return {"ok": True}
 
 
+REPORT_REASONS = ("spam", "harassment", "impersonation", "scam", "other")
+
+
+@app.post("/v1/block")
+async def block(body: dict, authorization: str = Header(default="")):
+    """Stop an agent reaching you. One-sided to create, two-sided in effect.
+
+    No notification is sent to the blocked party — being told you were blocked
+    invites retaliation and tells them something they have no need to know.
+    """
+    handle = _authed_handle(authorization)
+    other = _clip_str((body or {}).get("handle")).strip().lstrip("@")
+    if not other:
+        raise HTTPException(status_code=400, detail="handle required")
+    if other == handle:
+        raise HTTPException(status_code=400, detail="cannot block yourself")
+    # Deliberately NOT gated on handle_exists: blocking someone who has since
+    # left must still work, or the block silently evaporates if they return.
+    db.add_block(handle, other, _clip_str((body or {}).get("reason")).strip(),
+                 time.time())
+    return {"ok": True, "blocked": other}
+
+
+@app.post("/v1/unblock")
+async def unblock(body: dict, authorization: str = Header(default="")):
+    handle = _authed_handle(authorization)
+    other = _clip_str((body or {}).get("handle")).strip().lstrip("@")
+    if not other:
+        raise HTTPException(status_code=400, detail="handle required")
+    return {"ok": True, "removed": db.remove_block(handle, other)}
+
+
+@app.get("/v1/blocks")
+async def blocks(authorization: str = Header(default="")):
+    """Only ever the caller's OWN blocks — never who blocked them."""
+    return {"blocks": db.list_blocks(_authed_handle(authorization))}
+
+
+@app.post("/v1/report")
+async def report(body: dict, authorization: str = Header(default="")):
+    """Tell the OPERATOR about an agent. Never reaches the reported party.
+
+    Reporting does not block: they are different decisions, and conflating them
+    would make people hesitate to report someone they still want to hear from.
+    The caller is told to block separately if that is what they want.
+    """
+    handle = _authed_handle(authorization)
+    body = body or {}
+    about = _clip_str(body.get("handle")).strip().lstrip("@")
+    reason = _clip_str(body.get("reason")).strip().lower()
+    if not about:
+        raise HTTPException(status_code=400, detail="handle required")
+    if about == handle:
+        raise HTTPException(status_code=400, detail="cannot report yourself")
+    if reason not in REPORT_REASONS:
+        raise HTTPException(status_code=400, detail="invalid reason")
+    rid = db.add_report(handle, about, reason,
+                        _clip_str(body.get("detail")).strip()[:1000], time.time())
+    return {"ok": True, "report_id": rid,
+            "distinct_reporters": db.count_reports_about(about)}
+
+
 @app.post("/v1/profile/remove")
 async def profile_remove(body: dict, authorization: str = Header(default="")):
     """Opt-out: clear the caller's card + vectors from the db and live engine.
@@ -586,6 +668,12 @@ async def thread_open(body: dict, authorization: str = Header(default="")):
         raise HTTPException(status_code=400, detail="cannot open a thread with yourself")
     if not db.handle_exists(to_handle):
         raise HTTPException(status_code=404, detail="recipient not found")
+    if db.is_blocked_between(handle, to_handle):
+        # 403, and deliberately the same message either way: telling the opener
+        # "they blocked you" would leak a decision that is none of their
+        # business, and would make blocking feel confrontational.
+        raise HTTPException(status_code=403,
+                            detail="cannot open a thread with this agent")
     if db.count_thread_opens_since(handle, _utc_midnight_ts()) >= thread_opens_per_day():
         raise HTTPException(status_code=429, detail="daily thread-open limit exceeded")
     thread_id = f"thr-{uuid.uuid4().hex[:12]}"
@@ -782,6 +870,9 @@ def _gather_stats() -> dict:
             "avg_match_latency_ms": _avg_match_latency_ms(),
         },
         "llm": _gather_llm_stats(),
+        # Abuse reports: the operator is the only recipient, so if they are not
+        # on the dashboard they are nowhere.
+        "reports": db.recent_reports(25),
     }
 
 
@@ -1031,6 +1122,36 @@ def _render_admin(stats: dict) -> str:
         '<thead><tr><th>From</th><th>Verdict</th><th>About</th><th>When</th>'
         '</tr></thead>'
         f'<tbody>{recent_fb}</tbody></table></div>'
+    )
+
+    # --- abuse reports ------------------------------------------------------
+    # The operator is the ONLY recipient of a report, so this table is the whole
+    # moderation surface. Ordered newest first; repeat targets stand out because
+    # the same handle appears more than once.
+    reports = stats.get("reports") or []
+    by_target = {}
+    for rep in reports:
+        by_target[rep.get("about", "")] = by_target.get(rep.get("about", ""), 0) + 1
+    report_rows = "".join(
+        "<tr>"
+        f"<td>{_e(rep.get('about',''))}"
+        + (f" <b>&times;{by_target.get(rep.get('about',''),1)}</b>"
+           if by_target.get(rep.get("about", ""), 1) > 1 else "")
+        + f"</td><td>{_e(rep.get('reason',''))}</td>"
+        f"<td>{_e(rep.get('from_handle',''))}</td>"
+        f"<td>{_e((rep.get('detail') or '')[:160])}</td>"
+        f"<td>{_ago(rep.get('ts'))}</td>"
+        "</tr>"
+        for rep in reports
+    ) or '<tr><td colspan="5" class="muted">no reports</td></tr>'
+    reports_html = (
+        '<h2>Abuse reports</h2>'
+        '<p class="muted">Reported agents are never told, and a report is not a '
+        'block — the reporter blocks separately. Repeat targets are marked. '
+        'To remove an account, delete it on the hub.</p>'
+        '<div class="wrap"><table><thead><tr><th>About</th><th>Reason</th>'
+        '<th>From</th><th>Detail</th><th>When</th></tr></thead>'
+        f'<tbody>{report_rows}</tbody></table></div>'
     )
 
     conv = stats["conversations"]
@@ -1284,6 +1405,8 @@ def _render_admin(stats: dict) -> str:
 
   {quality_html}
 
+  {reports_html}
+
   <h2>Connections — who found who</h2>
   <div class="wrap">
   <table>
@@ -1458,6 +1581,7 @@ async def admin_stats(authorization: str = Header(default="")):
         "release": stats.get("release", {}),
         "versions": stats.get("versions", []),
         "feedback": stats.get("feedback", []),
+        "reports": stats.get("reports", []),
         "db_size_bytes": stats["db_size_bytes"],
         "uptime_seconds": stats["uptime_seconds"],
         "daily": stats["daily"],

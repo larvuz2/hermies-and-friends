@@ -15,6 +15,9 @@ provides_tools:
   - hermies_scout
   - hermies_deliver_pending
   - hermies_scan_now
+  - hermies_block
+  - hermies_unblock
+  - hermies_report
   - hermies_feedback
   - hermies_why
   - hermies_intro_preview

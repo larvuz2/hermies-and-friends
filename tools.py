@@ -9,6 +9,8 @@ import time
 
 from . import matchmaker, dossier, sanitize
 
+_REPORT_REASONS = ("spam", "harassment", "impersonation", "scam", "other")
+
 
 def build(client, card, llm=None):
     """Return a list of tool specs to register with ctx.register_tool."""
@@ -45,6 +47,52 @@ def build(client, card, llm=None):
         except Exception as e:
             return json.dumps({"success": False, "error": str(e)[:200]})
 
+    def block_agent(params, **kwargs):
+        """Stop an agent reaching this human. Enforced by the hub."""
+        who = str(params.get("handle") or "").strip().lstrip("@")
+        if not who:
+            return json.dumps({"success": False, "error": "need 'handle'"})
+        try:
+            client.block(who, str(params.get("reason") or "")[:200])
+        except Exception as e:
+            return json.dumps({"success": False, "error": str(e)[:200]})
+        return json.dumps({
+            "success": True, "blocked": who,
+            "note": ("Blocked. They cannot open a conversation with your human, "
+                     "they will not be surfaced again, and they are not told."),
+        })
+
+    def unblock_agent(params, **kwargs):
+        who = str(params.get("handle") or "").strip().lstrip("@")
+        if not who:
+            return json.dumps({"success": False, "error": "need 'handle'"})
+        try:
+            res = client.unblock(who)
+        except Exception as e:
+            return json.dumps({"success": False, "error": str(e)[:200]})
+        return json.dumps({"success": True, "handle": who,
+                           "was_blocked": bool(res.get("removed"))})
+
+    def report_agent(params, **kwargs):
+        """Tell the network operator about an agent. Never reaches them."""
+        who = str(params.get("handle") or "").strip().lstrip("@")
+        reason = str(params.get("reason") or "").strip().lower()
+        if not who or reason not in _REPORT_REASONS:
+            return json.dumps({"success": False,
+                               "error": "need 'handle' and a valid 'reason'",
+                               "accepted": list(_REPORT_REASONS)})
+        try:
+            res = client.report(who, reason, str(params.get("detail") or "")[:1000])
+        except Exception as e:
+            return json.dumps({"success": False, "error": str(e)[:200]})
+        return json.dumps({
+            "success": True, "reported": who,
+            "distinct_reporters": res.get("distinct_reporters", 1),
+            "note": ("Sent to the operator. They are not told, and this does "
+                     "NOT block them — call hermies_block if your human also "
+                     "wants them to stop reaching out."),
+        })
+
     def feedback(params, **kwargs):
         """Record one-tap feedback on a delivered finding and act on it."""
         fid = str(params.get("finding_id") or "").strip()
@@ -63,9 +111,20 @@ def build(client, card, llm=None):
             client.send_feedback(fid, res["verdict"], res.get("handle", ""))
         except Exception:
             pass
+        note = "Thanks — that changes what I bring you next."
+        # "Spam" already meant "never surface them again", but that was OUR
+        # decision alone — they could still open threads at us and spend our
+        # inference. Enforce it at the hub, where it does not depend on their
+        # client behaving.
+        if res["verdict"] == "spam" and res.get("handle"):
+            try:
+                client.block(res["handle"], "marked as spam by the human")
+                note = ("Thanks — I've blocked them. They can't reach you and "
+                        "won't come up again.")
+            except Exception:
+                pass          # local suppression still applies
         return json.dumps({"success": True, "verdict": res["verdict"],
-                           "about": res.get("handle", ""),
-                           "note": "Thanks — that changes what I bring you next."})
+                           "about": res.get("handle", ""), "note": note})
 
     def why(params, **kwargs):
         """The trust receipt for one finding — why it matched, what was
@@ -393,6 +452,67 @@ def build(client, card, llm=None):
                 "parameters": {"type": "object", "properties": {}},
             },
             "handler": scan_now,
+        },
+        {
+            "name": "hermies_block",
+            "description": ("Stop another agent from reaching your human. Use "
+                            "when they ask to block, mute, or never hear from "
+                            "someone again. Enforced by the hub: the blocked "
+                            "agent cannot open conversations and is never "
+                            "surfaced again. They are NOT notified. Reversible "
+                            "with hermies_unblock."),
+            "schema": {
+                "name": "hermies_block",
+                "description": "Block an agent from contacting your human.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "handle": {"type": "string",
+                                   "description": "The agent handle to block."},
+                        "reason": {"type": "string",
+                                   "description": "Optional private note to yourself."},
+                    },
+                    "required": ["handle"],
+                },
+            },
+            "handler": block_agent,
+        },
+        {
+            "name": "hermies_unblock",
+            "description": "Undo a block, letting that agent reach your human again.",
+            "schema": {
+                "name": "hermies_unblock",
+                "description": "Unblock a previously blocked agent.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {"handle": {"type": "string"}},
+                    "required": ["handle"],
+                },
+            },
+            "handler": unblock_agent,
+        },
+        {
+            "name": "hermies_report",
+            "description": ("Report an agent to the network operator for abuse. "
+                            "Goes ONLY to the operator, never to the reported "
+                            "agent, and does NOT block them — call hermies_block "
+                            "as well if your human wants them stopped."),
+            "schema": {
+                "name": "hermies_report",
+                "description": "Report an agent to the network operator.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "handle": {"type": "string"},
+                        "reason": {"type": "string",
+                                   "enum": list(_REPORT_REASONS)},
+                        "detail": {"type": "string",
+                                   "description": "What actually happened."},
+                    },
+                    "required": ["handle", "reason"],
+                },
+            },
+            "handler": report_agent,
         },
         {
             "name": "hermies_feedback",

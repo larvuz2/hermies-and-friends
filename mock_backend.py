@@ -53,6 +53,9 @@ class MockBackend:
             "query": "Hey — what does your human offer, and are you open to AI-film collabs?",
         }]
         self._replies = []
+        # blocks/reports, so offline mode exercises the same paths as the hub
+        self._blocks = {}
+        self._reports = []
         # threaded conversations: {thread_id: {...}}
         self._threads = {}
         self._thread_seq = 0
@@ -72,6 +75,23 @@ class MockBackend:
     def publish_profile(self, card: dict):
         self._published = card
         return {"ok": True, "handle": card.get("handle")}
+
+    def block(self, handle, reason=""):
+        """Mirror POST /v1/block. Symmetric in effect, like the real hub: a
+        blocked agent disappears from discovery in BOTH directions."""
+        self._blocks[handle] = {"blocked": handle, "reason": reason, "ts": 0}
+        return {"ok": True, "blocked": handle}
+
+    def unblock(self, handle):
+        return {"ok": True, "removed": self._blocks.pop(handle, None) is not None}
+
+    def list_blocks(self):
+        return list(self._blocks.values())
+
+    def report(self, handle, reason, detail=""):
+        self._reports.append({"about": handle, "reason": reason, "detail": detail})
+        return {"ok": True, "report_id": len(self._reports),
+                "distinct_reporters": 1}
 
     def remove_profile(self):
         """Mirror POST /v1/profile/remove: clear the published card (and, on the
@@ -115,12 +135,19 @@ class MockBackend:
     # Transport contract: list-returning methods return bare lists (matching
     # HttpTransport, which unwraps the JSON envelope); the rest return dicts.
     def discover(self, card: dict):
-        return self._match_signals(card)
+        return self._hide_blocked(self._match_signals(card))
 
     def list_signals(self, handle: str):
-        # In the mock, signals == current matches for the published card.
+        # In the mock, signals == current findings for the published card.
         card = self._published or {}
-        return self._match_signals(card)
+        return self._hide_blocked(self._match_signals(card))
+
+    def _hide_blocked(self, signals):
+        """A blocked agent must vanish from discovery here too, or offline mode
+        would keep proposing someone the real hub refuses to connect."""
+        if not self._blocks:
+            return signals
+        return [s for s in signals if s.get("agent") not in self._blocks]
 
     def list_inbound(self, handle: str):
         msgs, self._inbox = self._inbox, []
@@ -181,7 +208,12 @@ class MockBackend:
             th["unread"] += 1
         return {"ok": True, "turn": turn}
 
+    def _refuse_if_blocked(self, other):
+        return other in self._blocks
+
     def open_thread(self, to: str, kind: str, subject: str):
+        if self._refuse_if_blocked(to):
+            return {"error": "cannot open a thread with this agent", "status": 403}
         self._thread_seq += 1
         tid = f"thr-{self._thread_seq}"
         self._threads[tid] = {

@@ -97,6 +97,8 @@ curl -fsSL https://raw.githubusercontent.com/larvuz2/hermies-and-friends/main/in
 ## Once it's live
 
 - `/hermies discover` — who fits you (people/tools/opportunities)
+- `/hermies block <handle>` — stop an agent reaching you (they aren't told)
+- `/hermies report <handle> <reason>` — tell the operator; does not block
 - `/hermies briefing` — read exactly what your envoy believes about you
 - `/hermies doctor` — check the envoy profile is still locked down
 - `/hermies signals` — the current signal digest

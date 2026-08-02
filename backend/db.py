@@ -182,6 +182,33 @@ def init_db() -> None:
                 value TEXT NOT NULL
             )"""
         )
+        # Blocks are SYMMETRIC in effect: one row means neither side may open a
+        # thread with the other, and neither appears in the other's discovery.
+        # Enforced here rather than in the plugin because a counterpart's client
+        # is untrusted — "stop contacting me" cannot depend on their goodwill.
+        conn.execute(
+            """CREATE TABLE IF NOT EXISTS blocks (
+                blocker TEXT NOT NULL,
+                blocked TEXT NOT NULL,
+                reason  TEXT,
+                ts      REAL NOT NULL,
+                PRIMARY KEY (blocker, blocked)
+            )"""
+        )
+        # Reports go to the OPERATOR, not to the other party. Kept separate from
+        # blocks so a report is never a silent block and a block never needs a
+        # justification.
+        conn.execute(
+            """CREATE TABLE IF NOT EXISTS reports (
+                id      INTEGER PRIMARY KEY AUTOINCREMENT,
+                from_handle TEXT NOT NULL,
+                about   TEXT NOT NULL,
+                reason  TEXT,
+                detail  TEXT,
+                ts      REAL NOT NULL,
+                handled INTEGER NOT NULL DEFAULT 0
+            )"""
+        )
         # list_threads (WHERE a_handle = ? OR b_handle = ?) is the hottest query
         # in the system — every agent runs it every poll cycle. Unindexed it is
         # a full scan of a table that grows by ~20 rows per agent per day.
@@ -191,6 +218,7 @@ def init_db() -> None:
             "CREATE INDEX IF NOT EXISTS ix_threads_b ON threads(b_handle)",
             "CREATE INDEX IF NOT EXISTS ix_threads_created ON threads(created_ts)",
             "CREATE INDEX IF NOT EXISTS ix_messages_to ON messages(to_handle)",
+            "CREATE INDEX IF NOT EXISTS ix_blocks_blocked ON blocks(blocked)",
         ):
             try:
                 conn.execute(stmt)
@@ -839,3 +867,78 @@ def db_size_bytes() -> int:
         except OSError:
             pass
     return total
+
+
+# --------------------------------------------------------------------------- #
+# Blocks and reports
+# --------------------------------------------------------------------------- #
+
+def add_block(blocker: str, blocked: str, reason: str, ts: float) -> None:
+    with _connect() as conn:
+        conn.execute(
+            "INSERT OR REPLACE INTO blocks (blocker, blocked, reason, ts) "
+            "VALUES (?, ?, ?, ?)", (blocker, blocked, reason, ts))
+
+
+def remove_block(blocker: str, blocked: str) -> bool:
+    with _connect() as conn:
+        cur = conn.execute("DELETE FROM blocks WHERE blocker = ? AND blocked = ?",
+                           (blocker, blocked))
+        return cur.rowcount > 0
+
+
+def is_blocked_between(a: str, b: str) -> bool:
+    """True if EITHER has blocked the other. A block is one-sided to create and
+    two-sided in effect — otherwise blocking someone would still let them open
+    threads at you, which is the whole thing you were trying to stop."""
+    with _connect() as conn:
+        row = conn.execute(
+            "SELECT 1 FROM blocks WHERE (blocker = ? AND blocked = ?) "
+            "OR (blocker = ? AND blocked = ?) LIMIT 1", (a, b, b, a)).fetchone()
+        return row is not None
+
+
+def blocked_set(handle: str) -> set:
+    """Every handle that must not appear in this agent's discovery — those they
+    blocked, and those who blocked them."""
+    with _connect() as conn:
+        rows = conn.execute(
+            "SELECT blocked AS h FROM blocks WHERE blocker = ? "
+            "UNION SELECT blocker AS h FROM blocks WHERE blocked = ?",
+            (handle, handle)).fetchall()
+        return {r["h"] for r in rows}
+
+
+def list_blocks(blocker: str) -> list:
+    with _connect() as conn:
+        rows = conn.execute(
+            "SELECT blocked, reason, ts FROM blocks WHERE blocker = ? "
+            "ORDER BY ts DESC", (blocker,)).fetchall()
+        return [dict(r) for r in rows]
+
+
+def add_report(from_handle: str, about: str, reason: str, detail: str,
+               ts: float) -> int:
+    with _connect() as conn:
+        cur = conn.execute(
+            "INSERT INTO reports (from_handle, about, reason, detail, ts) "
+            "VALUES (?, ?, ?, ?, ?)", (from_handle, about, reason, detail, ts))
+        return int(cur.lastrowid)
+
+
+def recent_reports(limit: int = 50) -> list:
+    with _connect() as conn:
+        rows = conn.execute(
+            "SELECT id, from_handle, about, reason, detail, ts, handled "
+            "FROM reports ORDER BY ts DESC LIMIT ?", (limit,)).fetchall()
+        return [dict(r) for r in rows]
+
+
+def count_reports_about(about: str) -> int:
+    """How many DISTINCT agents have reported this one — the number that
+    actually matters for an operator deciding whether to act."""
+    with _connect() as conn:
+        row = conn.execute(
+            "SELECT COUNT(DISTINCT from_handle) AS c FROM reports WHERE about = ?",
+            (about,)).fetchone()
+        return int(row["c"] or 0)

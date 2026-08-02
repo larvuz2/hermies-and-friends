@@ -13,14 +13,31 @@ provides_hooks:
   - pre_llm_call
 provides_tools:
   - hermies_scout
+  - hermies_deliver_pending
+  - hermies_scan_now
+  - hermies_feedback
+  - hermies_why
+  - hermies_intro_preview
   - hermies_search_agents
   - hermies_list_signals
   - hermies_send_message
   - hermies_install_skill
   - hermies_dossier
   - hermies_ask
+  - hermies_ask_preview
+  - hermies_ask_status
   - hermies_thread
   - hermies_reveal_request
   - hermies_reveal_respond
+  - hermies_pending
   - hermies_pause
   - hermies_intent
+optional_env:
+  # Both are OPTIONAL by design: the plugin registers itself and needs no key
+  # from the user. Set HERMIES_API_URL to point at your own hub instead of the
+  # public one; HERMIES_API_KEY is written automatically on first join.
+  - name: HERMIES_API_URL
+    description: "Hermies hub to join. Defaults to the public network; set your own to self-host."
+  - name: HERMIES_API_KEY
+    description: "Bearer token for the hub. Obtained automatically on first join."
+    secret: true

@@ -295,3 +295,46 @@ def test_inject_adapter_calls_inject_message(loaded):
     ctx.injected.clear()  # drop the first-run onboarding bootstrap
     captured["inject"]("hello human", "user")
     assert ctx.injected == [("hello human", "user")]
+
+
+# --------------------------------------------------------------------------- #
+# Open-source hygiene: the manifest is the first thing a reviewer reads, and it
+# had silently drifted to 12 of 20 tools before anyone noticed.
+# --------------------------------------------------------------------------- #
+def _repo_root():
+    import pathlib
+    return pathlib.Path(__file__).resolve().parents[1]
+
+
+def test_manifest_declares_every_registered_tool():
+    import re
+    from hermies import tools as tools_mod, profile as profile_mod
+    from hermies.client import HermiesClient
+    from hermies.mock_backend import MockBackend
+
+    registered = {s["name"] for s in tools_mod.build(
+        HermiesClient(MockBackend()), profile_mod.PublicCard(handle="x"), llm=None)}
+    manifest = set(re.findall(r"- (hermies_\w+)",
+                              (_repo_root() / "plugin.yaml").read_text(encoding="utf-8")))
+    assert registered == manifest, {
+        "missing from plugin.yaml": sorted(registered - manifest),
+        "declared but not registered": sorted(manifest - registered),
+    }
+
+
+def test_the_project_is_actually_licensed():
+    """plugin.yaml claims MIT. Without a LICENSE file the repo is legally
+    all-rights-reserved and nobody may use or contribute to it."""
+    text = (_repo_root() / "LICENSE").read_text(encoding="utf-8")
+    assert "MIT License" in text
+    assert "Copyright (c)" in text
+    manifest = (_repo_root() / "plugin.yaml").read_text(encoding="utf-8")
+    assert "license: MIT" in manifest, "manifest and LICENSE must agree"
+
+
+def test_security_policy_exists_and_names_the_real_limits():
+    """We ship a privacy claim; the honest caveats have to be written down."""
+    text = (_repo_root() / "SECURITY.md").read_text(encoding="utf-8")
+    assert "security/advisories/new" in text          # a real reporting channel
+    for limitation in ("not a sandbox", "LLM step", "untrusted"):
+        assert limitation in text, limitation

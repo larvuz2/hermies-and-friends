@@ -4,23 +4,93 @@ Mirrors the humalike pattern: a fresh install needs zero env setup — sensible
 defaults, and a device login later fills HERMIES_API_KEY into ~/.hermes/.env.
 Setting HERMIES_API_URL empty disables all network calls (offline/demo mode).
 """
+import logging
 import os
+
+log = logging.getLogger("hermies.config")
 
 # The public hub. A fresh install joins it with ZERO config: the plugin
 # auto-registers on first card publish to obtain its key. Set HERMIES_API_URL
 # empty to force offline/mock mode.
 DEFAULT_API_URL = "https://srv1691895.hstgr.cloud"
 
+# Per-profile key cache, keyed by profile home. Under a multiplexing gateway we
+# must NOT stash a key in os.environ (see persist_api_key), but auto-join still
+# has to work in the same turn that obtains it. Keying by HERMES_HOME keeps this
+# correct even when one process serves several profiles.
+_KEY_CACHE = {}
+
+
+def _profile_home() -> str:
+    """Identifies WHICH profile we are running as.
+
+    HERMES_HOME is on Hermes' global-env allowlist and the multiplexer
+    overrides it per turn, so it is the right discriminator.
+    """
+    return os.environ.get("HERMES_HOME") or os.path.expanduser("~/.hermes")
+
+
+def _multiplex_active() -> bool:
+    try:
+        from agent import secret_scope
+        return bool(secret_scope.is_multiplex_active())
+    except Exception:
+        return False
+
+
+def _get_secret(name: str, default: str = "") -> str:
+    """Read a PER-PROFILE credential the way Hermes expects.
+
+    Hermes 0.19.1 added a fail-closed per-profile secret scope for the
+    multiplexing gateway (one process serving many profiles). Reading
+    ``os.environ`` directly there resolves whichever profile's value happens to
+    be in the process env — which for us would mean talking to the hub as
+    ANOTHER user. For a plugin whose whole promise is a privacy boundary, that
+    is the worst failure available, so we go through their resolver.
+
+    Two deliberate behaviours:
+
+    * **Old Hermes / no scope module** — fall straight through to ``os.getenv``.
+      Nothing changes for anyone running today.
+    * **UnscopedSecretError** — return the default and stay quiet. Falling back
+      to ``os.environ`` here would reintroduce exactly the cross-profile leak
+      the scope exists to prevent. Not acting beats acting as the wrong person.
+    """
+    try:
+        from agent import secret_scope
+    except Exception:
+        return os.getenv(name, default)
+    try:
+        val = secret_scope.get_secret(name, default)
+    except Exception as e:
+        if type(e).__name__ == "UnscopedSecretError":
+            log.warning("hermies: %s read without a profile scope — treating it "
+                        "as absent rather than risking another profile's value",
+                        name)
+            return default
+        return os.getenv(name, default)
+    return default if val is None else val
+
 
 def service_url() -> str:
     """Base URL for the Hermies backend. Empty string == network disabled."""
-    val = os.getenv("HERMIES_API_URL", DEFAULT_API_URL)
-    return val.strip()
+    val = _get_secret("HERMIES_API_URL", DEFAULT_API_URL)
+    return (val or "").strip()
 
 
 def api_key() -> str:
     """Bearer token for the backend. Empty until the plugin auto-registers."""
-    return os.getenv("HERMIES_API_KEY", "").strip()
+    val = (_get_secret("HERMIES_API_KEY", "") or "").strip()
+    if val:
+        return val
+    if not _multiplex_active():
+        # os.environ IS the mechanism here, so consulting the cache would only
+        # let a cleared or rotated key linger for the life of the process.
+        return ""
+    # Multiplexed: obtained earlier this session and deliberately kept out of
+    # the shared environment, so this is the only place it lives until the
+    # profile's .env is re-read.
+    return (_KEY_CACHE.get(_profile_home()) or "").strip()
 
 
 def has_hub() -> bool:
@@ -54,7 +124,13 @@ def persist_api_key(key: str) -> None:
     key = (key or "").strip()
     if not key:
         return
-    os.environ["HERMIES_API_KEY"] = key
+    # Usable immediately, without polluting the shared process environment: in a
+    # multiplexing gateway os.environ is common to every profile AND is copied
+    # into every spawned subprocess, so stashing a key there would hand this
+    # user's hub identity to every other agent on the box.
+    _KEY_CACHE[_profile_home()] = key
+    if not _multiplex_active():
+        os.environ["HERMIES_API_KEY"] = key
     try:
         path = _env_file_path()
         parent = os.path.dirname(path)

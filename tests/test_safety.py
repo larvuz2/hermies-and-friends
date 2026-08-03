@@ -9,14 +9,14 @@ import json
 
 import pytest
 
-from hermies import commands, matchmaker, profile, tools
-from hermies.client import HermiesClient
-from hermies.mock_backend import MockBackend
+from hermix import commands, matchmaker, profile, tools
+from hermix.client import HermixClient
+from hermix.mock_backend import MockBackend
 
 
 @pytest.fixture(autouse=True)
 def _isolate(tmp_path, monkeypatch):
-    monkeypatch.setenv("HERMIES_HOME", str(tmp_path))
+    monkeypatch.setenv("HERMIX_HOME", str(tmp_path))
 
 
 def _card():
@@ -24,11 +24,11 @@ def _card():
 
 
 def _handler():
-    return commands.make_handler(HermiesClient(MockBackend()), _card(), llm=None)
+    return commands.make_handler(HermixClient(MockBackend()), _card(), llm=None)
 
 
 def _tools(client=None):
-    client = client or HermiesClient(MockBackend())
+    client = client or HermixClient(MockBackend())
     return {s["name"]: s["handler"] for s in tools.build(client, _card(), llm=None)}
 
 
@@ -67,7 +67,7 @@ def test_report_says_it_is_not_a_block():
     low = out.lower()
     assert "operator" in low
     assert "not told" in low
-    assert "does not block" in low and "/hermies block" in out
+    assert "does not block" in low and "/hermix block" in out
 
 
 def test_the_help_line_advertises_the_safety_commands():
@@ -78,24 +78,24 @@ def test_the_help_line_advertises_the_safety_commands():
 
 # --- tools ----------------------------------------------------------------- #
 def test_block_tool_reports_success_and_the_no_notification_rule():
-    out = json.loads(_tools()["hermies_block"]({"handle": "@mira-herald"}))
+    out = json.loads(_tools()["hermix_block"]({"handle": "@mira-herald"}))
     assert out["success"] and out["blocked"] == "mira-herald"
     assert "not told" in out["note"].lower()
 
 
 def test_block_tool_needs_a_handle():
-    assert json.loads(_tools()["hermies_block"]({}))["success"] is False
+    assert json.loads(_tools()["hermix_block"]({}))["success"] is False
 
 
 def test_report_tool_rejects_an_invented_reason():
-    out = json.loads(_tools()["hermies_report"]({"handle": "x", "reason": "vibes"}))
+    out = json.loads(_tools()["hermix_report"]({"handle": "x", "reason": "vibes"}))
     assert out["success"] is False and "spam" in out["accepted"]
 
 
 def test_report_tool_tells_the_agent_it_did_not_block():
-    out = json.loads(_tools()["hermies_report"](
+    out = json.loads(_tools()["hermix_report"](
         {"handle": "mira-herald", "reason": "scam", "detail": "asked for money"}))
-    assert out["success"] and "hermies_block" in out["note"]
+    assert out["success"] and "hermix_block" in out["note"]
 
 
 # --- spam feedback must actually stop them --------------------------------- #
@@ -103,13 +103,13 @@ def test_marking_a_finding_as_spam_blocks_them_at_the_hub():
     """Before this, "spam" only stopped us SURFACING them — they could still
     open threads and spend our inference."""
     backend = MockBackend()
-    client = HermiesClient(backend)
+    client = HermixClient(backend)
     st = matchmaker.new_state()
     st["outbox"]["delivered"] = [{"id": "abc123", "handle": "mira-herald",
                                   "score": 5.0, "ts": 1_000_000.0}]
     matchmaker.save_state(st)
 
-    out = json.loads(_tools(client)["hermies_feedback"](
+    out = json.loads(_tools(client)["hermix_feedback"](
         {"finding_id": "abc123", "verdict": "spam"}))
     assert out["success"] and out["verdict"] == "spam"
     assert "blocked" in out["note"].lower()
@@ -118,13 +118,13 @@ def test_marking_a_finding_as_spam_blocks_them_at_the_hub():
 
 def test_other_verdicts_do_not_block_anyone():
     backend = MockBackend()
-    client = HermiesClient(backend)
+    client = HermixClient(backend)
     st = matchmaker.new_state()
     st["outbox"]["delivered"] = [{"id": "abc123", "handle": "mira-herald",
                                   "score": 5.0, "ts": 1_000_000.0}]
     matchmaker.save_state(st)
     for verdict in ("useful", "wrong_fit", "too_early"):
-        json.loads(_tools(client)["hermies_feedback"](
+        json.loads(_tools(client)["hermix_feedback"](
             {"finding_id": "abc123", "verdict": verdict}))
     assert backend._blocks == {}
 
@@ -133,7 +133,7 @@ def test_a_blocked_agent_disappears_from_discovery_offline_too():
     """Offline/mock mode must exercise the same path as the hub, or the demo
     keeps proposing someone the real network refuses to connect."""
     backend = MockBackend()
-    client = HermiesClient(backend)
+    client = HermixClient(backend)
     # Terms chosen to overlap the mock's seeded agents, which match on tokens.
     client.publish_profile(profile.PublicCard(
         handle="gus-herald", offer=["3d worlds"],
@@ -148,7 +148,7 @@ def test_a_blocked_agent_disappears_from_discovery_offline_too():
 
 def test_a_blocked_agent_cannot_be_dug_offline_either():
     backend = MockBackend()
-    client = HermiesClient(backend)
+    client = HermixClient(backend)
     client.block("mira-herald", "test")
     res = client.open_thread("mira-herald", "dig", "s")
     assert res.get("status") == 403 and "thread_id" not in res

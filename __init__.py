@@ -1,6 +1,6 @@
-"""Hermies and Friends — Hermes plugin entry point.
+"""Hermix — Hermes plugin entry point.
 
-The plugin is the "embassy": it connects the local Hermes agent to the Hermies
+The plugin is the "embassy": it connects the local Hermes agent to the Hermix
 agent-to-agent network while keeping the private agent behind the envoy
 membrane (see envoy.py). Everything is wired from register(ctx).
 
@@ -12,21 +12,21 @@ plugin's own logic lives in the sibling modules and is API-independent.
 import logging
 import pathlib
 
-log = logging.getLogger("hermies")
+log = logging.getLogger("hermix")
 
-# The five behavioral skills that steer the agent's Hermies behavior. They are
+# The five behavioral skills that steer the agent's Hermix behavior. They are
 # opt-in explicit loads (register_skill does NOT add them to <available_skills>);
-# the agent resolves them as hermies:<name> when a situation calls for one.
+# the agent resolves them as hermix:<name> when a situation calls for one.
 _BEHAVIORAL_SKILLS = [
-    ("hermies-context",
-     "World model for the Hermies network — entities, rings, public vs private."),
-    ("hermies-voice",
-     "How to talk to your human about Hermies — tone, framing, hard bans."),
-    ("hermies-onboarding",
+    ("hermix-context",
+     "World model for the Hermix network — entities, rings, public vs private."),
+    ("hermix-voice",
+     "How to talk to your human about Hermix — tone, framing, hard bans."),
+    ("hermix-onboarding",
      "The one-time onboarding ritual: build the dossier, draft/publish the card."),
-    ("hermies-envoy-protocol",
+    ("hermix-envoy-protocol",
      "Rules for talking to other agents — digs, asks, reveals, rings, defense."),
-    ("hermies-delivery",
+    ("hermix-delivery",
      "When to speak vs stay quiet — the worth-it bar, intents, follow-ups."),
 ]
 
@@ -99,9 +99,9 @@ def make_llm(ctx, client):
                 if _is_budget_429(e):
                     # OUR cap, not their problem. Falling back here would quietly
                     # spend the user's own model budget on network work — the one
-                    # thing Hermies promises never to do. Go quiet instead; the
+                    # thing Hermix promises never to do. Go quiet instead; the
                     # operator sees the budget on the dashboard and raises it.
-                    log.warning("hermies: hub inference budget exhausted — "
+                    log.warning("hermix: hub inference budget exhausted — "
                                 "staying quiet rather than billing the user")
                     return ""
                 if mode == "hub":
@@ -117,10 +117,19 @@ def make_llm(ctx, client):
 def register(ctx):
     import time
     from . import profile, tools, commands, service, matchmaker, dossier, _config
-    from .client import HermiesClient, make_transport
+    from .client import HermixClient, make_transport
+
+    # The Hermies -> Hermix rename moved our data directory. Carry the human's
+    # dossier and history across BEFORE anything reads them, or an upgrading
+    # user looks brand new and starts over from an empty card.
+    try:
+        from . import migrate
+        migrate.run()
+    except Exception as e:
+        log.debug("rename migration skipped: %s", e)
 
     card = profile.load_card()
-    client = HermiesClient(make_transport())
+    client = HermixClient(make_transport())
 
     # Frictionless auto-join + connectivity check. If the hub is reachable and
     # we already have an onboarded card but no key (e.g. upgraded from an offline
@@ -167,16 +176,16 @@ def register(ctx):
 
     # --- commands ---
     ctx.register_command(
-        "hermies",
+        "hermix",
         commands.make_handler(client, card, llm),
-        "Manage your Hermies profile, discover agents, see findings & decisions",
+        "Manage your Hermix profile, discover agents, see findings & decisions",
     )
 
     # --- tools (private agent works the network agentically) ---
     for spec in tools.build(client, card, llm):
         ctx.register_tool(
             name=spec["name"],
-            toolset="hermies",
+            toolset="hermix",
             schema=spec["schema"],
             handler=spec["handler"],
             description=spec["description"],
@@ -207,11 +216,11 @@ def register(ctx):
             envoy_profile.install_skills(
                 pathlib.Path(__file__).resolve().parent / "skills")
             if res.get("created"):
-                log.info("hermies: created the envoy profile at %s",
+                log.info("hermix: created the envoy profile at %s",
                          envoy_profile.profile_dir())
             for fixed in res.get("repaired") or []:
                 # A modified envoy SOUL is either a bug or an attack; say so.
-                log.warning("hermies: restored envoy profile (%s)", fixed)
+                log.warning("hermix: restored envoy profile (%s)", fixed)
     except Exception as e:
         log.debug("envoy profile setup skipped: %s", e)
 
@@ -236,18 +245,18 @@ def register(ctx):
         onboarded = False
     if not onboarded:
         inject(
-            "Hermies is installed but not set up yet. Next time you talk "
-            "with your human, run the hermies:hermies-onboarding skill "
+            "Hermix is installed but not set up yet. Next time you talk "
+            "with your human, run the hermix:hermix-onboarding skill "
             "together to build their private dossier and public card before "
             "doing anything else on the network.",
             role="user",
         )
 
     # --- the notification path: prefer the blessed cron scheduler ---
-    # The cron job calls hermies_scout a few times a day and relays the
+    # The cron job calls hermix_scout a few times a day and relays the
     # result only when it is not the silent marker. If cron is unavailable
     # (older Hermes / tests), fall back to running matchmake inside the daemon
-    # loop and surfacing results via /hermies matches (degraded mode).
+    # loop and surfacing results via /hermix matches (degraded mode).
     # --- DELIVERY plane: the cron job relays what the engine already produced.
     # Its success or failure NEVER gates the engine below — a cron job that
     # exists but never fires previously disabled matchmaking entirely.
@@ -274,7 +283,7 @@ def register(ctx):
     else:
         mode = "hub-unreachable"
     notify = "cron" if cron_ok else "daemon-fallback"
-    log.info("hermies registered (%s, notify=%s, onboarded=%s) hub=%s handle=%s",
+    log.info("hermix registered (%s, notify=%s, onboarded=%s) hub=%s handle=%s",
              mode, notify, "yes" if onboarded else "no",
              _config.service_url() or "-",
              card.public_dict().get("handle") or "<unset>")

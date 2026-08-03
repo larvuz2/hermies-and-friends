@@ -2,12 +2,12 @@
 
 Two things are pinned here:
 
-  1. The routed LLM adapter (hermies.make_llm) decides — per HERMIES_LLM — whether
+  1. The routed LLM adapter (hermix.make_llm) decides — per HERMIX_LLM — whether
      the network's thinking bills the OPERATOR (hub inference) or the USER
      (ctx.llm). We assert every mode/liveness combination, and that ``purpose``
      ("envoy" | "judge" | "refresh") rides along to the hub from each call site.
-  2. Opt-out: /hermies pause & leave flip the matchmaker's ``paused`` flag so
-     run_cycle returns SILENT (daemon + hermies_scout tool go quiet); leave
+  2. Opt-out: /hermix pause & leave flip the matchmaker's ``paused`` flag so
+     run_cycle returns SILENT (daemon + hermix_scout tool go quiet); leave
      also calls client.remove_profile() while leaving the local dossier intact.
 """
 import json
@@ -15,8 +15,8 @@ import urllib.error
 
 import pytest
 
-import hermies
-from hermies import matchmaker, commands, envoy, profile, dossier, _config
+import hermix
+from hermix import matchmaker, commands, envoy, profile, dossier, _config
 
 
 # --------------------------------------------------------------------------- #
@@ -48,7 +48,7 @@ class FakeCtx:
 
 
 class HubClient:
-    """Stands in for HermiesClient's hub inference. Records purposes; can be set
+    """Stands in for HermixClient's hub inference. Records purposes; can be set
     to raise a 503/429-equivalent to exercise the failure paths."""
     def __init__(self, text="HUB_REPLY", error=None):
         self.text = text
@@ -67,35 +67,35 @@ class HubClient:
 @pytest.fixture
 def live(monkeypatch):
     """Force is_live() True deterministically (URL + key both present)."""
-    monkeypatch.setenv("HERMIES_API_URL", "https://hub.example")
-    monkeypatch.setenv("HERMIES_API_KEY", "test-key")
+    monkeypatch.setenv("HERMIX_API_URL", "https://hub.example")
+    monkeypatch.setenv("HERMIX_API_KEY", "test-key")
 
 
 @pytest.fixture
 def not_live(monkeypatch):
     """Force is_live() False deterministically (empty URL disables the network)."""
-    monkeypatch.setenv("HERMIES_API_URL", "")
-    monkeypatch.setenv("HERMIES_API_KEY", "")
+    monkeypatch.setenv("HERMIX_API_URL", "")
+    monkeypatch.setenv("HERMIX_API_KEY", "")
 
 
 def _adapter(hub_text="HUB_REPLY", hub_error=None, ctx_text="LOCAL_REPLY"):
     ctx = FakeCtx(ctx_text)
     client = HubClient(hub_text, hub_error)
-    return hermies.make_llm(ctx, client), ctx, client
+    return hermix.make_llm(ctx, client), ctx, client
 
 
 # --------------------------------------------------------------------------- #
 # Adapter routing
 # --------------------------------------------------------------------------- #
 def test_auto_live_uses_hub(monkeypatch, live):
-    monkeypatch.setenv("HERMIES_LLM", "auto")
+    monkeypatch.setenv("HERMIX_LLM", "auto")
     llm, ctx, client = _adapter()
     assert llm("sys", "usr") == "HUB_REPLY"
     assert client.calls and not ctx.llm.calls      # operator billed, user not
 
 
 def test_auto_falls_back_to_ctx_llm_on_hub_failure(monkeypatch, live):
-    monkeypatch.setenv("HERMIES_LLM", "auto")
+    monkeypatch.setenv("HERMIX_LLM", "auto")
     err = urllib.error.HTTPError("u", 503, "unconfigured", None, None)
     llm, ctx, client = _adapter(hub_error=err)
     assert llm("sys", "usr") == "LOCAL_REPLY"       # fell back
@@ -103,21 +103,21 @@ def test_auto_falls_back_to_ctx_llm_on_hub_failure(monkeypatch, live):
 
 
 def test_auto_not_live_uses_ctx_llm(monkeypatch, not_live):
-    monkeypatch.setenv("HERMIES_LLM", "auto")
+    monkeypatch.setenv("HERMIX_LLM", "auto")
     llm, ctx, client = _adapter()
     assert llm("sys", "usr") == "LOCAL_REPLY"
     assert not client.calls and ctx.llm.calls       # hub never attempted
 
 
 def test_hub_mode_uses_hub_when_live(monkeypatch, live):
-    monkeypatch.setenv("HERMIES_LLM", "hub")
+    monkeypatch.setenv("HERMIX_LLM", "hub")
     llm, ctx, client = _adapter()
     assert llm("sys", "usr") == "HUB_REPLY"
     assert not ctx.llm.calls
 
 
 def test_hub_mode_returns_empty_sentinel_on_failure(monkeypatch, live):
-    monkeypatch.setenv("HERMIES_LLM", "hub")
+    monkeypatch.setenv("HERMIX_LLM", "hub")
     err = urllib.error.HTTPError("u", 429, "over budget", None, None)
     llm, ctx, client = _adapter(hub_error=err)
     assert llm("sys", "usr") == ""                  # safe silence, never bill user
@@ -125,21 +125,21 @@ def test_hub_mode_returns_empty_sentinel_on_failure(monkeypatch, live):
 
 
 def test_hub_mode_not_live_returns_empty_and_never_bills_user(monkeypatch, not_live):
-    monkeypatch.setenv("HERMIES_LLM", "hub")
+    monkeypatch.setenv("HERMIX_LLM", "hub")
     llm, ctx, client = _adapter()
     assert llm("sys", "usr") == ""
     assert not client.calls and not ctx.llm.calls   # user's model NEVER touched
 
 
 def test_local_mode_ignores_hub_even_when_live(monkeypatch, live):
-    monkeypatch.setenv("HERMIES_LLM", "local")
+    monkeypatch.setenv("HERMIX_LLM", "local")
     llm, ctx, client = _adapter()
     assert llm("sys", "usr") == "LOCAL_REPLY"
     assert not client.calls and ctx.llm.calls       # hub never attempted
 
 
 def test_default_mode_is_auto(monkeypatch, live):
-    monkeypatch.delenv("HERMIES_LLM", raising=False)
+    monkeypatch.delenv("HERMIX_LLM", raising=False)
     assert _config.llm_mode() == "auto"
     llm, ctx, client = _adapter()
     assert llm("sys", "usr") == "HUB_REPLY"          # auto -> hub when live
@@ -155,7 +155,7 @@ def _card():
 
 
 def test_envoy_reply_and_opener_carry_purpose_envoy(monkeypatch, live):
-    monkeypatch.setenv("HERMIES_LLM", "hub")
+    monkeypatch.setenv("HERMIX_LLM", "hub")
     llm, ctx, client = _adapter()
     envoy.respond(_card(), "who are you?", llm)          # inbound reply
     envoy.open_dig(_card(), "they need ai video", llm)   # dig opener
@@ -163,7 +163,7 @@ def test_envoy_reply_and_opener_carry_purpose_envoy(monkeypatch, live):
 
 
 def test_matchmaker_judge_and_findings_carry_purpose_judge(monkeypatch, live):
-    monkeypatch.setenv("HERMIES_LLM", "hub")
+    monkeypatch.setenv("HERMIX_LLM", "hub")
     llm, ctx, client = _adapter()
     matchmaker._judge(_card(), {"why": "x"}, "their reply", llm)
     matchmaker._write_findings(_card(), {"why": "x"}, "US: hi\nTHEM: hi", llm)
@@ -172,7 +172,7 @@ def test_matchmaker_judge_and_findings_carry_purpose_judge(monkeypatch, live):
 
 
 def test_card_refresh_carries_purpose_refresh(monkeypatch, live):
-    monkeypatch.setenv("HERMIES_LLM", "hub")
+    monkeypatch.setenv("HERMIX_LLM", "hub")
     # hub returns strict-JSON so _maybe_refresh_card actually calls the model.
     llm, ctx, client = _adapter(hub_text='{"handle": "gus-herald"}')
     state = matchmaker.new_state()
@@ -229,7 +229,7 @@ def _handler(client):
 
 
 def test_pause_sets_flag_and_resume_clears_it(monkeypatch, tmp_path):
-    monkeypatch.setenv("HERMIES_HOME", str(tmp_path))
+    monkeypatch.setenv("HERMIX_HOME", str(tmp_path))
     h = _handler(SpyLeaveClient())
 
     msg = h("pause")
@@ -242,7 +242,7 @@ def test_pause_sets_flag_and_resume_clears_it(monkeypatch, tmp_path):
 
 
 def test_leave_removes_profile_pauses_and_keeps_dossier(monkeypatch, tmp_path):
-    monkeypatch.setenv("HERMIES_HOME", str(tmp_path))
+    monkeypatch.setenv("HERMIX_HOME", str(tmp_path))
     # Seed a local dossier so we can prove leave leaves it untouched.
     dossier.add_fact("ring1", None, "6 years in game audio")
     dossier.add_intent("a cofounder in AI film")
@@ -262,7 +262,7 @@ def test_leave_removes_profile_pauses_and_keeps_dossier(monkeypatch, tmp_path):
 
 
 def test_republish_profile_rejoins_after_leave(monkeypatch, tmp_path):
-    monkeypatch.setenv("HERMIES_HOME", str(tmp_path))
+    monkeypatch.setenv("HERMIX_HOME", str(tmp_path))
 
     class PubClient(SpyLeaveClient):
         def publish_profile(self, card):
@@ -279,18 +279,18 @@ def test_republish_profile_rejoins_after_leave(monkeypatch, tmp_path):
 
 
 def test_paused_matchmake_tool_is_silent(monkeypatch, tmp_path):
-    """The hermies_scout tool no-ops (SILENT) while paused."""
-    monkeypatch.setenv("HERMIES_HOME", str(tmp_path))
-    from hermies import tools
-    from hermies.client import HermiesClient
-    from hermies.mock_backend import MockBackend
+    """The hermix_scout tool no-ops (SILENT) while paused."""
+    monkeypatch.setenv("HERMIX_HOME", str(tmp_path))
+    from hermix import tools
+    from hermix.client import HermixClient
+    from hermix.mock_backend import MockBackend
 
     state = matchmaker.new_state()
     state["paused"] = True
     matchmaker.save_state(state)
 
     h = {s["name"]: s["handler"]
-         for s in tools.build(HermiesClient(MockBackend()), _card(),
+         for s in tools.build(HermixClient(MockBackend()), _card(),
                               llm=lambda s, u, **_: "x")}
-    out = json.loads(h["hermies_scout"]({}))
+    out = json.loads(h["hermix_scout"]({}))
     assert out["result"] == matchmaker.SILENT

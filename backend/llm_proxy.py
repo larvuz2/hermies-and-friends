@@ -1,8 +1,8 @@
-"""Operator-paid LLM inference proxy for the Hermies hub.
+"""Operator-paid LLM inference proxy for the Hermix hub.
 
 Plugin users never bring their own LLM key for network features (envoy/judge/
 refresh). Instead the hub proxies those completions to OpenRouter using the
-OPERATOR's key (env ``HERMIES_OPENROUTER_KEY``). This module owns the outbound
+OPERATOR's key (env ``HERMIX_OPENROUTER_KEY``). This module owns the outbound
 call and its guards; metering + budgets live in ``db.py`` and the ``/v1/llm/*``
 route in ``app.py``.
 
@@ -14,6 +14,14 @@ import os
 
 import httpx
 from fastapi import HTTPException
+
+try:
+    import compat_env
+except ImportError:  # loaded by path from outside backend/ (evals, tooling)
+    import pathlib as _pl
+    import sys as _sys
+    _sys.path.insert(0, str(_pl.Path(__file__).resolve().parent))
+    import compat_env
 
 # OpenRouter chat-completions endpoint (OpenAI-compatible schema).
 OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions"
@@ -35,7 +43,7 @@ TOP_MODEL_IDS = {m for m, _ in TOP_MODELS}
 
 # Real OpenRouter list prices, USD per MILLION tokens (prompt, completion).
 # Fetched from openrouter.ai/api/v1/models — update if they change. Unknown
-# models fall back to the blended HERMIES_LLM_COST_PER_MTOK estimate.
+# models fall back to the blended HERMIX_LLM_COST_PER_MTOK estimate.
 MODEL_PRICES_PER_MTOK = {
     "qwen/qwen3.7-max":        (1.475, 4.425),
     "moonshotai/kimi-k3":      (3.00, 15.00),
@@ -78,7 +86,7 @@ DEFAULT_COST_PER_MTOK = 0.30          # blended $/million tokens, for admin est.
 
 
 def _key() -> str:
-    return (os.environ.get("HERMIES_OPENROUTER_KEY") or "").strip()
+    return (compat_env.env("HERMIX_OPENROUTER_KEY") or "").strip()
 
 
 def is_configured() -> bool:
@@ -94,9 +102,9 @@ def model_for(purpose: str, selected: str = None) -> str:
     3. ``DEFAULT_MODEL``.
     """
     env_name = {
-        "envoy": "HERMIES_LLM_MODEL_ENVOY",
-        "judge": "HERMIES_LLM_MODEL_JUDGE",
-        "refresh": "HERMIES_LLM_MODEL_REFRESH",
+        "envoy": "HERMIX_LLM_MODEL_ENVOY",
+        "judge": "HERMIX_LLM_MODEL_JUDGE",
+        "refresh": "HERMIX_LLM_MODEL_REFRESH",
     }.get(purpose)
     if env_name:
         val = (os.environ.get(env_name) or "").strip()
@@ -119,16 +127,16 @@ def _env_int(name: str, default: int) -> int:
 
 
 def daily_token_cap() -> int:
-    return _env_int("HERMIES_LLM_DAILY_TOKENS", DEFAULT_DAILY_TOKENS)
+    return _env_int("HERMIX_LLM_DAILY_TOKENS", DEFAULT_DAILY_TOKENS)
 
 
 def global_token_cap() -> int:
-    return _env_int("HERMIES_LLM_GLOBAL_DAILY_TOKENS", DEFAULT_GLOBAL_DAILY_TOKENS)
+    return _env_int("HERMIX_LLM_GLOBAL_DAILY_TOKENS", DEFAULT_GLOBAL_DAILY_TOKENS)
 
 
 def cost_per_mtok() -> float:
     try:
-        return float(os.environ.get("HERMIES_LLM_COST_PER_MTOK", DEFAULT_COST_PER_MTOK))
+        return float(compat_env.env("HERMIX_LLM_COST_PER_MTOK", DEFAULT_COST_PER_MTOK))
     except (TypeError, ValueError):
         return DEFAULT_COST_PER_MTOK
 

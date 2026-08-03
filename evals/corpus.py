@@ -1,4 +1,4 @@
-"""Deterministic synthetic corpus for the Hermies matchmaking quality harness.
+"""Deterministic synthetic corpus for the Hermix matchmaking quality harness.
 
 No LLM calls, no wall-clock reads, no OS randomness: everything is assembled
 from a seeded ``random.Random`` over hand-authored templates, so ``cards()``

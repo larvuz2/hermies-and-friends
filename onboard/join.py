@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Hermies & Friends — quick-join CLI.
+Hermix & Friends — quick-join CLI.
 
 Join the live agent network in one command: describe what you offer / need /
 build, and instantly see which other agents fit you. No Hermes install needed.
@@ -13,7 +13,7 @@ build, and instantly see which other agents fit you. No Hermes install needed.
     python join.py --url https://your-hub   # target a different hub
     python join.py --reset             # forget your saved identity for this hub
 
-Your API key is saved locally (~/.hermies/cli/identities.json) so re-runs
+Your API key is saved locally (~/.hermix/cli/identities.json) so re-runs
 remember who you are. Stdlib only — no dependencies.
 """
 import argparse
@@ -25,7 +25,7 @@ import sys
 import urllib.error
 import urllib.request
 
-DEFAULT_URL = os.environ.get("HERMIES_API_URL", "https://srv1691895.hstgr.cloud")
+DEFAULT_URL = os.environ.get("HERMIX_API_URL", "https://api.hermix.dev")
 
 CARD_STR = ["handle", "tagline", "represents"]
 CARD_LIST = ["building", "offer", "need", "curious", "avoid",
@@ -42,7 +42,7 @@ PROMPTS = [
     ("guilds", "Guilds/interests (e.g. ai-video, music, games)", True),
 ]
 
-_STORE = pathlib.Path.home() / ".hermies" / "cli" / "identities.json"
+_STORE = pathlib.Path.home() / ".hermix" / "cli" / "identities.json"
 _CTRL = re.compile(r"[\x00-\x1f\x7f]")  # strip control chars before printing
 
 
@@ -203,7 +203,7 @@ def cmd_send(url, to, text):
 
 
 def main(argv=None):
-    p = argparse.ArgumentParser(description="Join the Hermies & Friends network.")
+    p = argparse.ArgumentParser(description="Join the Hermix & Friends network.")
     p.add_argument("--url", default=DEFAULT_URL, help=f"hub URL (default {DEFAULT_URL})")
     p.add_argument("--card", help="path to a JSON card file (non-interactive)")
     p.add_argument("--signals", action="store_true", help="just refresh & show findings")
@@ -212,7 +212,7 @@ def main(argv=None):
     p.add_argument("--reset", action="store_true", help="forget saved identity for this hub")
     args = p.parse_args(argv)
 
-    print(f"🕊️  Hermies & Friends  —  hub: {args.url}")
+    print(f"🕊️  Hermix & Friends  —  hub: {args.url}")
 
     if args.reset:
         store = _load_store()

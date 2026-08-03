@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Hermies activation supervisor.
+# Hermix activation supervisor.
 #
 # WHY THIS EXISTS
 # ---------------
@@ -18,17 +18,17 @@
 #   * one activation attempt per version, one rollback, then a cooldown
 #   * it never edits code, never runs anything the hub sends, only git + hermes
 #
-# Install:  hermies-activate.sh --install     (writes the systemd timer)
-# Run once: hermies-activate.sh
+# Install:  hermix-activate.sh --install     (writes the systemd timer)
+# Run once: hermix-activate.sh
 set -euo pipefail
 
 HERMES_HOME="${HERMES_HOME:-/root/.hermes}"
-PLUGIN_DIR="${HERMIES_PLUGIN_DIR:-$HERMES_HOME/plugins/hermies}"
-STATE_DIR="$HERMES_HOME/hermies"
+PLUGIN_DIR="${HERMIX_PLUGIN_DIR:-$HERMES_HOME/plugins/hermix}"
+STATE_DIR="$HERMES_HOME/hermix"
 STATE="$STATE_DIR/activation.json"
-LOG_TAG="hermies-activate"
-IDLE_MINUTES="${HERMIES_IDLE_MINUTES:-10}"     # human quiet for this long
-MAX_DEFER_HOURS="${HERMIES_MAX_DEFER_HOURS:-48}"
+LOG_TAG="hermix-activate"
+IDLE_MINUTES="${HERMIX_IDLE_MINUTES:-10}"     # human quiet for this long
+MAX_DEFER_HOURS="${HERMIX_MAX_DEFER_HOURS:-48}"
 
 log() { echo "[$LOG_TAG] $*"; }
 
@@ -90,9 +90,9 @@ print("1" if rel.get("bridge_changed", True) else "0")
 PY
 }
 
-sidecar_installed() { systemctl list-unit-files 2>/dev/null | grep -q '^hermies-sidecar'; }
-restart_sidecar()  { systemctl restart hermies-sidecar 2>/dev/null; sleep 5; }
-sidecar_healthy()  { systemctl is-active --quiet hermies-sidecar 2>/dev/null; }
+sidecar_installed() { systemctl list-unit-files 2>/dev/null | grep -q '^hermix-sidecar'; }
+restart_sidecar()  { systemctl restart hermix-sidecar 2>/dev/null; sleep 5; }
+sidecar_healthy()  { systemctl is-active --quiet hermix-sidecar 2>/dev/null; }
 
 activate() {
   local target="$1" previous="$2" hb needs_gateway
@@ -179,21 +179,21 @@ install_units() {
   # is invisible to the user, unlike restarting their Hermes gateway.
   local py
   py="$(command -v python3 || echo /usr/bin/python3)"
-  cat > /etc/systemd/system/hermies-sidecar.service <<EOF
+  cat > /etc/systemd/system/hermix-sidecar.service <<EOF
 [Unit]
-Description=Hermies sidecar (matchmaking + envoy engine)
+Description=Hermix sidecar (matchmaking + envoy engine)
 After=network-online.target
 
 [Service]
 Type=simple
 Environment=HERMES_HOME=$HERMES_HOME
-Environment=HERMIES_HOME=$HERMES_HOME/hermies
-Environment=HERMIES_LLM=hub
+Environment=HERMIX_HOME=$HERMES_HOME/hermix
+Environment=HERMIX_LLM=hub
 # The API key + hub URL live here. Without this the sidecar starts but has no
 # credentials and can do nothing — which is exactly how it must NOT fail.
 EnvironmentFile=-$HERMES_HOME/.env
 WorkingDirectory=$(dirname "$PLUGIN_DIR")
-ExecStart=$py -m hermies.sidecar
+ExecStart=$py -m hermix.sidecar
 Restart=always
 RestartSec=10
 
@@ -201,13 +201,13 @@ RestartSec=10
 WantedBy=multi-user.target
 EOF
   systemctl daemon-reload
-  systemctl enable --now hermies-sidecar.service 2>/dev/null \
-    && log "installed hermies-sidecar.service" \
+  systemctl enable --now hermix-sidecar.service 2>/dev/null \
+    && log "installed hermix-sidecar.service" \
     || log "sidecar service not started (the in-gateway plugin keeps working)"
 
-  cat > /etc/systemd/system/hermies-activate.service <<EOF
+  cat > /etc/systemd/system/hermix-activate.service <<EOF
 [Unit]
-Description=Hermies activation supervisor (activates approved releases)
+Description=Hermix activation supervisor (activates approved releases)
 After=network.target
 
 [Service]
@@ -215,9 +215,9 @@ Type=oneshot
 Environment=HERMES_HOME=$HERMES_HOME
 ExecStart=$(readlink -f "$0")
 EOF
-  cat > /etc/systemd/system/hermies-activate.timer <<'EOF'
+  cat > /etc/systemd/system/hermix-activate.timer <<'EOF'
 [Unit]
-Description=Check for an approved Hermies release
+Description=Check for an approved Hermix release
 
 [Timer]
 OnBootSec=10min
@@ -228,8 +228,8 @@ RandomizedDelaySec=20min
 WantedBy=timers.target
 EOF
   systemctl daemon-reload
-  systemctl enable --now hermies-activate.timer
-  log "installed hermies-activate.timer (hourly, jittered)"
+  systemctl enable --now hermix-activate.timer
+  log "installed hermix-activate.timer (hourly, jittered)"
 }
 
 case "${1:-}" in

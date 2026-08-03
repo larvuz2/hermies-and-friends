@@ -1,4 +1,4 @@
-"""ACCEPTANCE E2E — two live agents meet on the real Hermies backend.
+"""ACCEPTANCE E2E — two live agents meet on the real Hermix backend.
 
 This is the product's definition of done. It boots the real backend as a
 subprocess, then drives two independent agents ("gus-herald" and "mira-herald")
@@ -25,18 +25,18 @@ import sys
 import tempfile
 import time
 
-# --- make the plugin importable as the canonical `hermies` package ----------
+# --- make the plugin importable as the canonical `hermix` package ----------
 ROOT = pathlib.Path(__file__).resolve().parent.parent
-if "hermies" not in sys.modules:
+if "hermix" not in sys.modules:
     _spec = importlib.util.spec_from_file_location(
-        "hermies", ROOT / "__init__.py", submodule_search_locations=[str(ROOT)]
+        "hermix", ROOT / "__init__.py", submodule_search_locations=[str(ROOT)]
     )
     _mod = importlib.util.module_from_spec(_spec)
-    sys.modules["hermies"] = _mod
+    sys.modules["hermix"] = _mod
     _spec.loader.exec_module(_mod)
 
-from hermies import profile, envoy  # noqa: E402
-from hermies.client import HttpTransport, HermiesClient  # noqa: E402
+from hermix import profile, envoy  # noqa: E402
+from hermix.client import HttpTransport, HermixClient  # noqa: E402
 
 HOST = "127.0.0.1"
 PORT = 8787
@@ -62,21 +62,21 @@ def banner(text: str) -> None:
 # ---------------------------------------------------------------------------
 def start_backend():
     """Launch `python -m uvicorn app:app --port 8787` with cwd=backend/ and a
-    temp HERMIES_DB. Poll the TCP port until it accepts connections."""
+    temp HERMIX_DB. Poll the TCP port until it accepts connections."""
     if not (BACKEND_DIR / "app.py").exists():
         raise RuntimeError(
             f"backend/app.py not found under {BACKEND_DIR}. The backend is built "
             "by a separate agent; run this once app:app exists."
         )
 
-    tmp_db = tempfile.NamedTemporaryFile(prefix="hermies-e2e-", suffix=".db", delete=False)
+    tmp_db = tempfile.NamedTemporaryFile(prefix="hermix-e2e-", suffix=".db", delete=False)
     tmp_db.close()
 
     env = dict(os.environ)
-    env["HERMIES_DB"] = tmp_db.name
+    env["HERMIX_DB"] = tmp_db.name
     env.setdefault("PYTHONIOENCODING", "utf-8")
 
-    say("harness", f"starting backend (HERMIES_DB={tmp_db.name})")
+    say("harness", f"starting backend (HERMIX_DB={tmp_db.name})")
     proc = subprocess.Popen(
         [sys.executable, "-m", "uvicorn", "app:app", "--host", HOST, "--port", str(PORT),
          "--log-level", "warning"],
@@ -127,7 +127,7 @@ def make_agent(handle, represents, offer, need, guilds):
 
     # Each agent now talks through ITS OWN keyed transport instance.
     transport = HttpTransport(BASE_URL, api_key)
-    client = HermiesClient(transport)
+    client = HermixClient(transport)
 
     card = profile.PublicCard(
         handle=handle, represents=represents,

@@ -1,7 +1,7 @@
 """Unit tests for the semantic matching engine (engine.py + vindex + embeddings).
 
 These MUST run without fastembed installed: every test forces the deterministic
-hashing fallback encoder via HERMIES_FORCE_FALLBACK_EMBED=1, so no model is
+hashing fallback encoder via HERMIX_FORCE_FALLBACK_EMBED=1, so no model is
 downloaded and results are reproducible.
 """
 import os
@@ -19,9 +19,9 @@ DAY = 86400.0
 @pytest.fixture()
 def env(tmp_path, monkeypatch):
     """Fresh sqlite DB + fallback encoder; returns (engine_mod, db_mod)."""
-    monkeypatch.setenv("HERMIES_FORCE_FALLBACK_EMBED", "1")
+    monkeypatch.setenv("HERMIX_FORCE_FALLBACK_EMBED", "1")
     db_file = tmp_path / f"engine-{uuid.uuid4().hex}.db"
-    monkeypatch.setenv("HERMIES_DB", str(db_file))
+    monkeypatch.setenv("HERMIX_DB", str(db_file))
     for mod in ("matching", "vindex", "embeddings", "db", "engine"):
         sys.modules.pop(mod, None)
     import embeddings

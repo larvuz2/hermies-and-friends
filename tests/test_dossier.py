@@ -5,12 +5,12 @@ import json
 
 import pytest
 
-from hermies import dossier
+from hermix import dossier
 
 
 @pytest.fixture(autouse=True)
 def _isolated_home(tmp_path, monkeypatch):
-    monkeypatch.setenv("HERMIES_HOME", str(tmp_path))
+    monkeypatch.setenv("HERMIX_HOME", str(tmp_path))
     return tmp_path
 
 
@@ -26,10 +26,10 @@ def test_fresh_load_has_canonical_shape():
 
 
 def test_add_fact_roundtrips_to_disk():
-    dossier.add_fact("ring0", "goals", "ship hermies v1")
+    dossier.add_fact("ring0", "goals", "ship hermix v1")
     dossier.add_fact("ring0", "projects", "the embassy plugin")
     d = dossier.load()
-    assert d["ring0"]["goals"] == ["ship hermies v1"]
+    assert d["ring0"]["goals"] == ["ship hermix v1"]
     assert d["ring0"]["projects"] == ["the embassy plugin"]
 
 

@@ -24,7 +24,7 @@ Two facts govern everything here:
    why we deliberately write NO credentials into it (the design sketch allowed
    hub credentials; not needing them at all is strictly safer). The toolset
    lockdown still matters, because a human can always run
-   ``hermes -p hermies chat`` and meet this agent directly.
+   ``hermes -p hermix chat`` and meet this agent directly.
 
 The envoy can never write its own briefing. If it could, a hostile counterpart
 could talk it into recording something and disclosing it three digs later.
@@ -35,9 +35,9 @@ import logging
 import os
 import pathlib
 
-log = logging.getLogger("hermies.envoy_profile")
+log = logging.getLogger("hermix.envoy_profile")
 
-PROFILE_NAME = "hermies"
+PROFILE_NAME = "hermix"
 
 # Toolsets an envoy must never hold. `terminal`, `file` and `code_execution`
 # would each reach the dossier directly; `browser`/`web` and `delegation` are
@@ -57,9 +57,9 @@ DENIED_TOOLSETS = [
 # briefing — the two things that are meant to differ.
 # --------------------------------------------------------------------------- #
 SOUL_TEXT = """\
-# Hermies Envoy
+# Hermix Envoy
 
-I am an envoy on the Hermies and Friends network.
+I am an envoy on the Hermix network.
 
 ## Who I am
 
@@ -149,13 +149,13 @@ def _default_hermes_root() -> pathlib.Path:
 def profile_dir() -> pathlib.Path:
     """Where the envoy profile lives.
 
-    HERMIES_HOME wins when set, which keeps tests (and any custom deployment)
+    HERMIX_HOME wins when set, which keeps tests (and any custom deployment)
     entirely off the developer's real ~/.hermes.
     """
-    override = os.environ.get("HERMIES_ENVOY_PROFILE_DIR")
+    override = os.environ.get("HERMIX_ENVOY_PROFILE_DIR")
     if override:
         return pathlib.Path(override)
-    base = os.environ.get("HERMIES_HOME")
+    base = os.environ.get("HERMIX_HOME")
     if base:
         return pathlib.Path(base) / "profiles" / PROFILE_NAME
     try:
@@ -194,7 +194,7 @@ def config_yaml() -> str:
     """
     denied = "\n".join(f"    - {t}" for t in DENIED_TOOLSETS)
     return (
-        "# Managed by the hermies plugin. Edits are reverted on the next check.\n"
+        "# Managed by the hermix plugin. Edits are reverted on the next check.\n"
         "#\n"
         "# This profile represents its human to STRANGERS, so it holds no tools\n"
         "# that could reach their private data. Hermes profiles are not a\n"
@@ -227,7 +227,7 @@ def _create_via_hermes() -> bool:
     NEVER clones: cloning would copy the principal's config, .env and skills
     into the envoy — the exact opposite of the point. no_skills keeps Hermes
     from seeding bundled skills (we install our own), and no_alias avoids
-    creating a ~/.local/bin/hermies shim for a profile that is a store rather
+    creating a ~/.local/bin/hermix shim for a profile that is a store rather
     than something the user runs.
     """
     try:
@@ -238,7 +238,7 @@ def _create_via_hermes() -> bool:
         if profile_exists(PROFILE_NAME):
             return True
         create_profile(PROFILE_NAME, no_alias=True, no_skills=True,
-                       description="Hermies network envoy (managed by the plugin)")
+                       description="Hermix network envoy (managed by the plugin)")
         return True
     except FileExistsError:
         return True
@@ -315,7 +315,7 @@ def _has_secret(path: pathlib.Path) -> bool:
 
 
 def verify() -> list:
-    """Report problems without fixing them (used by /hermies doctor)."""
+    """Report problems without fixing them (used by /hermix doctor)."""
     problems = []
     d = profile_dir()
     if not d.is_dir():
@@ -355,7 +355,7 @@ def verify() -> list:
 
 
 def install_skills(source_dir) -> int:
-    """Copy the hermies-* skills into the envoy profile.
+    """Copy the hermix-* skills into the envoy profile.
 
     Best effort and idempotent: the skills describe how to behave on the
     network, so they belong with the envoy identity rather than only in the
@@ -365,7 +365,7 @@ def install_skills(source_dir) -> int:
     try:
         src = pathlib.Path(source_dir)
         dst_root = profile_dir() / "skills"
-        for skill in sorted(src.glob("hermies-*/SKILL.md")):
+        for skill in sorted(src.glob("hermix-*/SKILL.md")):
             dst = dst_root / skill.parent.name / "SKILL.md"
             text = skill.read_text(encoding="utf-8")
             if not dst.is_file() or dst.read_text(encoding="utf-8") != text:
@@ -377,7 +377,7 @@ def install_skills(source_dir) -> int:
 
 
 def info() -> dict:
-    """Small summary for /hermies status and the doctor."""
+    """Small summary for /hermix status and the doctor."""
     d = profile_dir()
     return {
         "path": str(d),

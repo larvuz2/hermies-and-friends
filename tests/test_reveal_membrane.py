@@ -16,9 +16,9 @@ import json
 
 import pytest
 
-from hermies import dossier, envoy, profile, commands, tools
-from hermies.client import HermiesClient
-from hermies.mock_backend import MockBackend
+from hermix import dossier, envoy, profile, commands, tools
+from hermix.client import HermixClient
+from hermix.mock_backend import MockBackend
 
 RING0_SENTINELS = ("SENTINEL_RING0", "SENTINEL_EXPENSE")
 CONTACT_SENTINELS = ("SENTINEL_NAME", "SENTINEL_EMAIL", "SENTINEL_SOCIAL")
@@ -29,7 +29,7 @@ ALL_SENTINELS = RING0_SENTINELS + CONTACT_SENTINELS
 def stuffed_home(tmp_path, monkeypatch):
     """A dossier full of sentinels that must never leak, plus one clean Ring-1
     fact that legitimately may be shared."""
-    monkeypatch.setenv("HERMIES_HOME", str(tmp_path))
+    monkeypatch.setenv("HERMIX_HOME", str(tmp_path))
     dossier.add_fact("ring0", "notes", "SENTINEL_RING0 therapist notes")
     dossier.add_fact("ring0", "expenses", "SENTINEL_EXPENSE $999/mo render farm")
     dossier.set_contact(name="SENTINEL_NAME Jane Doe",
@@ -88,8 +88,8 @@ def test_envoy_reply_prompt_never_sees_sentinels(stuffed_home):
 
 def test_discreet_ask_text_carries_no_sentinels(stuffed_home):
     b = MockBackend()
-    h = _handlers(HermiesClient(b))
-    out = json.loads(h["hermies_ask"]({"to": "mira", "question": "what stack?"}))
+    h = _handlers(HermixClient(b))
+    out = json.loads(h["hermix_ask"]({"to": "mira", "question": "what stack?"}))
     blob = json.dumps(b.read_thread(out["thread_id"])["messages"])
     for s in ALL_SENTINELS:
         assert s not in blob
@@ -97,8 +97,8 @@ def test_discreet_ask_text_carries_no_sentinels(stuffed_home):
 
 def test_reveal_request_without_contact_omits_contact(stuffed_home):
     b = MockBackend()
-    h = _handlers(HermiesClient(b))
-    out = json.loads(h["hermies_reveal_request"](
+    h = _handlers(HermixClient(b))
+    out = json.loads(h["hermix_reveal_request"](
         {"to": "mira", "context": "we should meet", "include_contact": False}))
     assert out["included_contact"] is False
     blob = json.dumps(b.read_thread(out["thread_id"])["messages"])
@@ -107,8 +107,8 @@ def test_reveal_request_without_contact_omits_contact(stuffed_home):
 
 
 def test_summary_view_hides_contact(stuffed_home):
-    h = _handlers(HermiesClient(MockBackend()))
-    out = h["hermies_dossier"]({"view": "summary"})
+    h = _handlers(HermixClient(MockBackend()))
+    out = h["hermix_dossier"]({"view": "summary"})
     for s in CONTACT_SENTINELS:
         assert s not in out
     summary = json.loads(out)["summary"]
@@ -120,7 +120,7 @@ def test_summary_view_hides_contact(stuffed_home):
 # 2. Reveal consent — the human-approval gate
 # --------------------------------------------------------------------------- #
 def test_gate_blocks_reveal_request_with_contact_unless_approved():
-    blocked = commands.install_gate(tool_name="hermies_reveal_request",
+    blocked = commands.install_gate(tool_name="hermix_reveal_request",
                                     args={"to": "x", "include_contact": True})
     assert blocked["action"] == "block"
     assert "human_approved=true" in blocked["message"]
@@ -128,25 +128,25 @@ def test_gate_blocks_reveal_request_with_contact_unless_approved():
 
     # With the flag: allowed.
     assert commands.install_gate(
-        tool_name="hermies_reveal_request",
+        tool_name="hermix_reveal_request",
         args={"to": "x", "include_contact": True, "human_approved": True}) is None
 
     # Without contact: never gated.
     assert commands.install_gate(
-        tool_name="hermies_reveal_request",
+        tool_name="hermix_reveal_request",
         args={"to": "x", "include_contact": False}) is None
 
 
 def test_gate_blocks_reveal_respond_approve_unless_approved():
-    blocked = commands.install_gate(tool_name="hermies_reveal_respond",
+    blocked = commands.install_gate(tool_name="hermix_reveal_respond",
                                     args={"thread_id": "t", "approve": True})
     assert blocked["action"] == "block" and "human_approved=true" in blocked["message"]
     assert commands.install_gate(
-        tool_name="hermies_reveal_respond",
+        tool_name="hermix_reveal_respond",
         args={"thread_id": "t", "approve": True, "human_approved": True}) is None
     # Declining is never gated.
     assert commands.install_gate(
-        tool_name="hermies_reveal_respond",
+        tool_name="hermix_reveal_respond",
         args={"thread_id": "t", "approve": False}) is None
 
 
@@ -155,10 +155,10 @@ def test_gate_blocks_reveal_respond_approve_unless_approved():
 # --------------------------------------------------------------------------- #
 def test_reveal_request_embeds_contact_only_with_human_approved(stuffed_home):
     b = MockBackend()
-    h = _handlers(HermiesClient(b))
+    h = _handlers(HermixClient(b))
 
     # include_contact but NO human_approved -> handler still omits contact.
-    out = json.loads(h["hermies_reveal_request"](
+    out = json.loads(h["hermix_reveal_request"](
         {"to": "mira", "context": "meet", "include_contact": True}))
     assert out["included_contact"] is False
     blob = json.dumps(b.read_thread(out["thread_id"])["messages"])
@@ -166,7 +166,7 @@ def test_reveal_request_embeds_contact_only_with_human_approved(stuffed_home):
         assert s not in blob
 
     # Both flags -> contact is embedded.
-    out = json.loads(h["hermies_reveal_request"](
+    out = json.loads(h["hermix_reveal_request"](
         {"to": "mira", "context": "meet", "include_contact": True,
          "human_approved": True}))
     assert out["included_contact"] is True
@@ -176,28 +176,28 @@ def test_reveal_request_embeds_contact_only_with_human_approved(stuffed_home):
 
 def test_reveal_respond_releases_contact_only_with_human_approved(stuffed_home):
     b = MockBackend()
-    h = _handlers(HermiesClient(b))
+    h = _handlers(HermixClient(b))
     tid = b.open_thread("mira", "reveal_request", "meet")["thread_id"]
 
     # approve without human_approved -> refused, no contact in the thread.
-    r = json.loads(h["hermies_reveal_respond"]({"thread_id": tid, "approve": True}))
+    r = json.loads(h["hermix_reveal_respond"]({"thread_id": tid, "approve": True}))
     assert r["success"] is False
     assert "SENTINEL_EMAIL" not in json.dumps(b.read_thread(tid)["messages"])
 
     # approve with human_approved -> contact released.
-    r = json.loads(h["hermies_reveal_respond"](
+    r = json.loads(h["hermix_reveal_respond"](
         {"thread_id": tid, "approve": True, "human_approved": True}))
     assert r["approved"] is True
     assert "SENTINEL_EMAIL" in json.dumps(b.read_thread(tid)["messages"])
 
 
 def test_reveal_respond_honours_never_share(tmp_path, monkeypatch):
-    monkeypatch.setenv("HERMIES_HOME", str(tmp_path))
+    monkeypatch.setenv("HERMIX_HOME", str(tmp_path))
     dossier.set_contact(name="Jane", email="jane@x.com", never_share=True)
     b = MockBackend()
-    h = _handlers(HermiesClient(b))
+    h = _handlers(HermixClient(b))
     tid = b.open_thread("mira", "reveal_request", "meet")["thread_id"]
-    r = json.loads(h["hermies_reveal_respond"](
+    r = json.loads(h["hermix_reveal_respond"](
         {"thread_id": tid, "approve": True, "human_approved": True}))
     assert r["success"] is False
     assert "jane@x.com" not in json.dumps(b.read_thread(tid)["messages"])

@@ -6,7 +6,7 @@ when the network is thin. It must never become a status feed.
 """
 import pytest
 
-from hermies import matchmaker, profile
+from hermix import matchmaker, profile
 
 HOUR = 3600
 DAY = 86400
@@ -15,8 +15,8 @@ T0 = 1_000_000.0
 
 @pytest.fixture(autouse=True)
 def _isolate(tmp_path, monkeypatch):
-    monkeypatch.setenv("HERMIES_HOME", str(tmp_path))
-    monkeypatch.setenv("HERMIES_QUIET_HOURS", "")
+    monkeypatch.setenv("HERMIX_HOME", str(tmp_path))
+    monkeypatch.setenv("HERMIX_QUIET_HOURS", "")
 
 
 def _card():
@@ -49,13 +49,13 @@ def test_fires_once_after_24h_then_never_again():
 
 
 def test_can_be_disabled(monkeypatch):
-    monkeypatch.setenv("HERMIES_CHECKIN_AFTER_HOURS", "0")
+    monkeypatch.setenv("HERMIX_CHECKIN_AFTER_HOURS", "0")
     st = _started()
     assert matchmaker._maybe_checkin(st, _card(), T0 + 10 * DAY) is None
 
 
 def test_window_is_tunable_from_the_hub(monkeypatch):
-    monkeypatch.setenv("HERMIES_CHECKIN_AFTER_HOURS", "2")
+    monkeypatch.setenv("HERMIX_CHECKIN_AFTER_HOURS", "2")
     st = _started()
     assert matchmaker._maybe_checkin(st, _card(), T0 + 3 * HOUR) is not None
 
@@ -103,8 +103,8 @@ def test_mentions_a_standing_intent_when_there_is_one():
 def test_it_reaches_the_human_even_when_the_bar_is_high(monkeypatch):
     """Its whole purpose is to break silence — the interrupt bar must not
     swallow it."""
-    monkeypatch.setenv("HERMIES_INTERRUPT_THRESHOLD", "9.9")
-    monkeypatch.setenv("HERMIES_QUIET_HOURS", "0-23")
+    monkeypatch.setenv("HERMIX_INTERRUPT_THRESHOLD", "9.9")
+    monkeypatch.setenv("HERMIX_QUIET_HOURS", "0-23")
     st = _started()
     st["notify_log"] = [T0 + 24 * HOUR, T0 + 24.5 * HOUR]   # battery charged
     it = matchmaker._maybe_checkin(st, _card(), T0 + 25 * HOUR)

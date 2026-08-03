@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Hermies hub — one-shot deploy for a fresh Ubuntu VPS (tested on Ubuntu 22.04/24.04,
+# Hermix hub — one-shot deploy for a fresh Ubuntu VPS (tested on Ubuntu 22.04/24.04,
 # e.g. Hostinger KVM). Run as root from the VPS terminal:
 #
 #   With a domain (recommended — gives you HTTPS):
@@ -14,8 +14,8 @@ set -euo pipefail
 DOMAIN="${1:-}"
 EMAIL="${2:-}"
 REPO="https://github.com/larvuz2/hermies-and-friends"
-APP_DIR="/opt/hermies"
-DATA_DIR="/var/lib/hermies"
+APP_DIR="/opt/hermix"
+DATA_DIR="/var/lib/hermix"
 PORT=8787
 
 # Is another web server already on port 80 (Caddy/Apache proxying other apps)?
@@ -46,14 +46,14 @@ python3 -m venv "$APP_DIR/venv"
 mkdir -p "$DATA_DIR"
 
 echo "==> [4/6] systemd service"
-cat > /etc/systemd/system/hermies.service <<EOF
+cat > /etc/systemd/system/hermix.service <<EOF
 [Unit]
-Description=Hermies and Friends hub (FastAPI)
+Description=Hermix hub (FastAPI)
 After=network.target
 
 [Service]
 WorkingDirectory=$APP_DIR/backend
-Environment=HERMIES_DB=$DATA_DIR/hermies.db
+Environment=HERMIX_DB=$DATA_DIR/hermix.db
 ExecStart=$APP_DIR/venv/bin/uvicorn app:app --host 127.0.0.1 --port $PORT
 Restart=always
 RestartSec=3
@@ -62,22 +62,22 @@ RestartSec=3
 WantedBy=multi-user.target
 EOF
 systemctl daemon-reload
-systemctl enable --now hermies
-systemctl restart hermies
+systemctl enable --now hermix
+systemctl restart hermix
 
 echo "==> [4b/6] daily database backup"
 # The database is the only copy of every account key, handle and card. This is
 # installed here rather than left as a manual step precisely because a backup
 # nobody remembered to set up is the same as no backup.
 apt-get install -y --no-install-recommends sqlite3 >/dev/null 2>&1 || true
-cat > /etc/cron.daily/hermies-backup <<EOF
+cat > /etc/cron.daily/hermix-backup <<EOF
 #!/bin/sh
-HERMIES_DB=$DATA_DIR/hermies.db exec sh $APP_DIR/deploy/hostinger/backup.sh
+HERMIX_DB=$DATA_DIR/hermix.db exec sh $APP_DIR/deploy/hostinger/backup.sh
 EOF
-chmod +x /etc/cron.daily/hermies-backup
+chmod +x /etc/cron.daily/hermix-backup
 # Take one immediately so a fresh deploy is never a day away from its first
 # backup, and so a broken setup is discovered now instead of after an incident.
-if HERMIES_DB="$DATA_DIR/hermies.db" sh "$APP_DIR/deploy/hostinger/backup.sh"; then
+if HERMIX_DB="$DATA_DIR/hermix.db" sh "$APP_DIR/deploy/hostinger/backup.sh"; then
   echo "    first backup taken; restore with deploy/hostinger/restore.sh"
 else
   echo "    WARNING: the first backup FAILED — fix this before going public."
@@ -98,7 +98,7 @@ if [ -n "$PORT80_OWNER" ]; then
 else
 echo "==> [5/6] nginx reverse proxy"
 SERVER_NAME="${DOMAIN:-_}"
-cat > /etc/nginx/sites-available/hermies <<EOF
+cat > /etc/nginx/sites-available/hermix <<EOF
 server {
     listen 80;
     server_name $SERVER_NAME;
@@ -111,7 +111,7 @@ server {
     }
 }
 EOF
-ln -sf /etc/nginx/sites-available/hermies /etc/nginx/sites-enabled/hermies
+ln -sf /etc/nginx/sites-available/hermix /etc/nginx/sites-enabled/hermix
 rm -f /etc/nginx/sites-enabled/default
 nginx -t
 # `restart` (not `reload`) so this works whether or not nginx is already running.
@@ -137,13 +137,13 @@ echo
 BASE="${DOMAIN:+https://$DOMAIN}"
 BASE="${BASE:-http://$(curl -fsS -4 ifconfig.me 2>/dev/null || hostname -I | awk '{print $1}')}"
 echo "==============================================================="
-echo " Hermies hub is LIVE:  $BASE"
+echo " Hermix hub is LIVE:  $BASE"
 echo
 echo " Point every agent at it — in each machine's ~/.hermes/.env:"
-echo "   HERMIES_API_URL=$BASE"
+echo "   HERMIX_API_URL=$BASE"
 echo
 echo " Useful:"
-echo "   systemctl status hermies      # service status"
-echo "   journalctl -u hermies -f      # live logs"
+echo "   systemctl status hermix      # service status"
+echo "   journalctl -u hermix -f      # live logs"
 echo "   re-run this script            # update to latest main"
 echo "==============================================================="

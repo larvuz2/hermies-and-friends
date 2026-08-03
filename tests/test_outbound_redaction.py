@@ -5,7 +5,7 @@ the threat is different: not injection, but one of the HUMAN's secrets ending
 up in a message to another agent.
 
 It is realistic rather than theoretical. A user can write anything in a dossier
-note or a card field, and `hermies_send_message` lets the private agent — which
+note or a card field, and `hermix_send_message` lets the private agent — which
 holds full context — compose outbound text directly. Prompt rules are not a
 control; this deterministic filter underneath is.
 """
@@ -13,9 +13,9 @@ import json
 
 import pytest
 
-from hermies import profile, sanitize, tools
-from hermies.client import HermiesClient
-from hermies.mock_backend import MockBackend
+from hermix import profile, sanitize, tools
+from hermix.client import HermixClient
+from hermix.mock_backend import MockBackend
 
 # Entirely synthetic. Never build a fixture from a real credential, even
 # truncated: the prefix alone is enough to be a live secret.
@@ -24,7 +24,7 @@ KEY = "sk-or-v1-" + "0" * 56
 
 @pytest.fixture(autouse=True)
 def _isolate(tmp_path, monkeypatch):
-    monkeypatch.setenv("HERMIES_HOME", str(tmp_path))
+    monkeypatch.setenv("HERMIX_HOME", str(tmp_path))
 
 
 def _card():
@@ -101,7 +101,7 @@ def test_redactor_never_raises_on_junk():
 # --------------------------------------------------------------------------- #
 def test_thread_sends_are_redacted():
     backend = MockBackend()
-    client = HermiesClient(backend)
+    client = HermixClient(backend)
     tid = client.open_thread("mira-herald", "dig", "s")["thread_id"]
     client.send_thread(tid, f"sure, use {KEY} to try it")
     sent = backend.read_thread(tid)["messages"][0]["text"]
@@ -110,7 +110,7 @@ def test_thread_sends_are_redacted():
 
 def test_direct_messages_are_redacted():
     backend = MockBackend()
-    client = HermiesClient(backend)
+    client = HermixClient(backend)
     client.send_message("mira-herald", f"my key is {KEY}")
     assert backend._sent, "the mock recorded nothing to assert on"
     assert KEY not in backend._sent[0]["text"]
@@ -119,19 +119,19 @@ def test_direct_messages_are_redacted():
 
 def test_envoy_replies_to_inbound_are_redacted():
     backend = MockBackend()
-    client = HermiesClient(backend)
+    client = HermixClient(backend)
     client.post_reply("msg-1", f"here you go: {KEY}")
     assert all(KEY not in r.get("text", "") for r in backend._replies)
 
 
 def test_the_private_agents_own_message_tool_is_covered():
-    """hermies_send_message is the highest-risk path: the PRIVATE agent has
+    """hermix_send_message is the highest-risk path: the PRIVATE agent has
     full context and composes the text itself."""
     backend = MockBackend()
-    client = HermiesClient(backend)
+    client = HermixClient(backend)
     handlers = {s["name"]: s["handler"]
                 for s in tools.build(client, _card(), llm=None)}
-    handlers["hermies_send_message"]({"to": "mira-herald",
+    handlers["hermix_send_message"]({"to": "mira-herald",
                                       "text": f"the key is {KEY}"})
     assert backend._sent, "the tool never reached the wire"
     assert KEY not in json.dumps(backend._sent)
@@ -141,7 +141,7 @@ def test_the_private_agents_own_message_tool_is_covered():
 def test_a_broken_redactor_never_blocks_a_message(monkeypatch):
     """Failing closed here would silence the agent over a formatting bug."""
     backend = MockBackend()
-    client = HermiesClient(backend)
+    client = HermixClient(backend)
     monkeypatch.setattr(sanitize, "redact_secrets",
                         lambda t: (_ for _ in ()).throw(RuntimeError("boom")))
     tid = client.open_thread("mira-herald", "dig", "s")["thread_id"]

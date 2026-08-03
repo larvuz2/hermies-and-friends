@@ -8,15 +8,15 @@ import json
 
 import pytest
 
-from hermies import matchmaker, profile, tools
-from hermies.client import HermiesClient
-from hermies.mock_backend import MockBackend
+from hermix import matchmaker, profile, tools
+from hermix.client import HermixClient
+from hermix.mock_backend import MockBackend
 
 
 @pytest.fixture(autouse=True)
 def _isolate(tmp_path, monkeypatch):
-    monkeypatch.setenv("HERMIES_HOME", str(tmp_path))
-    monkeypatch.setenv("HERMIES_QUIET_HOURS", "")
+    monkeypatch.setenv("HERMIX_HOME", str(tmp_path))
+    monkeypatch.setenv("HERMIX_QUIET_HOURS", "")
 
 
 def _card():
@@ -83,9 +83,9 @@ def test_why_tool_returns_the_receipt():
     st = _finding(matchmaker.new_state())
     matchmaker.save_state(st)
     handlers = {s["name"]: s["handler"]
-                for s in tools.build(HermiesClient(MockBackend()), _card(),
+                for s in tools.build(HermixClient(MockBackend()), _card(),
                                      llm=lambda s, u, **k: "")}
-    res = json.loads(handlers["hermies_why"]({"finding_id": "abc123"}))
+    res = json.loads(handlers["hermix_why"]({"finding_id": "abc123"}))
     assert res["success"] and "WHY THIS FITS YOU" in res["receipt"]
 
 
@@ -107,13 +107,13 @@ def test_preview_shows_exactly_what_would_be_shared():
 def test_preview_sends_nothing():
     """The whole point: previewing must have no side effects on the network."""
     b = MockBackend()
-    client = HermiesClient(b)
+    client = HermixClient(b)
     st = _finding(matchmaker.new_state())
     matchmaker.save_state(st)
     handlers = {s["name"]: s["handler"]
                 for s in tools.build(client, _card(), llm=lambda s, u, **k: "")}
     before = len(b.list_threads()["threads"])
-    res = json.loads(handlers["hermies_intro_preview"]({"to": "mira-herald"}))
+    res = json.loads(handlers["hermix_intro_preview"]({"to": "mira-herald"}))
     assert res["success"] is True
     assert len(b.list_threads()["threads"]) == before, "preview must not open a thread"
 

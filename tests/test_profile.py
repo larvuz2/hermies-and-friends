@@ -1,6 +1,6 @@
 import json
 
-from hermies import profile
+from hermix import profile
 
 
 def test_public_dict_is_whitelisted(tmp_path, monkeypatch):
@@ -10,7 +10,7 @@ def test_public_dict_is_whitelisted(tmp_path, monkeypatch):
 
 
 def test_save_and_load_roundtrip(tmp_path, monkeypatch):
-    monkeypatch.setenv("HERMIES_HOME", str(tmp_path))
+    monkeypatch.setenv("HERMIX_HOME", str(tmp_path))
     card = profile.PublicCard(handle="gus-herald", represents="AI film", need=["collab"])
     path = profile.save_card(card)
     assert path.exists()
@@ -21,7 +21,7 @@ def test_save_and_load_roundtrip(tmp_path, monkeypatch):
 
 
 def test_load_ignores_unknown_keys_on_disk(tmp_path, monkeypatch):
-    monkeypatch.setenv("HERMIES_HOME", str(tmp_path))
+    monkeypatch.setenv("HERMIX_HOME", str(tmp_path))
     p = tmp_path / "profile.json"
     p.write_text(json.dumps({"handle": "x", "secret": "leak"}), encoding="utf-8")
     loaded = profile.load_card()

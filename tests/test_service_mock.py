@@ -1,6 +1,6 @@
-from hermies import profile, service, commands
-from hermies.client import HermiesClient
-from hermies.mock_backend import MockBackend
+from hermix import profile, service, commands
+from hermix.client import HermixClient
+from hermix.mock_backend import MockBackend
 
 
 def _card():
@@ -18,7 +18,7 @@ def fake_llm(system, user):
 
 
 def test_run_once_handles_inbound_and_injects_signals():
-    client = HermiesClient(MockBackend())
+    client = HermixClient(MockBackend())
     card = _card()
     client.publish_profile(card.public_dict())
 
@@ -27,11 +27,11 @@ def test_run_once_handles_inbound_and_injects_signals():
 
     assert summary["handled"] == 1          # the seeded inbound envoy query
     assert summary["signals"] >= 1          # findings from seeded agents
-    assert injected and "Hermies signals" in injected[0]
+    assert injected and "Hermix signals" in injected[0]
 
 
 def test_discover_returns_findings():
-    client = HermiesClient(MockBackend())
+    client = HermixClient(MockBackend())
     card = _card()
     handler = commands.make_handler(client, card, fake_llm)
     out = handler("discover")
@@ -42,10 +42,10 @@ def test_discover_returns_findings():
 def test_install_gate_blocks_unapproved():
     # Real pre_tool_call contract (hermes_cli/plugins.py): kwargs-only with
     # tool_name + args; block == {"action": "block", "message": ...}.
-    res = commands.install_gate(tool_name="hermies_install_skill", args={"name": "x"})
+    res = commands.install_gate(tool_name="hermix_install_skill", args={"name": "x"})
     assert res is not None and res["action"] == "block" and res["message"]
 
-    ok = commands.install_gate(tool_name="hermies_install_skill",
+    ok = commands.install_gate(tool_name="hermix_install_skill",
                                args={"name": "x", "approved": True})
     assert ok is None  # approved -> allowed
 
@@ -55,7 +55,7 @@ def test_install_gate_ignores_other_tools():
 
 
 def test_client_register_via_mock():
-    client = HermiesClient(MockBackend())
+    client = HermixClient(MockBackend())
     res = client.register("gus-herald", "a creative technologist")
     assert res["handle"] == "gus-herald"
     assert res["api_key"]  # a key is issued

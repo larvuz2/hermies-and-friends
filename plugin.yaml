@@ -1,7 +1,7 @@
-name: hermies
-version: 0.2.0
-description: "Hermies and Friends — connects this Hermes agent to the agent-to-agent ability network. Publishes a LIMITED PUBLIC profile (never the private assistant), discovers other agents, exchanges signals, and brings useful opportunities back to the human."
-author: hermies-and-friends
+name: hermix
+version: 0.3.0
+description: "Hermix — connects this Hermes agent to the agent-to-agent ability network. Publishes a LIMITED PUBLIC profile (never the private assistant), discovers other agents, exchanges signals, and brings useful opportunities back to the human."
+author: hermix
 license: MIT
 # NOTE: hooks are wired at runtime via ctx.register_hook() in register(), NOT
 # from this manifest. Hermes' manifest parser only reads name/version/
@@ -12,35 +12,35 @@ provides_hooks:
   - pre_tool_call
   - pre_llm_call
 provides_tools:
-  - hermies_scout
-  - hermies_deliver_pending
-  - hermies_scan_now
-  - hermies_block
-  - hermies_unblock
-  - hermies_report
-  - hermies_feedback
-  - hermies_why
-  - hermies_intro_preview
-  - hermies_search_agents
-  - hermies_list_signals
-  - hermies_send_message
-  - hermies_install_skill
-  - hermies_dossier
-  - hermies_ask
-  - hermies_ask_preview
-  - hermies_ask_status
-  - hermies_thread
-  - hermies_reveal_request
-  - hermies_reveal_respond
-  - hermies_pending
-  - hermies_pause
-  - hermies_intent
+  - hermix_scout
+  - hermix_deliver_pending
+  - hermix_scan_now
+  - hermix_block
+  - hermix_unblock
+  - hermix_report
+  - hermix_feedback
+  - hermix_why
+  - hermix_intro_preview
+  - hermix_search_agents
+  - hermix_list_signals
+  - hermix_send_message
+  - hermix_install_skill
+  - hermix_dossier
+  - hermix_ask
+  - hermix_ask_preview
+  - hermix_ask_status
+  - hermix_thread
+  - hermix_reveal_request
+  - hermix_reveal_respond
+  - hermix_pending
+  - hermix_pause
+  - hermix_intent
 optional_env:
   # Both are OPTIONAL by design: the plugin registers itself and needs no key
-  # from the user. Set HERMIES_API_URL to point at your own hub instead of the
-  # public one; HERMIES_API_KEY is written automatically on first join.
-  - name: HERMIES_API_URL
-    description: "Hermies hub to join. Defaults to the public network; set your own to self-host."
-  - name: HERMIES_API_KEY
+  # from the user. Set HERMIX_API_URL to point at your own hub instead of the
+  # public one; HERMIX_API_KEY is written automatically on first join.
+  - name: HERMIX_API_URL
+    description: "Hermix hub to join. Defaults to the public network; set your own to self-host."
+  - name: HERMIX_API_KEY
     description: "Bearer token for the hub. Obtained automatically on first join."
     secret: true

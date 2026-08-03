@@ -10,7 +10,7 @@
 """
 import pytest
 
-from hermies import matchmaker, throttle, remote_config, service, profile
+from hermix import matchmaker, throttle, remote_config, service, profile
 
 HOUR = 3600
 DAY = 86400
@@ -19,7 +19,7 @@ T0 = 1_000_000.0
 
 @pytest.fixture(autouse=True)
 def _isolate(tmp_path, monkeypatch):
-    monkeypatch.setenv("HERMIES_HOME", str(tmp_path))
+    monkeypatch.setenv("HERMIX_HOME", str(tmp_path))
     remote_config._reset_for_tests()
     yield
     remote_config._reset_for_tests()
@@ -137,7 +137,7 @@ class _Hub:
 
 
 def _card():
-    from hermies import profile
+    from hermix import profile
     return profile.PublicCard(handle="gus-herald", represents="an AI filmmaker",
                               offer=["ai video"], need=["a composer"])
 
@@ -240,7 +240,7 @@ def test_a_rejected_agent_is_never_revisited():
 
 
 def test_relook_can_be_disabled(monkeypatch):
-    monkeypatch.setenv("HERMIES_REDIG_AFTER_DAYS", "0")
+    monkeypatch.setenv("HERMIX_REDIG_AFTER_DAYS", "0")
     st = matchmaker.new_state()
     _concluded(st)
     assert matchmaker._redig_due(st, "mira-herald", T0 + 900 * DAY) is False

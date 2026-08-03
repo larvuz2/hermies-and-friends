@@ -1,4 +1,4 @@
-"""Hermies sidecar — the network engine as its OWN process.
+"""Hermix sidecar — the network engine as its OWN process.
 
 WHY
 ---
@@ -10,7 +10,7 @@ other plugins and any task mid-flight. So the split is:
     Hermes gateway ── thin bridge plugin (commands, tools, hooks, consent)
                             │  shared state on disk
                             ▼
-    hermies-sidecar ── matchmaker · envoy · polling · outbox · updates
+    hermix-sidecar ── matchmaker · envoy · polling · outbox · updates
 
 A matchmaker or envoy fix then needs only a SIDECAR restart, which nobody
 notices. Only a change to the bridge itself (tools/commands/hooks) needs the
@@ -18,30 +18,30 @@ gateway to restart — and those change rarely.
 
 This is not a rewrite: it runs the same service loop the plugin has always run.
 It works standalone because network inference already goes through the hub's
-operator-paid proxy (HERMIES_LLM=hub), so no ctx.llm — and therefore no Hermes
+operator-paid proxy (HERMIX_LLM=hub), so no ctx.llm — and therefore no Hermes
 process — is required.
 
-Run:  python -m hermies.sidecar      (or the systemd unit from install.sh)
+Run:  python -m hermix.sidecar      (or the systemd unit from install.sh)
 """
 import logging
 import os
 import sys
 import time
 
-log = logging.getLogger("hermies.sidecar")
+log = logging.getLogger("hermix.sidecar")
 
 
 def _build():
     """Assemble exactly what the daemon needs — no Hermes context required."""
     from . import _config, profile, matchmaker, remote_config
-    from .client import HermiesClient, make_transport, ensure_registered
+    from .client import HermixClient, make_transport, ensure_registered
 
     card = profile.load_card()
-    client = HermiesClient(make_transport())
+    client = HermixClient(make_transport())
 
     # The sidecar has no ctx.llm, so the network's thinking MUST come from the
     # hub's operator-paid proxy. Force it rather than silently going mute.
-    os.environ.setdefault("HERMIES_LLM", "hub")
+    os.environ.setdefault("HERMIX_LLM", "hub")
 
     def llm(system: str, user: str, *, purpose: str = "envoy") -> str:
         try:
@@ -73,7 +73,7 @@ def _build():
 
 def main(argv=None) -> int:
     logging.basicConfig(
-        level=os.environ.get("HERMIES_LOG_LEVEL", "INFO"),
+        level=os.environ.get("HERMIX_LOG_LEVEL", "INFO"),
         format="%(asctime)s %(levelname)s %(name)s: %(message)s")
     from . import _config, matchmaker, service
 
@@ -82,7 +82,7 @@ def main(argv=None) -> int:
     def engine():
         return matchmaker.run_engine_and_persist(client, card, llm, time.time)
 
-    log.info("hermies sidecar starting: hub=%s handle=%s",
+    log.info("hermix sidecar starting: hub=%s handle=%s",
              _config.service_url() or "-",
              card.public_dict().get("handle") or "<unset>")
 
@@ -96,7 +96,7 @@ def main(argv=None) -> int:
         while True:
             time.sleep(3600)
     except KeyboardInterrupt:
-        log.info("hermies sidecar stopping")
+        log.info("hermix sidecar stopping")
     return 0
 
 

@@ -1,4 +1,4 @@
-"""Hybrid semantic matchmaking engine (v2) for the Hermies hub.
+"""Hybrid semantic matchmaking engine (v2) for the Hermix hub.
 
 Replaces naive token counting with a blend of dense semantic similarity and the
 deterministic token/guild layer from ``matching.py``. Built to stay comfortable
@@ -41,7 +41,7 @@ import numpy as np
 import embeddings
 import matching
 
-log = logging.getLogger("hermies.engine")
+log = logging.getLogger("hermix.engine")
 
 # Field groups embedded per card. "want"/"supply" drive the primary semantic
 # direction; "need"/"offer" are the narrow reciprocal direction.

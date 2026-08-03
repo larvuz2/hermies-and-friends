@@ -7,17 +7,17 @@ import json
 
 import pytest
 
-from hermies import matchmaker, profile, tools
-from hermies.client import HermiesClient
-from hermies.mock_backend import MockBackend
+from hermix import matchmaker, profile, tools
+from hermix.client import HermixClient
+from hermix.mock_backend import MockBackend
 
 DAY = 86400
 
 
 @pytest.fixture(autouse=True)
 def _isolate(tmp_path, monkeypatch):
-    monkeypatch.setenv("HERMIES_HOME", str(tmp_path))
-    monkeypatch.setenv("HERMIES_QUIET_HOURS", "")
+    monkeypatch.setenv("HERMIX_HOME", str(tmp_path))
+    monkeypatch.setenv("HERMIX_QUIET_HOURS", "")
 
 
 def _card():
@@ -110,13 +110,13 @@ def test_notification_carries_the_feedback_prompt():
 # --- #2 feedback: the tool + hub reporting ---------------------------------
 def test_feedback_tool_records_and_reports_to_the_hub():
     b = MockBackend()
-    client = HermiesClient(b)
+    client = HermixClient(b)
     handlers = {s["name"]: s["handler"]
                 for s in tools.build(client, _card(), llm=lambda s, u, **k: "")}
     st = _delivered(matchmaker.new_state())
     matchmaker.save_state(st)
 
-    res = json.loads(handlers["hermies_feedback"](
+    res = json.loads(handlers["hermix_feedback"](
         {"finding_id": "f1", "verdict": "wrong"}))
     assert res["success"] is True and res["verdict"] == "wrong_fit"
     assert getattr(b, "feedback", []) and b.feedback[0]["verdict"] == "wrong_fit"
@@ -125,9 +125,9 @@ def test_feedback_tool_records_and_reports_to_the_hub():
 
 def test_feedback_tool_needs_both_arguments():
     handlers = {s["name"]: s["handler"]
-                for s in tools.build(HermiesClient(MockBackend()), _card(),
+                for s in tools.build(HermixClient(MockBackend()), _card(),
                                      llm=lambda s, u, **k: "")}
-    res = json.loads(handlers["hermies_feedback"]({"verdict": "useful"}))
+    res = json.loads(handlers["hermix_feedback"]({"verdict": "useful"}))
     assert res["success"] is False
 
 
@@ -135,16 +135,16 @@ def test_feedback_tool_needs_both_arguments():
 def test_scan_now_starts_work_without_reporting_matches(monkeypatch):
     """The first scan must kick off the hunt but never leak matches into the
     onboarding conversation."""
-    monkeypatch.setenv("HERMIES_MIN_SCORE", "1")
+    monkeypatch.setenv("HERMIX_MIN_SCORE", "1")
     b = MockBackend(); b._inbox = []
-    client = HermiesClient(b)
+    client = HermixClient(b)
     card = _card()
     client.publish_profile(card.public_dict())
     handlers = {s["name"]: s["handler"]
                 for s in tools.build(client, card,
                                      llm=lambda s, u, **k: '{"verdict":"drop","pitch":"","reason":""}')}
 
-    res = json.loads(handlers["hermies_scan_now"]({}))
+    res = json.loads(handlers["hermix_scan_now"]({}))
     assert res["success"] is True
     assert res["digs_open"] >= 1                 # the hunt actually started
     # counts only — no candidate names anywhere in the payload
@@ -153,19 +153,19 @@ def test_scan_now_starts_work_without_reporting_matches(monkeypatch):
 
 
 def test_intent_added_then_scan_uses_it(monkeypatch):
-    monkeypatch.setenv("HERMIES_MIN_SCORE", "1")
-    from hermies import dossier
+    monkeypatch.setenv("HERMIX_MIN_SCORE", "1")
+    from hermix import dossier
     b = MockBackend(); b._inbox = []
-    client = HermiesClient(b)
+    client = HermixClient(b)
     card = _card()
     client.publish_profile(card.public_dict())
     handlers = {s["name"]: s["handler"]
                 for s in tools.build(client, card,
                                      llm=lambda s, u, **k: '{"verdict":"drop","pitch":"","reason":""}')}
 
-    added = json.loads(handlers["hermies_intent"](
+    added = json.loads(handlers["hermix_intent"](
         {"action": "add", "text": "a colourist who has worked on AI footage"}))
     assert added["success"] is True
     assert any(i["text"].startswith("a colourist")
                for i in dossier.list_intents())
-    assert json.loads(handlers["hermies_scan_now"]({}))["success"] is True
+    assert json.loads(handlers["hermix_scan_now"]({}))["success"] is True

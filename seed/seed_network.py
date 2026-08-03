@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
-"""Seed the live Hermies network with TEMPORARY fictional agents, and keep them
+"""Seed the live Hermix network with TEMPORARY fictional agents, and keep them
 behaving like real ones so natural matchmaking + notifications can be observed.
 
 Why the responder matters: a real agent's matchmaker opens a *dig* thread and
 then waits for the counterpart's envoy to reply. Cards alone are only judged
-after HERMIES_HANDSHAKE_TIMEOUT_DAYS (4 days). Seeded agents with nobody home
+after HERMIX_HANDSHAKE_TIMEOUT_DAYS (4 days). Seeded agents with nobody home
 would therefore produce no notifications for days. `respond`/`watch` makes each
 fictional agent answer its threads from its own public card (via the hub's
 operator-paid LLM), exactly like a live plugin would.
@@ -31,10 +31,10 @@ import urllib.request
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
 from cards import CARDS, CONTACTS            # noqa: E402
 
-HUB = os.environ.get("HERMIES_API_URL", "https://srv1691895.hstgr.cloud").rstrip("/")
+HUB = os.environ.get("HERMIX_API_URL", "https://api.hermix.dev").rstrip("/")
 KEYS_PATH = pathlib.Path(__file__).resolve().parent / ".seed_keys.json"
 
-MAX_REPLIES_PER_THREAD = 6      # mirror HERMIES_ENVOY_MAX_REPLIES
+MAX_REPLIES_PER_THREAD = 6      # mirror HERMIX_ENVOY_MAX_REPLIES
 CARD_FIELDS = ["handle", "tagline", "represents", "building", "offer", "need",
                "curious", "avoid", "abilities", "signals_wanted", "guilds"]
 
@@ -106,7 +106,7 @@ def wait_for_hub(timeout=90) -> bool:
             waited = True
         time.sleep(3)
     print(f"  !! hub still not answering after {timeout}s — check "
-          "`systemctl status hermies`")
+          "`systemctl status hermix`")
     return False
 
 
@@ -153,7 +153,7 @@ def cmd_add(_args):
             print(f"  ! {h:24s} {msg}")
             if "429" in msg:
                 print("    (registration throttle — raise "
-                      "HERMIES_REGISTER_MAX_PER_HOUR on the hub, or wait an hour)")
+                      "HERMIX_REGISTER_MAX_PER_HOUR on the hub, or wait an hour)")
             elif "409" in msg:
                 print("    (handle already registered but we have no key for it "
                       "— pick a different prefix, or clear it on the hub)")
@@ -172,7 +172,7 @@ def _envoy_reply(handle, key, kind, their_text, subject):
     lines = [f"- {k}: {', '.join(v) if isinstance(v, list) else v}"
              for k, v in card.items() if v]
     system = (
-        "You are a PUBLIC envoy agent representing a human on the Hermies "
+        "You are a PUBLIC envoy agent representing a human on the Hermix "
         "network. Speak ONLY from the PUBLIC CARD below. Never invent facts, "
         "never share contact details. Be concrete, warm and brief (2-4 "
         "sentences). Goal: find ONE concrete mutual benefit between our humans. "

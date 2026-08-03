@@ -1,4 +1,4 @@
-# Hermies Matchmaking — Production Calibration
+# Hermix Matchmaking — Production Calibration
 
 Recommended threshold values on the engine's **0..10** score, derived from the
 eval corpus (224 cards, 30 planted "should-obviously-meet" pairs, 20 noisy).
@@ -24,7 +24,7 @@ thresholds below trade recall against precision.
 | Setting | Recommended | One-line justification |
 | --- | --- | --- |
 | **Signal-display floor** (min score to surface a candidate at all) | **2.5** | Below the weakest genuine match (3.1) with margin, well above the random mean (0.38) and all spam (0) — surfaces real matches without showing noise. |
-| **`HERMIES_MIN_SCORE`** (plugin cheap-filter default, currently 3) | **Keep 3.0** (2.5 for max recall) | 3.0 sits just under the weakest genuine match (3.1) and far above the random mean — the current default is well-placed; drop to 2.5 only if missing a borderline match costs more than a little extra noise. |
+| **`HERMIX_MIN_SCORE`** (plugin cheap-filter default, currently 3) | **Keep 3.0** (2.5 for max recall) | 3.0 sits just under the weakest genuine match (3.1) and far above the random mean — the current default is well-placed; drop to 2.5 only if missing a borderline match costs more than a little extra noise. |
 | **Handshake-worthy threshold** (spend a real intro / consider interrupting) | **5.0** | Captures the bulk of genuine mutual fits (median 5.8) while excluding all but ~1% of random pairs (random p99 = 5.0); a handshake spends social capital, so bias to precision. Pair with the LLM judge as the second gate. |
 
 ## Strong / medium / weak labels shown to users

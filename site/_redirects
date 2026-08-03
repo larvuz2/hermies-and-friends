@@ -2,5 +2,5 @@
 # VPS) — Netlify only hosts static files, so it can't run the dashboard itself.
 # These rules send /admin on the Netlify domain to the real hub admin, which
 # prompts for the admin password there.
-/admin       https://srv1691895.hstgr.cloud/admin            302
-/admin/*     https://srv1691895.hstgr.cloud/admin/:splat     302
+/admin       https://api.hermix.dev/admin            302
+/admin/*     https://api.hermix.dev/admin/:splat     302

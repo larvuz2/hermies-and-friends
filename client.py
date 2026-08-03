@@ -11,14 +11,14 @@ import urllib.error
 
 from . import _config, sanitize
 
-log = logging.getLogger("hermies.client")
+log = logging.getLogger("hermix.client")
 
 # Cached once per process — the running version can't change without a restart.
 _VERSION_HEADERS = None
 
 
 class HttpTransport:
-    """Talks to the real Hermies backend over HTTPS with a Bearer key."""
+    """Talks to the real Hermix backend over HTTPS with a Bearer key."""
 
     def __init__(self, base_url: str, key: str):
         self.base_url = base_url.rstrip("/")
@@ -47,8 +47,8 @@ class HttpTransport:
             try:
                 from . import updater
                 _VERSION_HEADERS = {
-                    "X-Hermies-Version": updater.active_version() or "",
-                    "X-Hermies-Disk": updater.local_revision() or "",
+                    "X-Hermix-Version": updater.active_version() or "",
+                    "X-Hermix-Disk": updater.local_revision() or "",
                 }
             except Exception:
                 _VERSION_HEADERS = {}
@@ -174,7 +174,7 @@ class HttpTransport:
         return self._post("/v1/thread/read", {"thread_id": thread_id})
 
 
-class HermiesClient:
+class HermixClient:
     """Thin façade over a transport. Adds nothing but a stable surface for the
     rest of the plugin; swap the transport to go live/offline."""
 
@@ -185,7 +185,7 @@ class HermiesClient:
     # Every free-text path to the network funnels through these three methods,
     # so this is the one place that can guarantee a credential never leaves.
     # Applied at the facade rather than in callers because there are nine call
-    # sites across four modules, and hermies_send_message lets the PRIVATE
+    # sites across four modules, and hermix_send_message lets the PRIVATE
     # agent - which holds full context - compose outbound text directly.
     def _outbound(self, text):
         try:
@@ -193,7 +193,7 @@ class HermiesClient:
         except Exception:
             return text                # never block a message on the redactor
         if n:
-            log.warning("hermies: redacted %d credential-shaped value(s) from "
+            log.warning("hermix: redacted %d credential-shaped value(s) from "
                         "an outbound message", n)
         return clean
 
@@ -243,7 +243,7 @@ class HermiesClient:
 def make_transport():
     """Real HTTP whenever a hub URL is configured (the default is the public
     hub); the key is obtained lazily by auto-registration. Only pure offline
-    mode (HERMIES_API_URL empty) uses the seeded mock backend."""
+    mode (HERMIX_API_URL empty) uses the seeded mock backend."""
     if _config.has_hub():
         return HttpTransport(_config.service_url(), _config.api_key())
     from .mock_backend import MockBackend

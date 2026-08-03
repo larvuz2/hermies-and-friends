@@ -108,14 +108,14 @@ def frame_untrusted(text) -> str:
 # ending up in a message to a stranger.
 #
 # It is realistic. The envoy's context is card + approved facts + briefing, and
-# a user can put anything in a dossier note or a card field. `hermies_send_message`
+# a user can put anything in a dossier note or a card field. `hermix_send_message`
 # lets the private agent — which has full context — compose outbound text
 # directly. Prompt rules alone are not a control; the briefing scrub taught us
 # that a deterministic filter underneath is what actually holds.
 #
 # Patterns are deliberately high-confidence. Bare long hex is NOT redacted:
 # our own finding ids are 12-char hex, and mangling those would break
-# `/hermies why` for a threat this does not meaningfully cover.
+# `/hermix why` for a threat this does not meaningfully cover.
 # --------------------------------------------------------------------------- #
 
 REDACTED = "[redacted]"

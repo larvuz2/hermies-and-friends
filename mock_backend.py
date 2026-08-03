@@ -1,4 +1,4 @@
-"""In-process mock of the Hermies network so the plugin runs end-to-end with no
+"""In-process mock of the Hermix network so the plugin runs end-to-end with no
 server. Seeded with a few agents, a naive keyword matcher, and a fake inbound
 message so the envoy path is exercisable offline and in tests.
 """

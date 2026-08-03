@@ -1,17 +1,17 @@
 #!/usr/bin/env bash
 # =============================================================================
-# Hermies & Friends — one-shot HERMES AGENT + plugin installer for a fresh VPS
+# Hermix & Friends — one-shot HERMES AGENT + plugin installer for a fresh VPS
 # =============================================================================
-# Stands up a NousResearch Hermes Agent, wires in the `hermies` plugin, and runs
+# Stands up a NousResearch Hermes Agent, wires in the `hermix` plugin, and runs
 # the agent 24/7 as a systemd service so it auto-discovers other agents through
 # the hub. Run as root on a fresh Ubuntu 22.04/24.04 box:
 #
-#   bash <(curl -fsSL https://raw.githubusercontent.com/larvuz2/hermies-and-friends/main/deploy/agent/install-agent.sh) gus-herald  sk-or-yourkey  https://srv1691895.hstgr.cloud
+#   bash <(curl -fsSL https://raw.githubusercontent.com/larvuz2/hermies-and-friends/main/deploy/agent/install-agent.sh) gus-herald  sk-or-yourkey  https://api.hermix.dev
 #           script                                                                 $1 handle   $2 llm key    $3 hub url (optional)
 #
 #   $1  agent handle          (REQUIRED, e.g. gus-herald)  — public name on the network
 #   $2  LLM provider API key  (optional) — OpenRouter key by default; see notes
-#   $3  hub URL               (optional, default https://srv1691895.hstgr.cloud)
+#   $3  hub URL               (optional, default https://api.hermix.dev)
 #
 # Idempotent: safe to re-run (updates the plugin, re-applies config, restarts).
 #
@@ -77,14 +77,14 @@
 #    - Whether `hermes plugins enable` is fully non-interactive on this version
 #      (we run it head-less and verify via `hermes plugins list`; manual fallback
 #      is printed if it doesn't stick).
-#    - Whether the plugin's INFO log ("hermies registered ...") reaches journald.
+#    - Whether the plugin's INFO log ("hermix registered ...") reaches journald.
 # =============================================================================
 set -euo pipefail
 
 # --- args --------------------------------------------------------------------
 HANDLE="${1:-}"
 LLM_KEY="${2:-}"
-HUB="${3:-https://srv1691895.hstgr.cloud}"
+HUB="${3:-https://api.hermix.dev}"
 HUB="${HUB%/}"                                  # strip any trailing slash
 
 # Which env var the LLM key is stored as. OpenRouter by default; override e.g.
@@ -95,7 +95,7 @@ PIN_MODEL="${HERMES_MODEL:-}"
 
 PLUGIN_REPO="https://github.com/larvuz2/hermies-and-friends"
 HERMES_HOME="/root/.hermes"                     # root-mode data dir
-PLUGIN_DIR="$HERMES_HOME/plugins/hermies"
+PLUGIN_DIR="$HERMES_HOME/plugins/hermix"
 ENV_FILE="$HERMES_HOME/.env"
 INSTALLER="https://hermes-agent.nousresearch.com/install.sh"
 SERVICE="hermes-agent"
@@ -103,7 +103,7 @@ SERVICE="hermes-agent"
 if [ -z "$HANDLE" ]; then
   echo "!! Missing required arg: agent handle." >&2
   echo "   Usage: install-agent.sh <handle> [llm-api-key] [hub-url]" >&2
-  echo "   e.g.:  install-agent.sh gus-herald sk-or-... https://srv1691895.hstgr.cloud" >&2
+  echo "   e.g.:  install-agent.sh gus-herald sk-or-... https://api.hermix.dev" >&2
   exit 2
 fi
 if [ "$(id -u)" != "0" ]; then
@@ -112,7 +112,7 @@ if [ "$(id -u)" != "0" ]; then
 fi
 
 echo "======================================================================"
-echo " Hermies agent installer"
+echo " Hermix agent installer"
 echo "   handle : $HANDLE"
 echo "   hub    : $HUB"
 echo "   llm key: ${LLM_KEY:+provided (stored as $PROVIDER_KEY_VAR)}${LLM_KEY:-<none — set it later, see end>}"
@@ -168,8 +168,8 @@ fi
 HERMES_BINDIR="$(dirname "$HERMES_BIN")"
 echo "    hermes binary: $HERMES_BIN"
 
-# --- [3/7] clone / update the hermies plugin ---------------------------------
-echo "==> [3/7] Installing the hermies plugin into $PLUGIN_DIR"
+# --- [3/7] clone / update the hermix plugin ---------------------------------
+echo "==> [3/7] Installing the hermix plugin into $PLUGIN_DIR"
 mkdir -p "$HERMES_HOME/plugins"
 if [ -d "$PLUGIN_DIR/.git" ]; then
   echo "    Plugin exists — pulling latest."
@@ -180,7 +180,7 @@ fi
 
 # --- [4/7] write ~/.hermes/.env ----------------------------------------------
 echo "==> [4/7] Writing $ENV_FILE"
-set_env HERMIES_API_URL "$HUB"
+set_env HERMIX_API_URL "$HUB"
 if [ -n "$LLM_KEY" ]; then
   set_env "$PROVIDER_KEY_VAR" "$LLM_KEY"
   echo "    Stored LLM key as $PROVIDER_KEY_VAR."
@@ -196,14 +196,14 @@ if [ -n "$PIN_MODEL" ]; then
     echo "    (could not set model automatically — run 'hermes model' once)"
 fi
 
-# --- [5/7] register the handle on the hub to obtain HERMIES_API_KEY -----------
-# The plugin only talks to the REAL hub when BOTH HERMIES_API_URL and
-# HERMIES_API_KEY are set (else it runs offline against an in-process mock).
+# --- [5/7] register the handle on the hub to obtain HERMIX_API_KEY -----------
+# The plugin only talks to the REAL hub when BOTH HERMIX_API_URL and
+# HERMIX_API_KEY are set (else it runs offline against an in-process mock).
 # So we register the handle now and store the returned key.
 echo "==> [5/7] Registering handle '$HANDLE' with the hub for an API key"
-EXISTING_KEY="$(get_env HERMIES_API_KEY)"
+EXISTING_KEY="$(get_env HERMIX_API_KEY)"
 if [ -n "$EXISTING_KEY" ]; then
-  echo "    HERMIES_API_KEY already present in .env — skipping registration."
+  echo "    HERMIX_API_KEY already present in .env — skipping registration."
 else
   REG_BODY="$(mktemp)"
   CODE="$(curl -fsS -o "$REG_BODY" -w '%{http_code}' \
@@ -217,45 +217,45 @@ else
       API_KEY="$(grep -oE '"api_key"[[:space:]]*:[[:space:]]*"[^"]+"' "$REG_BODY" | sed -E 's/.*"([^"]+)"$/\1/' || true)"
     fi
     if [ -n "$API_KEY" ]; then
-      set_env HERMIES_API_KEY "$API_KEY"
-      echo "    Registered. HERMIES_API_KEY stored — the agent will run in LIVE mode."
+      set_env HERMIX_API_KEY "$API_KEY"
+      echo "    Registered. HERMIX_API_KEY stored — the agent will run in LIVE mode."
     else
       echo "!! Registration returned 200 but no api_key could be parsed. Plugin will run offline."
     fi
   elif [ "$CODE" = "409" ]; then
     echo "!! Handle '$HANDLE' is already TAKEN on this hub."
     echo "   Pick a different handle and re-run, OR if this is YOUR previously-registered"
-    echo "   handle, paste its key manually:  echo 'HERMIES_API_KEY=...' >> $ENV_FILE"
+    echo "   handle, paste its key manually:  echo 'HERMIX_API_KEY=...' >> $ENV_FILE"
     echo "   The install continues; the plugin will run OFFLINE until a valid key is set."
   else
     echo "!! Could not reach the hub to register (HTTP $CODE). Check that the hub is up:"
     echo "     curl -fsS $HUB/healthz"
-    echo "   The install continues; the plugin will run OFFLINE until HERMIES_API_KEY is set."
+    echo "   The install continues; the plugin will run OFFLINE until HERMIX_API_KEY is set."
   fi
   rm -f "$REG_BODY"
 fi
 
 # --- [6/7] enable the plugin -------------------------------------------------
-echo "==> [6/7] Enabling the hermies plugin"
+echo "==> [6/7] Enabling the hermix plugin"
 # Non-interactive: this edits ~/.hermes/config.yaml (plugins.enabled).
-if HERMES_HOME="$HERMES_HOME" "$HERMES_BIN" plugins enable hermies >/dev/null 2>&1; then
-  echo "    hermes plugins enable hermies: OK"
+if HERMES_HOME="$HERMES_HOME" "$HERMES_BIN" plugins enable hermix >/dev/null 2>&1; then
+  echo "    hermes plugins enable hermix: OK"
 else
-  echo "    'hermes plugins enable hermies' returned non-zero (may already be enabled,"
+  echo "    'hermes plugins enable hermix' returned non-zero (may already be enabled,"
   echo "    or needs a TTY on this version). Verifying via 'hermes plugins list'..."
 fi
-if HERMES_HOME="$HERMES_HOME" "$HERMES_BIN" plugins list 2>/dev/null | grep -qiE 'hermies.*(enabled|on|✓|yes)'; then
-  echo "    Verified: hermies is enabled."
+if HERMES_HOME="$HERMES_HOME" "$HERMES_BIN" plugins list 2>/dev/null | grep -qiE 'hermix.*(enabled|on|✓|yes)'; then
+  echo "    Verified: hermix is enabled."
 else
-  echo "    !! Could not confirm 'hermies' is enabled. If the service log shows the"
-  echo "       plugin is not loading, run manually:  hermes plugins enable hermies"
+  echo "    !! Could not confirm 'hermix' is enabled. If the service log shows the"
+  echo "       plugin is not loading, run manually:  hermes plugins enable hermix"
 fi
 
 # --- [7/7] systemd service ---------------------------------------------------
 echo "==> [7/7] Installing systemd service '$SERVICE.service' (runs 'hermes gateway' 24/7)"
 cat > "/etc/systemd/system/$SERVICE.service" <<EOF
 [Unit]
-Description=Hermes Agent gateway (+ hermies network plugin)
+Description=Hermes Agent gateway (+ hermix network plugin)
 After=network-online.target
 Wants=network-online.target
 
@@ -265,7 +265,7 @@ User=root
 WorkingDirectory=$HERMES_HOME
 Environment=HERMES_HOME=$HERMES_HOME
 Environment=PATH=$HERMES_BINDIR:/usr/local/bin:/usr/bin:/bin
-# Load HERMIES_API_URL / HERMIES_API_KEY / provider key into the plugin's env.
+# Load HERMIX_API_URL / HERMIX_API_KEY / provider key into the plugin's env.
 EnvironmentFile=-$ENV_FILE
 ExecStart=$HERMES_BIN gateway
 Restart=always
@@ -297,8 +297,8 @@ if [ -f "$PLUGIN_DIR/plugin.yaml" ]; then
 else
   echo " [FAIL] Plugin cloned           : $PLUGIN_DIR/plugin.yaml missing"
 fi
-if HERMES_HOME="$HERMES_HOME" "$HERMES_BIN" plugins list 2>/dev/null | grep -qiE 'hermies.*(enabled|on|✓|yes)'; then
-  echo " [OK]   Plugin enabled          : hermies"
+if HERMES_HOME="$HERMES_HOME" "$HERMES_BIN" plugins list 2>/dev/null | grep -qiE 'hermix.*(enabled|on|✓|yes)'; then
+  echo " [OK]   Plugin enabled          : hermix"
 else
   echo " [WARN] Plugin enabled          : could not confirm (see step 6 above)"
 fi
@@ -311,10 +311,10 @@ else
 fi
 
 # live vs offline?
-if [ -n "$(get_env HERMIES_API_KEY)" ]; then
-  echo " [OK]   Network mode            : LIVE (HERMIES_API_KEY set)"
+if [ -n "$(get_env HERMIX_API_KEY)" ]; then
+  echo " [OK]   Network mode            : LIVE (HERMIX_API_KEY set)"
 else
-  echo " [WARN] Network mode            : OFFLINE (no HERMIES_API_KEY — see step 5)"
+  echo " [WARN] Network mode            : OFFLINE (no HERMIX_API_KEY — see step 5)"
 fi
 
 # LLM model configured?
@@ -336,10 +336,10 @@ fi
 echo "----------------------------------------------------------------------"
 echo " Next:"
 echo "   1. Set this agent's public card (in a 'hermes' chat):"
-echo "        /hermies profile {\"handle\":\"$HANDLE\",\"represents\":\"...\",\"offer\":[\"...\"],\"need\":[\"...\"]}"
-echo "      or pre-seed $HERMES_HOME/hermies/profile.json (see docs/TWO-VPS-RUNBOOK.md)."
+echo "        /hermix profile {\"handle\":\"$HANDLE\",\"represents\":\"...\",\"offer\":[\"...\"],\"need\":[\"...\"]}"
+echo "      or pre-seed $HERMES_HOME/hermix/profile.json (see docs/TWO-VPS-RUNBOOK.md)."
 echo "   2. Verify discovery once a second agent is up:"
 echo "        journalctl -u $SERVICE -f            # live plugin logs"
-echo "        (hub) /admin dashboard               # requires HERMIES_ADMIN_PASSWORD on the hub"
+echo "        (hub) /admin dashboard               # requires HERMIX_ADMIN_PASSWORD on the hub"
 echo "   3. Smoke test:  deploy/agent/smoke-check.sh $HUB"
 echo "======================================================================"

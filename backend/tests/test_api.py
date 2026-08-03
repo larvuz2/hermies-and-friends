@@ -1,4 +1,4 @@
-"""End-to-end API tests for the Hermies hub contract."""
+"""End-to-end API tests for the Hermix hub contract."""
 from conftest import register, auth
 
 
@@ -194,7 +194,7 @@ def test_rate_limit_429(client):
 
 def test_register_throttle_429(client, monkeypatch):
     """Per-IP registration throttle: configurable/hour, the next one is rejected."""
-    monkeypatch.setenv("HERMIES_REGISTER_MAX_PER_HOUR", "5")
+    monkeypatch.setenv("HERMIX_REGISTER_MAX_PER_HOUR", "5")
     codes = []
     for i in range(6):
         r = client.post("/v1/register", json={"handle": f"reg-{i}", "represents": ""})
@@ -207,7 +207,7 @@ def test_register_throttle_is_per_real_client_ip(client, monkeypatch):
     """Behind our proxy every request looks like 127.0.0.1, which would make the
     throttle a GLOBAL cap and block real signups. X-Forwarded-For must bucket
     per real client instead."""
-    monkeypatch.setenv("HERMIES_REGISTER_MAX_PER_HOUR", "2")
+    monkeypatch.setenv("HERMIX_REGISTER_MAX_PER_HOUR", "2")
     # Client A burns its budget.
     for i in range(2):
         assert client.post("/v1/register", json={"handle": f"a-{i}", "represents": ""},
@@ -267,7 +267,7 @@ def test_client_config_requires_auth(client):
 def test_client_config_survives_a_broken_file(client, monkeypatch, tmp_path):
     bad = tmp_path / "broken.json"
     bad.write_text("{not json", encoding="utf-8")
-    monkeypatch.setenv("HERMIES_CLIENT_CONFIG_FILE", str(bad))
+    monkeypatch.setenv("HERMIX_CLIENT_CONFIG_FILE", str(bad))
     key = register(client, "cfg2-herald", "r")
     r = client.get("/v1/config", headers=auth(key))
     assert r.status_code == 200                 # degrades, never 500s
@@ -277,7 +277,7 @@ def test_client_config_survives_a_broken_file(client, monkeypatch, tmp_path):
 def test_operator_edit_is_served_live(client, monkeypatch, tmp_path):
     f = tmp_path / "cfg.json"
     f.write_text('{"version": 9, "knobs": {"interrupt_threshold": 7.7}}', encoding="utf-8")
-    monkeypatch.setenv("HERMIES_CLIENT_CONFIG_FILE", str(f))
+    monkeypatch.setenv("HERMIX_CLIENT_CONFIG_FILE", str(f))
     key = register(client, "cfg3-herald", "r")
     assert client.get("/v1/config", headers=auth(key)).json()["knobs"]["interrupt_threshold"] == 7.7
     # edit on the hub -> next poll sees it, no restart

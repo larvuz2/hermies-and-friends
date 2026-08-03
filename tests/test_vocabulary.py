@@ -1,6 +1,6 @@
-"""Hermies is not a dating network — the word "match" never reaches a human.
+"""Hermix is not a dating network — the word "match" never reaches a human.
 
-Internal identifiers (matchmaker.py, HERMIES_MATCH_EVERY_HOURS, the hub's
+Internal identifiers (matchmaker.py, HERMIX_MATCH_EVERY_HOURS, the hub's
 `kind: "match"` wire value) are invisible and stay as they are. What is guarded
 here is everything a person can actually read: rendered notifications, the trust
 receipt, command replies, tool descriptions the model paraphrases, and the
@@ -12,9 +12,9 @@ import re
 
 import pytest
 
-from hermies import matchmaker, profile, tools, commands
-from hermies.client import HermiesClient
-from hermies.mock_backend import MockBackend
+from hermix import matchmaker, profile, tools, commands
+from hermix.client import HermixClient
+from hermix.mock_backend import MockBackend
 
 BANNED = re.compile(r"match", re.I)
 SKILLS = pathlib.Path(__file__).resolve().parents[1] / "skills"
@@ -22,8 +22,8 @@ SKILLS = pathlib.Path(__file__).resolve().parents[1] / "skills"
 
 @pytest.fixture(autouse=True)
 def _isolate(tmp_path, monkeypatch):
-    monkeypatch.setenv("HERMIES_HOME", str(tmp_path))
-    monkeypatch.setenv("HERMIES_QUIET_HOURS", "")
+    monkeypatch.setenv("HERMIX_HOME", str(tmp_path))
+    monkeypatch.setenv("HERMIX_QUIET_HOURS", "")
 
 
 def _card():
@@ -69,7 +69,7 @@ def test_trust_receipt_never_says_match():
 
 
 def test_command_replies_never_say_match():
-    h = commands.make_handler(HermiesClient(MockBackend()), _card(), llm=None)
+    h = commands.make_handler(HermixClient(MockBackend()), _card(), llm=None)
     for arg in ("pause", "resume", "findings", "status", "frobnicate"):
         out = h(arg)
         assert not _hits(out), (arg, _hits(out))
@@ -77,7 +77,7 @@ def test_command_replies_never_say_match():
 
 def test_findings_is_the_command_and_matches_still_works():
     """Renamed for humans; the old word keeps working so nobody is stranded."""
-    h = commands.make_handler(HermiesClient(MockBackend()), _card(), llm=None)
+    h = commands.make_handler(HermixClient(MockBackend()), _card(), llm=None)
     assert h("matches") == h("findings")
     assert "findings" in h("frobnicate")        # the help line advertises the new one
     assert not BANNED.search(h("frobnicate"))
@@ -85,7 +85,7 @@ def test_findings_is_the_command_and_matches_still_works():
 
 # --- what the model reads and paraphrases ---------------------------------- #
 def test_tool_descriptions_never_say_match():
-    specs = tools.build(HermiesClient(MockBackend()), _card(), llm=None)
+    specs = tools.build(HermixClient(MockBackend()), _card(), llm=None)
     for spec in specs:
         blob = spec["name"] + " " + spec["description"] + " " + json.dumps(spec["schema"])
         assert not BANNED.search(blob), (spec["name"], _hits(blob))
@@ -102,14 +102,14 @@ def test_llm_system_prompts_never_say_match():
 def test_skills_never_say_match_except_the_ban_itself():
     for path in sorted(SKILLS.glob("*/SKILL.md")):
         for line in _hits(path.read_text(encoding="utf-8")):
-            # hermies-voice is allowed to name the word in order to forbid it.
-            ok = path.parent.name == "hermies-voice" and (
+            # hermix-voice is allowed to name the word in order to forbid it.
+            ok = path.parent.name == "hermix-voice" and (
                 "NEVER say" in line or "banned word" in line
                 or line.startswith("**Bad:**"))
             assert ok, f"{path.parent.name}: {line}"
 
 
 def test_the_voice_skill_actually_states_the_ban():
-    text = (SKILLS / "hermies-voice" / "SKILL.md").read_text(encoding="utf-8")
+    text = (SKILLS / "hermix-voice" / "SKILL.md").read_text(encoding="utf-8")
     assert 'NEVER say "match"' in text
     assert "dating" in text.lower()

@@ -1,6 +1,6 @@
-# Hermies hub — container alternative to the VPS script.
-# Build from the REPO ROOT:  docker build -f deploy/Dockerfile -t hermies-hub .
-# Run:  docker run -d --name hermies -p 8787:8787 -v hermies-data:/data hermies-hub
+# Hermix hub — container alternative to the VPS script.
+# Build from the REPO ROOT:  docker build -f deploy/Dockerfile -t hermix-hub .
+# Run:  docker run -d --name hermix -p 8787:8787 -v hermix-data:/data hermix-hub
 FROM python:3.12-slim
 
 WORKDIR /app
@@ -8,7 +8,7 @@ COPY backend/requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 COPY backend/ .
 
-ENV HERMIES_DB=/data/hermies.db
+ENV HERMIX_DB=/data/hermix.db
 VOLUME /data
 EXPOSE 8787
 

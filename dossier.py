@@ -5,7 +5,7 @@ boundaries. It NEVER produces outbound text; it only stores and hands back the
 narrow, ring-appropriate slices that the outbound layers (envoy.py, tools.py)
 are allowed to use.
 
-Privacy model (see skills/hermies-context/SKILL.md), enforced structurally here:
+Privacy model (see skills/hermix-context/SKILL.md), enforced structurally here:
 
   - Ring 0 (PRIVATE): the full dossier — work history, projects, hobbies,
     goals, bucket list, expenses, notes. Handed out ONLY as section *counts*
@@ -19,7 +19,7 @@ Privacy model (see skills/hermies-context/SKILL.md), enforced structurally here:
     gate. :func:`summary` reports a boolean, never the values.
 
 Persistence follows the blessed pattern (mirrors matchmaker.py): a JSON file at
-``$HERMES_HOME/hermies/dossier.json``, atomic temp+rename with a ``.bak``
+``$HERMES_HOME/hermix/dossier.json``, atomic temp+rename with a ``.bak``
 backup, and a ``get_hermes_home`` fallback. Every string is passed through
 ``sanitize.clean_text`` on write, so no control/zero-width/fence smuggling ever
 lands in the store.
@@ -35,7 +35,7 @@ from . import sanitize
 # Generous cap — dossier facts can be a sentence or two, unlike terse card fields.
 _MAX = 500
 
-# Note: per-dig findings notes (3-6 lines per skills/hermies-envoy-protocol/
+# Note: per-dig findings notes (3-6 lines per skills/hermix-envoy-protocol/
 # SKILL.md) live in the matchmaker's own state (matchmaker.py: state["findings"])
 # alongside the dig/thread bookkeeping that judgment reads, not here. This module
 # stays the guardian of the human's static profile + contact identity.
@@ -51,15 +51,15 @@ RING0_SECTIONS = (
 # --------------------------------------------------------------------------- #
 
 def _dossier_path() -> pathlib.Path:
-    base = os.environ.get("HERMIES_HOME")
+    base = os.environ.get("HERMIX_HOME")
     if base:
         d = pathlib.Path(base)
     else:
         try:  # blessed resolver when running inside Hermes
             from hermes_constants import get_hermes_home
-            d = pathlib.Path(get_hermes_home()) / "hermies"
+            d = pathlib.Path(get_hermes_home()) / "hermix"
         except Exception:
-            d = pathlib.Path(os.path.expanduser("~/.hermes")) / "hermies"
+            d = pathlib.Path(os.path.expanduser("~/.hermes")) / "hermix"
     return d / "dossier.json"
 
 
@@ -261,7 +261,7 @@ def retire_intent(intent_id, path=None) -> dict:
 # --------------------------------------------------------------------------- #
 
 def summary(path=None) -> dict:
-    """A read-only, contact-free view for the human and for hermies_dossier.
+    """A read-only, contact-free view for the human and for hermix_dossier.
 
     Returns Ring-0 section *counts* (never values), the Ring-1 fact list, the
     intents, and a BOOLEAN for whether contact is on file. Contact name/email/

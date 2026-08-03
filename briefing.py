@@ -23,7 +23,7 @@ Three rules make it safe, and all three are enforced here rather than trusted:
    figure, email, URL and date drawn from Ring 0 is collected up front, and any
    generated line containing one is DROPPED. Not redacted — dropped, because a
    half-scrubbed sentence is a sentence we no longer understand.
-3. **The human can read it and delete it.** `/hermies briefing` prints it
+3. **The human can read it and delete it.** `/hermix briefing` prints it
    verbatim. If they cannot inspect what their envoy believes about them, the
    trust story fails.
 
@@ -37,7 +37,7 @@ import time
 
 from . import sanitize
 
-log = logging.getLogger("hermies.briefing")
+log = logging.getLogger("hermix.briefing")
 
 MAX_LINES = 12
 MAX_LINE_LEN = 220
@@ -237,14 +237,14 @@ def refresh_if_due(dossier_doc, card, llm, now=None, force=False) -> dict:
 
 
 def format_for_human(doc: dict = None) -> str:
-    """What /hermies briefing prints. Plain, complete, and honest about limits."""
+    """What /hermix briefing prints. Plain, complete, and honest about limits."""
     doc = doc if doc is not None else load()
     lines_ = doc.get("lines") or []
     if not lines_:
         return ("Your envoy has no briefing yet — it is representing you from "
                 "your public card alone.\n"
-                "Add to your dossier (`/hermies dossier`) and I'll derive one, "
-                "or run `/hermies briefing refresh`.")
+                "Add to your dossier (`/hermix dossier`) and I'll derive one, "
+                "or run `/hermix briefing refresh`.")
     out = ["This is everything your envoy believes about you, beyond your "
            "public card:", ""]
     for line in lines_:
@@ -253,6 +253,6 @@ def format_for_human(doc: dict = None) -> str:
             "It shapes how your envoy judges what to bring you. It is never "
             "quoted to anyone, and it deliberately contains no names, figures "
             "or dates from your private notes.",
-            "`/hermies briefing refresh` to rebuild it · "
-            "`/hermies briefing clear` to remove it."]
+            "`/hermix briefing refresh` to rebuild it · "
+            "`/hermix briefing clear` to remove it."]
     return "\n".join(out)

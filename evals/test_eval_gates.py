@@ -17,7 +17,7 @@ import pytest
 
 # Force the dependency-light fallback encoder BEFORE the engine builds one, so
 # this never touches the network or needs the ML model.
-os.environ["HERMIES_FORCE_FALLBACK_EMBED"] = "1"
+os.environ["HERMIX_FORCE_FALLBACK_EMBED"] = "1"
 
 HERE = pathlib.Path(__file__).resolve().parent
 if str(HERE) not in sys.path:
@@ -48,7 +48,7 @@ def _gate(res, needle):
 
 def test_mode_is_fallback(result):
     assert result["mode"] == "fallback", (
-        f"expected fallback mode under HERMIES_FORCE_FALLBACK_EMBED, "
+        f"expected fallback mode under HERMIX_FORCE_FALLBACK_EMBED, "
         f"got {result['mode']}"
     )
 

@@ -1,7 +1,7 @@
 """Credentials must resolve per PROFILE, not per process.
 
 Hermes 0.19.1 added a fail-closed per-profile secret scope for the multiplexing
-gateway (one process serving many profiles). We read HERMIES_API_KEY, which is
+gateway (one process serving many profiles). We read HERMIX_API_KEY, which is
 NOT on their global-env allowlist — so it is a profile secret, and reading
 os.environ directly would resolve whichever profile's value happened to be in
 the process env. For this plugin that means talking to the hub as ANOTHER user.
@@ -14,14 +14,14 @@ import types
 
 import pytest
 
-from hermies import _config
+from hermix import _config
 
 
 @pytest.fixture(autouse=True)
 def _clean(monkeypatch, tmp_path):
     monkeypatch.setenv("HERMES_HOME", str(tmp_path))
-    monkeypatch.delenv("HERMIES_API_KEY", raising=False)
-    monkeypatch.delenv("HERMIES_API_URL", raising=False)
+    monkeypatch.delenv("HERMIX_API_KEY", raising=False)
+    monkeypatch.delenv("HERMIX_API_URL", raising=False)
     _config._KEY_CACHE.clear()
     yield
     sys.modules.pop("agent.secret_scope", None)
@@ -56,8 +56,8 @@ def _install_scope(scope=None, multiplex=True, raises=False):
 # Nothing changes for anyone running today
 # --------------------------------------------------------------------------- #
 def test_without_the_scope_module_behaviour_is_unchanged(monkeypatch):
-    monkeypatch.setenv("HERMIES_API_KEY", "k-plain")
-    monkeypatch.setenv("HERMIES_API_URL", "https://hub.example")
+    monkeypatch.setenv("HERMIX_API_KEY", "k-plain")
+    monkeypatch.setenv("HERMIX_API_URL", "https://hub.example")
     assert _config.api_key() == "k-plain"
     assert _config.service_url() == "https://hub.example"
 
@@ -71,21 +71,21 @@ def test_default_url_still_applies():
 # --------------------------------------------------------------------------- #
 def test_the_scope_wins_over_a_stale_process_env(monkeypatch):
     """os.environ holds agent B's key; the scope says we are agent A."""
-    monkeypatch.setenv("HERMIES_API_KEY", "k-OTHER-PROFILE")
-    _install_scope({"HERMIES_API_KEY": "k-mine"})
+    monkeypatch.setenv("HERMIX_API_KEY", "k-OTHER-PROFILE")
+    _install_scope({"HERMIX_API_KEY": "k-mine"})
     assert _config.api_key() == "k-mine"
 
 
 def test_the_scope_also_governs_which_hub_we_joined(monkeypatch):
-    monkeypatch.setenv("HERMIES_API_URL", "https://other-profiles-hub")
-    _install_scope({"HERMIES_API_URL": "https://my-hub"})
+    monkeypatch.setenv("HERMIX_API_URL", "https://other-profiles-hub")
+    _install_scope({"HERMIX_API_URL": "https://my-hub"})
     assert _config.service_url() == "https://my-hub"
 
 
 def test_an_unscoped_read_fails_closed_rather_than_guessing(monkeypatch):
     """Falling back to os.environ here would reintroduce the very leak the
     scope exists to prevent. Not acting beats acting as the wrong person."""
-    monkeypatch.setenv("HERMIES_API_KEY", "k-OTHER-PROFILE")
+    monkeypatch.setenv("HERMIX_API_KEY", "k-OTHER-PROFILE")
     _install_scope(raises=True)
     assert _config.api_key() == ""
     assert _config.is_live() is False
@@ -93,7 +93,7 @@ def test_an_unscoped_read_fails_closed_rather_than_guessing(monkeypatch):
 
 def test_a_non_scope_error_still_falls_back(monkeypatch):
     """A broken resolver must not take the agent off the network."""
-    monkeypatch.setenv("HERMIES_API_KEY", "k-plain")
+    monkeypatch.setenv("HERMIX_API_KEY", "k-plain")
     mod = _install_scope()
     mod.get_secret = lambda name, default=None: (_ for _ in ()).throw(
         RuntimeError("something else entirely"))
@@ -106,7 +106,7 @@ def test_a_non_scope_error_still_falls_back(monkeypatch):
 def test_persist_does_not_pollute_the_shared_env_under_multiplex(monkeypatch):
     _install_scope({}, multiplex=True)
     _config.persist_api_key("k-fresh")
-    assert "HERMIES_API_KEY" not in os_environ()
+    assert "HERMIX_API_KEY" not in os_environ()
     # ...but the key is usable immediately, or auto-join would break.
     assert _config.api_key() == "k-fresh"
 
@@ -114,7 +114,7 @@ def test_persist_does_not_pollute_the_shared_env_under_multiplex(monkeypatch):
 def test_persist_still_uses_the_env_on_a_normal_install(monkeypatch):
     """Single-profile deployments keep the behaviour they have always had."""
     _config.persist_api_key("k-fresh")
-    assert os_environ().get("HERMIES_API_KEY") == "k-fresh"
+    assert os_environ().get("HERMIX_API_KEY") == "k-fresh"
     assert _config.api_key() == "k-fresh"
 
 
@@ -139,10 +139,10 @@ def test_the_session_cache_is_per_profile(monkeypatch, tmp_path):
 def test_persist_still_writes_the_profile_env_file(monkeypatch, tmp_path):
     """The durable path is the profile's own .env, which survives a restart."""
     env_file = tmp_path / ".env"
-    monkeypatch.setenv("HERMIES_ENV_FILE", str(env_file))
+    monkeypatch.setenv("HERMIX_ENV_FILE", str(env_file))
     _install_scope({}, multiplex=True)
     _config.persist_api_key("k-durable")
-    assert "HERMIES_API_KEY=k-durable" in env_file.read_text(encoding="utf-8")
+    assert "HERMIX_API_KEY=k-durable" in env_file.read_text(encoding="utf-8")
 
 
 def os_environ():
@@ -156,5 +156,5 @@ def test_a_cleared_key_does_not_linger_on_a_normal_install(monkeypatch):
     for the life of the process."""
     _config.persist_api_key("k-old")
     assert _config.api_key() == "k-old"
-    monkeypatch.delenv("HERMIES_API_KEY", raising=False)
+    monkeypatch.delenv("HERMIX_API_KEY", raising=False)
     assert _config.api_key() == "", "a cleared key survived in the cache"

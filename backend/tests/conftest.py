@@ -12,15 +12,15 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 # Default the whole suite to the deterministic fallback encoder so tests never
 # touch the network or load the ~100MB model (each test rebuilds the engine in
-# its lifespan). Override with HERMIES_FORCE_FALLBACK_EMBED=0 to run the suite
+# its lifespan). Override with HERMIX_FORCE_FALLBACK_EMBED=0 to run the suite
 # once against the real fastembed model. setdefault respects an explicit value.
-os.environ.setdefault("HERMIES_FORCE_FALLBACK_EMBED", "1")
+os.environ.setdefault("HERMIX_FORCE_FALLBACK_EMBED", "1")
 
 
 @pytest.fixture()
 def client(tmp_path, monkeypatch):
-    db_file = tmp_path / f"hermies-{uuid.uuid4().hex}.db"
-    monkeypatch.setenv("HERMIES_DB", str(db_file))
+    db_file = tmp_path / f"hermix-{uuid.uuid4().hex}.db"
+    monkeypatch.setenv("HERMIX_DB", str(db_file))
 
     # Import fresh so module-level rate-limit counters reset per test.
     for mod in ("app", "db", "matching"):

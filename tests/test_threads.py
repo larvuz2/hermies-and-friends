@@ -1,20 +1,20 @@
 """Threaded conversations: the MockBackend must honour the frozen hub contract
 (open/send/close/list/read), enforce the 12-message turn budget with a
-409-equivalent on overflow, and drive the hermies_ask / hermies_thread tools."""
+409-equivalent on overflow, and drive the hermix_ask / hermix_thread tools."""
 import json
 
 import pytest
 
-from hermies import tools, profile
-from hermies.client import HermiesClient
-from hermies.mock_backend import MockBackend
+from hermix import tools, profile
+from hermix.client import HermixClient
+from hermix.mock_backend import MockBackend
 
 
 @pytest.fixture(autouse=True)
 def _isolate_state(tmp_path, monkeypatch):
     """Keep local state per-test — asks/digs now persist, so a shared
     HERMES_HOME would leak between tests (and into the developer's real one)."""
-    monkeypatch.setenv("HERMIES_HOME", str(tmp_path))
+    monkeypatch.setenv("HERMIX_HOME", str(tmp_path))
 
 
 def _card():
@@ -78,40 +78,40 @@ def test_read_unknown_thread_is_404():
 # --------------------------------------------------------------------------- #
 # Tools over the client
 # --------------------------------------------------------------------------- #
-def test_hermies_ask_opens_ask_thread_and_returns_thread_id():
+def test_hermix_ask_opens_ask_thread_and_returns_thread_id():
     b = MockBackend()
-    h = _handlers(HermiesClient(b))
-    out = json.loads(h["hermies_ask"]({"to": "sol-herald", "question": "what stack?"}))
+    h = _handlers(HermixClient(b))
+    out = json.loads(h["hermix_ask"]({"to": "sol-herald", "question": "what stack?"}))
     assert out["success"] is True and out["thread_id"]
     th = b.list_threads()["threads"][0]
     assert th["kind"] == "ask" and th["turns"] == 1
 
 
-def test_hermies_ask_requires_to_and_question():
-    h = _handlers(HermiesClient(MockBackend()))
-    assert json.loads(h["hermies_ask"]({"to": "x"}))["success"] is False
+def test_hermix_ask_requires_to_and_question():
+    h = _handlers(HermixClient(MockBackend()))
+    assert json.loads(h["hermix_ask"]({"to": "x"}))["success"] is False
 
 
-def test_hermies_thread_list_read_send_close():
+def test_hermix_thread_list_read_send_close():
     b = MockBackend()
-    h = _handlers(HermiesClient(b))
+    h = _handlers(HermixClient(b))
     tid = b.open_thread("mira", "dig", "s")["thread_id"]
     b.script_reply(tid, "hello`with`fence")
 
-    read = json.loads(h["hermies_thread"]({"action": "read", "thread_id": tid}))
+    read = json.loads(h["hermix_thread"]({"action": "read", "thread_id": tid}))
     assert "`" not in read["messages"][0]["text"]   # inbound sanitized
 
-    sent = json.loads(h["hermies_thread"]({"action": "send", "thread_id": tid,
+    sent = json.loads(h["hermix_thread"]({"action": "send", "thread_id": tid,
                                            "text": "reply"}))
     assert sent["ok"] is True
 
-    listed = json.loads(h["hermies_thread"]({"action": "list"}))
+    listed = json.loads(h["hermix_thread"]({"action": "list"}))
     assert listed["threads"][0]["thread_id"] == tid
 
-    closed = json.loads(h["hermies_thread"]({"action": "close", "thread_id": tid}))
+    closed = json.loads(h["hermix_thread"]({"action": "close", "thread_id": tid}))
     assert closed["ok"] is True
 
 
-def test_hermies_thread_unknown_action():
-    h = _handlers(HermiesClient(MockBackend()))
-    assert "error" in json.loads(h["hermies_thread"]({"action": "frobnicate"}))
+def test_hermix_thread_unknown_action():
+    h = _handlers(HermixClient(MockBackend()))
+    assert "error" in json.loads(h["hermix_thread"]({"action": "frobnicate"}))

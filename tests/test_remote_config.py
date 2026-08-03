@@ -11,12 +11,12 @@ import json
 
 import pytest
 
-from hermies import _config, remote_config, updater
+from hermix import _config, remote_config, updater
 
 
 @pytest.fixture(autouse=True)
 def _isolate(tmp_path, monkeypatch):
-    monkeypatch.setenv("HERMIES_HOME", str(tmp_path))
+    monkeypatch.setenv("HERMIX_HOME", str(tmp_path))
     remote_config._reset_for_tests()
     yield
     remote_config._reset_for_tests()
@@ -39,7 +39,7 @@ def _doc(**knobs):
 
 # --- precedence -------------------------------------------------------------
 def test_hub_value_overrides_builtin_default(monkeypatch):
-    monkeypatch.delenv("HERMIES_INTERRUPT_THRESHOLD", raising=False)
+    monkeypatch.delenv("HERMIX_INTERRUPT_THRESHOLD", raising=False)
     assert _config.interrupt_threshold() == 5.0            # built-in
     remote_config.refresh(FakeClient(_doc(interrupt_threshold=7.25)), force=True)
     assert _config.interrupt_threshold() == 7.25           # tuned centrally
@@ -47,37 +47,37 @@ def test_hub_value_overrides_builtin_default(monkeypatch):
 
 def test_explicit_env_still_wins_over_hub(monkeypatch):
     remote_config.refresh(FakeClient(_doc(interrupt_threshold=7.25)), force=True)
-    monkeypatch.setenv("HERMIES_INTERRUPT_THRESHOLD", "9.5")
+    monkeypatch.setenv("HERMIX_INTERRUPT_THRESHOLD", "9.5")
     assert _config.interrupt_threshold() == 9.5            # operator keeps control
 
 
 def test_int_knobs_route_through_too(monkeypatch):
-    monkeypatch.delenv("HERMIES_MATCH_EVERY_HOURS", raising=False)
+    monkeypatch.delenv("HERMIX_MATCH_EVERY_HOURS", raising=False)
     remote_config.refresh(FakeClient(_doc(match_every_hours=2)), force=True)
     assert _config.match_every_hours() == 2
 
 
 def test_env_name_maps_to_hub_knob_name():
-    assert _config._knob_name("HERMIES_PRESSURE_WEIGHT") == "pressure_weight"
+    assert _config._knob_name("HERMIX_PRESSURE_WEIGHT") == "pressure_weight"
 
 
 # --- resilience -------------------------------------------------------------
 def test_hub_down_keeps_last_known_good(monkeypatch):
-    monkeypatch.delenv("HERMIES_INTERRUPT_THRESHOLD", raising=False)
+    monkeypatch.delenv("HERMIX_INTERRUPT_THRESHOLD", raising=False)
     remote_config.refresh(FakeClient(_doc(interrupt_threshold=6.5)), force=True)
     assert remote_config.refresh(FakeClient(boom=True), force=True) is False
     assert _config.interrupt_threshold() == 6.5            # cache survives
 
 
 def test_garbage_document_is_ignored(monkeypatch):
-    monkeypatch.delenv("HERMIES_INTERRUPT_THRESHOLD", raising=False)
+    monkeypatch.delenv("HERMIX_INTERRUPT_THRESHOLD", raising=False)
     remote_config.refresh(FakeClient(_doc(interrupt_threshold=6.5)), force=True)
     assert remote_config.refresh(FakeClient({"nope": 1}), force=True) is False
     assert _config.interrupt_threshold() == 6.5
 
 
 def test_wrong_typed_value_falls_back(monkeypatch):
-    monkeypatch.delenv("HERMIES_INTERRUPT_THRESHOLD", raising=False)
+    monkeypatch.delenv("HERMIX_INTERRUPT_THRESHOLD", raising=False)
     remote_config.refresh(FakeClient(_doc(interrupt_threshold="banana")), force=True)
     assert _config.interrupt_threshold() == 5.0            # default, not a crash
 
@@ -101,13 +101,13 @@ def test_refresh_is_throttled():
 
 # --- self-update ------------------------------------------------------------
 def test_auto_update_can_be_disabled(monkeypatch):
-    monkeypatch.setenv("HERMIES_AUTO_UPDATE", "0")
+    monkeypatch.setenv("HERMIX_AUTO_UPDATE", "0")
     assert updater.enabled() is False
     assert updater.check_and_update(force=True)["reason"] == "disabled"
 
 
 def test_update_refuses_a_dirty_or_non_git_checkout(monkeypatch):
-    monkeypatch.delenv("HERMIES_AUTO_UPDATE", raising=False)
+    monkeypatch.delenv("HERMIX_AUTO_UPDATE", raising=False)
     monkeypatch.setattr(updater, "_is_clean_git_checkout", lambda: False)
     res = updater.check_and_update(force=True)
     assert res["checked"] is True and res["updated"] is False
@@ -116,7 +116,7 @@ def test_update_refuses_a_dirty_or_non_git_checkout(monkeypatch):
 
 def test_update_reports_pending_restart_without_restarting(monkeypatch):
     """New code lands on disk; the gateway is NEVER restarted for us."""
-    monkeypatch.delenv("HERMIES_AUTO_UPDATE", raising=False)
+    monkeypatch.delenv("HERMIX_AUTO_UPDATE", raising=False)
     monkeypatch.setattr(updater, "_is_clean_git_checkout", lambda: True)
     revs = iter(["v0.9.0", "v0.9.1"])
     monkeypatch.setattr(updater, "active_version", lambda: next(revs))
@@ -131,7 +131,7 @@ def test_update_reports_pending_restart_without_restarting(monkeypatch):
 
 
 def test_update_is_quiet_when_already_current(monkeypatch):
-    monkeypatch.delenv("HERMIES_AUTO_UPDATE", raising=False)
+    monkeypatch.delenv("HERMIX_AUTO_UPDATE", raising=False)
     monkeypatch.setattr(updater, "_is_clean_git_checkout", lambda: True)
     monkeypatch.setattr(updater, "active_version", lambda: "v0.9.0")
 
@@ -173,8 +173,8 @@ class _Done:
 def test_only_one_process_polls(monkeypatch, tmp_path):
     """Hermes runs subagents as separate processes; each calls register(). The
     lease keeps exactly one of them talking to the hub."""
-    from hermies import service
-    monkeypatch.setenv("HERMIES_HOME", str(tmp_path))
+    from hermix import service
+    monkeypatch.setenv("HERMIX_HOME", str(tmp_path))
     assert service._claim_poller_lock(now=1000.0) is True      # first wins
 
     # a DIFFERENT process arrives while the lease is fresh -> stands down
@@ -204,15 +204,15 @@ def test_switch_reads_the_hub():
 def test_digs_switch_stops_new_conversations(monkeypatch, tmp_path):
     """The operator brake: flip it and agents stop starting digs — no release,
     no restart, nobody touches a terminal."""
-    from hermies import matchmaker, profile
-    from hermies.client import HermiesClient
-    from hermies.mock_backend import MockBackend
-    monkeypatch.setenv("HERMIES_MIN_SCORE", "1")
+    from hermix import matchmaker, profile
+    from hermix.client import HermixClient
+    from hermix.mock_backend import MockBackend
+    monkeypatch.setenv("HERMIX_MIN_SCORE", "1")
     card = profile.PublicCard(handle="gus-herald", represents="x",
                               offer=["ai video"], need=["music visuals"],
                               guilds=["ai-video"])
     b = MockBackend(); b._inbox = []
-    client = HermiesClient(b)
+    client = HermixClient(b)
     client.publish_profile(card.public_dict())
     llm = lambda s, u, **k: '{"verdict":"drop","pitch":"","reason":""}'
 
@@ -227,8 +227,8 @@ def test_digs_switch_stops_new_conversations(monkeypatch, tmp_path):
 
 
 def test_notifications_switch_holds_without_losing(monkeypatch):
-    from hermies import matchmaker
-    monkeypatch.setenv("HERMIES_QUIET_HOURS", "")
+    from hermix import matchmaker
+    monkeypatch.setenv("HERMIX_QUIET_HOURS", "")
     remote_config.refresh(FakeClient(_sw_doc(notifications_enabled=False)), force=True)
     st = matchmaker.new_state()
     st["outbox"]["ready"] = [{"id": "x", "handle": "a", "represents": "r",
@@ -260,8 +260,8 @@ def test_plugin_stands_down_when_a_sidecar_is_alive(monkeypatch, tmp_path):
     """Phase 2: when our own process owns the network work, the in-gateway
     plugin does nothing — so the sidecar can be updated and restarted without
     ever disturbing the user's Hermes."""
-    from hermies import service
-    monkeypatch.setenv("HERMIES_HOME", str(tmp_path))
+    from hermix import service
+    monkeypatch.setenv("HERMIX_HOME", str(tmp_path))
     assert service.sidecar_active(now=1000.0) is False        # none yet
 
     # A sidecar (different pid) announces itself.
@@ -280,7 +280,7 @@ def test_sidecar_entrypoint_needs_no_hermes_context():
     ctx.llm to explain why it is absent."""
     import ast
     import pathlib
-    from hermies import sidecar
+    from hermix import sidecar
     tree = ast.parse(pathlib.Path(sidecar.__file__).read_text(encoding="utf-8"))
     names = {n.id for n in ast.walk(tree) if isinstance(n, ast.Name)}
     assert "ctx" not in names, "the sidecar must not depend on a Hermes context"
@@ -291,9 +291,9 @@ def test_sidecar_entrypoint_needs_no_hermes_context():
 def test_unauthenticated_sidecar_never_silences_the_plugin(monkeypatch, tmp_path):
     """FAIL-SAFE: a sidecar that cannot work (no API key) must NOT claim
     ownership — otherwise the plugin stands down and the agent goes dark."""
-    from hermies import service, _config
-    monkeypatch.setenv("HERMIES_HOME", str(tmp_path))
-    monkeypatch.delenv("HERMIES_API_KEY", raising=False)
+    from hermix import service, _config
+    monkeypatch.setenv("HERMIX_HOME", str(tmp_path))
+    monkeypatch.delenv("HERMIX_API_KEY", raising=False)
     assert _config.is_live() is False
 
     # Simulate the sidecar loop's guard: it only marks itself alive when live.
@@ -303,7 +303,7 @@ def test_unauthenticated_sidecar_never_silences_the_plugin(monkeypatch, tmp_path
         "an unauthenticated sidecar must leave the work to the plugin"
 
     # With credentials it does take ownership.
-    monkeypatch.setenv("HERMIES_API_KEY", "k")
+    monkeypatch.setenv("HERMIX_API_KEY", "k")
     monkeypatch.setattr(service.os, "getpid", lambda: 5150)
     service._mark_sidecar_alive(now=2000.0)
     monkeypatch.setattr(service.os, "getpid", lambda: 111)

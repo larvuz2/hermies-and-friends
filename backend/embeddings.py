@@ -12,7 +12,7 @@ Two interchangeable encoders behind one `Encoder` protocol:
     cannot download, and lets the whole test suite run without the model.
 
 Selection (``get_encoder``):
-  * ``HERMIES_FORCE_FALLBACK_EMBED=1`` (or ``true``/``yes``) forces the fallback
+  * ``HERMIX_FORCE_FALLBACK_EMBED=1`` (or ``true``/``yes``) forces the fallback
     encoder — used by the test suite so it never touches the network.
   * otherwise try fastembed; on ANY import/load failure log a clear warning and
     fall back. The active mode is always inspectable via ``encoder.mode``.
@@ -29,7 +29,15 @@ from typing import Protocol, runtime_checkable
 
 import numpy as np
 
-log = logging.getLogger("hermies.embeddings")
+try:
+    import compat_env
+except ImportError:  # loaded by path from outside backend/ (evals, tooling)
+    import pathlib as _pl
+    import sys as _sys
+    _sys.path.insert(0, str(_pl.Path(__file__).resolve().parent))
+    import compat_env
+
+log = logging.getLogger("hermix.embeddings")
 
 DIM = 384
 MODEL_NAME = "BAAI/bge-small-en-v1.5"
@@ -128,7 +136,7 @@ class FastEmbedEncoder:
         self._model = TextEmbedding(model_name=MODEL_NAME)
         # Probe once so a broken model/download fails here (caught by factory),
         # not on the first live request.
-        probe = np.array(list(self._model.embed(["hermies"])), dtype=np.float32)
+        probe = np.array(list(self._model.embed(["hermix"])), dtype=np.float32)
         self.dim = int(probe.shape[1])
 
     def encode(self, texts: "list[str]") -> np.ndarray:
@@ -151,8 +159,8 @@ _cache: "dict[str, Encoder]" = {}
 
 
 def _build_encoder() -> Encoder:
-    if _truthy(os.environ.get("HERMIES_FORCE_FALLBACK_EMBED")):
-        log.warning("HERMIES_FORCE_FALLBACK_EMBED set — using hashing fallback embeddings")
+    if _truthy(compat_env.env("HERMIX_FORCE_FALLBACK_EMBED")):
+        log.warning("HERMIX_FORCE_FALLBACK_EMBED set — using hashing fallback embeddings")
         return HashEmbedder()
     try:
         enc = FastEmbedEncoder()
@@ -173,7 +181,7 @@ def get_encoder() -> Encoder:
     Keyed on the forced-fallback flag so tests and prod can each cache their own
     mode without reloading the ~100 MB model per request.
     """
-    key = "fallback" if _truthy(os.environ.get("HERMIES_FORCE_FALLBACK_EMBED")) else "auto"
+    key = "fallback" if _truthy(compat_env.env("HERMIX_FORCE_FALLBACK_EMBED")) else "auto"
     enc = _cache.get(key)
     if enc is None:
         with _lock:

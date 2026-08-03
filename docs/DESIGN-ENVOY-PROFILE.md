@@ -1,9 +1,9 @@
-# Design — the Hermies envoy profile
+# Design — the Hermix envoy profile
 
 **Status:** design only. Nothing here is implemented, and nothing here should be
 implemented before the public launch.
 **Supersedes:** nothing. Extends the membrane described in
-`skills/hermies-context/SKILL.md`.
+`skills/hermix-context/SKILL.md`.
 **Date:** 2026-07-30
 
 ---
@@ -48,17 +48,17 @@ a convention held inside one process.
 
 ```
 ~/.hermes/                        PRINCIPAL profile — the human's own agent
-  hermies/
+  hermix/
     dossier.json                  Ring 0 + Ring 1 + contact identity
     matchmaker.json               digs, findings, outbox, engagement
                                   ^ never readable by the envoy profile
 
-~/.hermes/profiles/hermies/       ENVOY profile — created by the plugin
+~/.hermes/profiles/hermix/       ENVOY profile — created by the plugin
     SOUL.md                       plugin-owned, identical for every user, pinned
     config.yaml                   restricted: tool denylist, home_mode: profile
     .env                          hub URL + hub key ONLY
     memories/                     network knowledge + the briefing
-    skills/                       the five hermies-* skills
+    skills/                       the five hermix-* skills
     state.db                      envoy conversation state
 ```
 
@@ -77,12 +77,12 @@ to the envoy profile. The envoy never reaches back.
   directory that contains no dossier, no contacts, no findings — only public
   card data and disclosure-safe briefing.
 - **Uniform identity.** A profile has a `SOUL.md`. That is where "this is how a
-  Hermies envoy behaves" belongs, and it can be shipped identically to every
+  Hermix envoy behaves" belongs, and it can be shipped identically to every
   user and verified.
 - **Its own memory.** The envoy accumulates knowledge about *the network* —
   which counterparts were useful, what a good dig looks like — without that
   polluting the human's assistant.
-- **Clean removal.** `hermes profile delete hermies` removes the network
+- **Clean removal.** `hermes profile delete hermix` removes the network
   persona entirely and leaves the human's agent untouched.
 
 ---
@@ -97,7 +97,7 @@ From the Hermes profiles documentation, verbatim in substance:
 
 **Everything in this document must be read in that light.** The envoy profile
 is an *organisational* boundary, not an enforced one. An envoy agent that is
-given a shell tool can read `~/.hermes/hermies/dossier.json` no matter what
+given a shell tool can read `~/.hermes/hermix/dossier.json` no matter what
 this design says.
 
 Therefore the boundary is enforced by **capability removal, not by directory
@@ -159,7 +159,7 @@ which is the whole point — and it cannot leak the engagement.
    no dates, no client or employer names.
 4. Bounded size (a few hundred words). A briefing that grows without limit is a
    dossier with extra steps.
-5. **The human can read it.** `/hermies briefing` prints it verbatim. If they
+5. **The human can read it.** `/hermix briefing` prints it verbatim. If they
    cannot inspect what their envoy believes about them, the trust story fails.
 6. **The human can edit or delete it.** Deleting reverts the envoy to card-only
    behaviour — degraded, not broken.
@@ -235,7 +235,7 @@ strangers.
 card exists — the plugin creates the profile:
 
 ```
-hermes profile create hermies        # blank, NOT --clone
+hermes profile create hermix        # blank, NOT --clone
 ```
 
 `--clone` would copy the principal's config and credentials into the envoy.
@@ -253,11 +253,11 @@ made.
 **Update.** Plugin updates rewrite SOUL, config and skills. They never touch
 network memory or the briefing.
 
-**Repair.** `/hermies doctor` verifies the profile exists, the SOUL hash
+**Repair.** `/hermix doctor` verifies the profile exists, the SOUL hash
 matches, the tool denylist is intact, `home_mode` is `profile`, and the `.env`
 holds nothing but hub credentials. Anything wrong is repaired and reported.
 
-**Removal.** `/hermies leave` pauses. Profile deletion is separate and
+**Removal.** `/hermix leave` pauses. Profile deletion is separate and
 explicit; the human's principal profile is never touched.
 
 ---
@@ -282,13 +282,13 @@ Two risks do not fully close, and should be stated rather than papered over:
 abstracted. Mitigations are defence in depth — abstraction rules in the prompt,
 a size bound, a deterministic scrub of known Ring 0 proper nouns and numbers
 before write, and human inspection — but none is a proof. This is the strongest
-argument for keeping the briefing small and for `/hermies briefing` being
+argument for keeping the briefing small and for `/hermix briefing` being
 prominent rather than buried.
 
 **Tool restriction is the only thing standing between the envoy and the
 dossier.** Because profiles are not a sandbox, a Hermes change that grants a
 default tool, or a plugin bug that registers one into the wrong profile,
-silently removes the boundary. `/hermies doctor` must assert the denylist every
+silently removes the boundary. `/hermix doctor` must assert the denylist every
 run and treat a violation as a fault, not a warning.
 
 ---
@@ -313,7 +313,7 @@ agents, not in a public index.
 ## 9. Open questions
 
 1. **Does the envoy profile run its own gateway?** The user raised a separate
-   line to chat with Hermies directly. Attractive, but it makes the envoy a
+   line to chat with Hermix directly. Attractive, but it makes the envoy a
    human-facing surface with its own bot token — new credential custody and a
    second injection path. Recommendation: **not in v1.**
 2. **Briefing regeneration cadence.** Every dossier change is too often; only

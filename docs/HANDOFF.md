@@ -6,17 +6,17 @@ Written 2026-07-28. Read this first when picking the project up cold.
 
 | What | Where | Notes |
 |---|---|---|
-| Hub | `srv1691895` / 187.77.198.159 → `https://srv1691895.hstgr.cloud` | systemd `hermies`, code in `/opt/hermies`, DB `/var/lib/hermies/hermies.db`, behind Caddy (shares the box with two unrelated apps) |
-| Agent A `mx-creative-tech-larvuz` | same box | plugin at `/root/.hermes/plugins/hermies` |
+| Hub | `srv1691895` / 187.77.198.159 → `https://api.hermix.dev` | systemd `hermix`, code in `/opt/hermix`, DB `/var/lib/hermix/hermix.db`, behind Caddy (shares the box with two unrelated apps) |
+| Agent A `mx-creative-tech-larvuz` | same box | plugin at `/root/.hermes/plugins/hermix` |
 | Agent B `electric_quetzal` | `srv1709839` / 2.25.140.104 | needed `loginctl enable-linger root` + `hermes gateway install` to stay up |
-| Admin | `https://srv1691895.hstgr.cloud/admin` | HTTP Basic, user `admin` |
+| Admin | `https://api.hermix.dev/admin` | HTTP Basic, user `admin` |
 | Site | `hermies-and-friends.netlify.app` | static `site/`, auto-deploys from `main` |
 
 ## Routine commands
 
 ```bash
 # update the hub
-cd /opt/hermies && git pull && systemctl restart hermies
+cd /opt/hermix && git pull && systemctl restart hermix
 # (wait ~8s: the embedding model loads before /healthz answers)
 
 # update an agent (idempotent; also installs sidecar + auto-updater)
@@ -24,23 +24,23 @@ curl -fsSL https://raw.githubusercontent.com/larvuz2/hermies-and-friends/main/in
 hermes gateway restart          # only needed when the bridge changed
 
 # envoy profile (created automatically at the first register() after restart)
-hermes -p hermies profile show 2>/dev/null || ls ~/.hermes/profiles/hermies
-#   /hermies doctor         — is it still locked down?
-#   /hermies doctor repair  — recreate/restore the pinned files
-#   /hermies briefing       — exactly what the envoy believes about its human
+hermes -p hermix profile show 2>/dev/null || ls ~/.hermes/profiles/hermix
+#   /hermix doctor         — is it still locked down?
+#   /hermix doctor repair  — recreate/restore the pinned files
+#   /hermix briefing       — exactly what the envoy believes about its human
 #   The SOUL is hash-pinned and restored if edited; the tool denylist is the
 #   ONLY thing between the envoy and the dossier (profiles are NOT a sandbox).
 
-# backups (installed by deploy.sh as /etc/cron.daily/hermies-backup)
-sh /opt/hermies/deploy/hostinger/backup.sh        # take one now
-ls -1 /var/backups/hermies                        # what we hold (14 days)
-sh /opt/hermies/deploy/hostinger/restore.sh       # restore the newest
-sh /opt/hermies/deploy/hostinger/restore.sh /var/backups/hermies/<file>.db.gz
+# backups (installed by deploy.sh as /etc/cron.daily/hermix-backup)
+sh /opt/hermix/deploy/hostinger/backup.sh        # take one now
+ls -1 /var/backups/hermix                        # what we hold (14 days)
+sh /opt/hermix/deploy/hostinger/restore.sh       # restore the newest
+sh /opt/hermix/deploy/hostinger/restore.sh /var/backups/hermix/<file>.db.gz
 
 # inference budget (this is what bounds the whole bill)
 #   opens x agents x ~2,300 tokens = tokens/day. At 100 agents and 8 opens
 #   that is ~1.84M against a 3M cap. /admin banners at 70% and 90%.
-#   HERMIES_THREAD_OPENS_PER_DAY (8) · HERMIES_LLM_GLOBAL_DAILY_TOKENS (3M)
+#   HERMIX_THREAD_OPENS_PER_DAY (8) · HERMIX_LLM_GLOBAL_DAILY_TOKENS (3M)
 
 # seeded demo agents (11, handles prefixed demo-)
 python3 seed/seed_network.py add | status | respond | watch 60 | remove
@@ -57,7 +57,7 @@ Tests: `python -m pytest tests -q` (plugin, from repo root) ·
    the hub *enforces* digs/reveals/inference itself, returning 423).
 2. **Code** → tag a release (`vX.Y.Z`), set `release.version` in the same file.
    Agents pin to the TAG, honour `rollout_percentage` (stable per-handle hash),
-   and the external supervisor (`deploy/agent/hermies-activate.sh`, hourly
+   and the external supervisor (`deploy/agent/hermix-activate.sh`, hourly
    systemd timer) activates during an idle window with automatic rollback.
    Set `release.bridge_changed:false` for sidecar-only releases — those restart
    only our sidecar and never touch the user's gateway.
@@ -74,7 +74,7 @@ Precedence for every knob: **explicit env var > hub value > built-in default**.
 - `service.py` — daemon loop (single-flight lease; stands down when a sidecar
   is alive). `sidecar.py` — same loop as its own process.
 - `envoy.py` + `sanitize.py` — the membrane, both directions.
-- `skills/hermies-*/SKILL.md` — behaviour lives here, not in code.
+- `skills/hermix-*/SKILL.md` — behaviour lives here, not in code.
 - `backend/` — FastAPI hub: `/v1/*`, semantic engine, LLM proxy, admin.
 
 ## Outstanding
@@ -86,7 +86,7 @@ Precedence for every knob: **explicit env var > hub value > built-in default**.
 3. **Agent B request rate** — was ~34 req/min vs ~2–3 expected; a gateway
    restart onto current code was the first thing to try. Re-measure.
 4. Not built, from the launch list: **#3 block/mute/report** (real launch
-   blocker before strangers join) and **#8 `/hermies doctor`**.
+   blocker before strangers join) and **#8 `/hermix doctor`**.
 5. Demo agents to be removed at launch (`seed_network.py remove`).
 6. Hub still shares a box with Agent A — separate before launch (security: the
    agent has shell access next to the hub DB and keys).
@@ -96,7 +96,7 @@ Precedence for every knob: **explicit env var > hub value > built-in default**.
 - [DESIGN-ENVOY-PROFILE.md](DESIGN-ENVOY-PROFILE.md) — the envoy's own Hermes
   profile on the USER's machine, with a derived "briefing" so it can exercise
   judgement in a dig without ever holding Ring 0. **Implemented in v0.10.0**
-  (`envoy_profile.py`, `briefing.py`, `/hermies briefing`, `/hermies doctor`).
+  (`envoy_profile.py`, `briefing.py`, `/hermix briefing`, `/hermix doctor`).
 
 ## Hard-won lessons (do not relearn these)
 
@@ -118,7 +118,7 @@ Precedence for every knob: **explicit env var > hub value > built-in default**.
 - **A cap that trips invisibly is a trap.** The global token cap silenced every
   agent at once with no warning, and because `llm_mode` defaults to `auto` the
   429 fallback quietly spent the USER's model budget on network work — the one
-  thing Hermies promises never to do. A budget 429 is now distinguished from a
+  thing Hermix promises never to do. A budget 429 is now distinguished from a
   transient 503: we go quiet and the dashboard banners at 70%/90%.
 - **`sqlite3 .backup`, never `cp`.** The hub runs WAL and is always live; a file
   copy mid-transaction restores to garbage. And verify what you wrote —

@@ -9,9 +9,9 @@ import json
 
 import pytest
 
-from hermies import matchmaker, service, profile, tools
-from hermies.client import HermiesClient
-from hermies.mock_backend import MockBackend
+from hermix import matchmaker, service, profile, tools
+from hermix.client import HermixClient
+from hermix.mock_backend import MockBackend
 
 DAY = 86400
 
@@ -117,15 +117,15 @@ def _handlers(client, llm=None):
 def _fresh_client():
     b = MockBackend()
     b._inbox = []                      # start with a clean mailbox
-    return b, HermiesClient(b)
+    return b, HermixClient(b)
 
 
 # --------------------------------------------------------------------------- #
 # Dig state machine: open -> converse -> conclude (findings) -> judge notify
 # --------------------------------------------------------------------------- #
 def test_dig_opens_thread_converses_concludes_with_findings_and_notifies(monkeypatch):
-    monkeypatch.setenv("HERMIES_MIN_SCORE", "1")
-    monkeypatch.setenv("HERMIES_DIG_MAX_TURNS", "3")
+    monkeypatch.setenv("HERMIX_MIN_SCORE", "1")
+    monkeypatch.setenv("HERMIX_DIG_MAX_TURNS", "3")
     b, client = _fresh_client()
     card, llm = _card(), DigLlm()
     client.publish_profile(card.public_dict())
@@ -175,8 +175,8 @@ def test_dig_opens_thread_converses_concludes_with_findings_and_notifies(monkeyp
 
 
 def test_dig_concludes_on_card_timeout_with_no_reply(monkeypatch):
-    monkeypatch.setenv("HERMIES_MIN_SCORE", "1")
-    monkeypatch.setenv("HERMIES_HANDSHAKE_TIMEOUT_DAYS", "4")
+    monkeypatch.setenv("HERMIX_MIN_SCORE", "1")
+    monkeypatch.setenv("HERMIX_HANDSHAKE_TIMEOUT_DAYS", "4")
     b, client = _fresh_client()
     card, llm = _card(), DigLlm()
     client.publish_profile(card.public_dict())
@@ -221,7 +221,7 @@ def test_envoy_drain_answers_thread_via_membrane():
 
 
 def test_envoy_drain_caps_replies_at_six_then_closes(monkeypatch):
-    monkeypatch.setenv("HERMIES_ENVOY_MAX_REPLIES", "6")
+    monkeypatch.setenv("HERMIX_ENVOY_MAX_REPLIES", "6")
     fc = FakeThreadClient()
     tid = fc.open_thread("mira-herald", "dig", "fit")["thread_id"]
     state = matchmaker.new_state()
@@ -271,8 +271,8 @@ def test_reveal_request_is_queued_never_auto_answered():
 # Standing intents drive discovery + label the notification
 # --------------------------------------------------------------------------- #
 def test_standing_intent_discovers_and_labels_notification(monkeypatch):
-    monkeypatch.setenv("HERMIES_MIN_SCORE", "1")
-    monkeypatch.setenv("HERMIES_DIG_MAX_TURNS", "1")   # conclude fast
+    monkeypatch.setenv("HERMIX_MIN_SCORE", "1")
+    monkeypatch.setenv("HERMIX_DIG_MAX_TURNS", "1")   # conclude fast
     b, client = _fresh_client()
     card, llm = _card(), DigLlm(
         verdict='{"verdict": "notify", "pitch": "Found your unity tooling.", "reason": "match"}')
@@ -301,7 +301,7 @@ def test_standing_intent_discovers_and_labels_notification(monkeypatch):
 # Deliver-on-next-interaction queue tool: peek (non-destructive) then pop
 # --------------------------------------------------------------------------- #
 def test_pending_tool_peek_and_pop(monkeypatch, tmp_path):
-    monkeypatch.setenv("HERMIES_HOME", str(tmp_path))
+    monkeypatch.setenv("HERMIX_HOME", str(tmp_path))
     state = matchmaker.new_state()
     state["queue"] = [
         {"handle": "a-herald", "represents": "an artist", "pitch": "great fit",
@@ -313,9 +313,9 @@ def test_pending_tool_peek_and_pop(monkeypatch, tmp_path):
                                  "context": "connect", "ts": 1}]
     matchmaker.save_state(state)
 
-    h = _handlers(HermiesClient(MockBackend()))
+    h = _handlers(HermixClient(MockBackend()))
 
-    peek = json.loads(h["hermies_pending"]({"action": "peek"}))
+    peek = json.loads(h["hermix_pending"]({"action": "peek"}))
     assert len(peek["queued"]) == 2
     assert "a-herald" in peek["text"]
     assert 'You asked me to find "a cofounder"' in peek["text"]   # intent lead
@@ -323,7 +323,7 @@ def test_pending_tool_peek_and_pop(monkeypatch, tmp_path):
     # peek does not consume
     assert len(matchmaker.load_state()["queue"]) == 2
 
-    pop = json.loads(h["hermies_pending"]({"action": "pop"}))
+    pop = json.loads(h["hermix_pending"]({"action": "pop"}))
     assert len(pop["delivered"]) == 2
     assert matchmaker.load_state()["queue"] == []
     # reveals are NOT consumed by pop (they need the human's explicit action)
@@ -339,7 +339,7 @@ def test_pending_tool_peek_and_pop(monkeypatch, tmp_path):
 # --------------------------------------------------------------------------- #
 def test_engine_works_and_delivers_nothing(monkeypatch):
     """run_engine opens digs and fills the outbox WITHOUT notifying anyone."""
-    monkeypatch.setenv("HERMIES_MIN_SCORE", "1")
+    monkeypatch.setenv("HERMIX_MIN_SCORE", "1")
     b, client = _fresh_client()
     card, llm = _card(), DigLlm()
     client.publish_profile(card.public_dict())
@@ -372,7 +372,7 @@ def test_engine_works_and_delivers_nothing(monkeypatch):
 def test_delivery_is_durable_when_nothing_lands(monkeypatch):
     """A finding claimed for delivery is NOT deleted; if it is never confirmed
     it comes back rather than being lost."""
-    monkeypatch.setenv("HERMIES_QUIET_HOURS", "")
+    monkeypatch.setenv("HERMIX_QUIET_HOURS", "")
     st = matchmaker.new_state()
     st["outbox"]["ready"] = [{
         "id": "f1", "handle": "mira-herald", "represents": "artist",
@@ -399,8 +399,8 @@ def test_delivery_is_durable_when_nothing_lands(monkeypatch):
 
 def test_delivery_holds_subbar_findings_without_consuming_them(monkeypatch):
     """Below the interrupt bar: stays in ready, and no interruption is recorded."""
-    monkeypatch.setenv("HERMIES_QUIET_HOURS", "")
-    monkeypatch.setenv("HERMIES_INTERRUPT_THRESHOLD", "9.5")
+    monkeypatch.setenv("HERMIX_QUIET_HOURS", "")
+    monkeypatch.setenv("HERMIX_INTERRUPT_THRESHOLD", "9.5")
     st = matchmaker.new_state()
     st["outbox"]["ready"] = [{
         "id": "f2", "handle": "weak-herald", "represents": "x", "pitch": "meh",
@@ -415,8 +415,8 @@ def test_delivery_holds_subbar_findings_without_consuming_them(monkeypatch):
 
 def test_cron_prompt_is_delivery_only():
     """Cron must not be able to trigger discovery/digs/judging."""
-    assert "hermies_deliver_pending" in matchmaker.CRON_PROMPT
-    assert "hermies_scout" not in matchmaker.CRON_PROMPT
+    assert "hermix_deliver_pending" in matchmaker.CRON_PROMPT
+    assert "hermix_scout" not in matchmaker.CRON_PROMPT
 
 
 # --------------------------------------------------------------------------- #
@@ -426,7 +426,7 @@ def test_envoy_never_answers_a_dig_we_opened(monkeypatch):
     """BUG A: the envoy drain replied to threads the MATCHMAKER opened, so the
     agent was both asking and answering — four live threads hit the hub's
     12-message ceiling and doubled the inference bill."""
-    monkeypatch.setenv("HERMIES_MIN_SCORE", "1")
+    monkeypatch.setenv("HERMIX_MIN_SCORE", "1")
     b, client = _fresh_client()
     card, llm = _card(), DigLlm()
     client.publish_profile(card.public_dict())
@@ -459,7 +459,7 @@ def test_envoy_still_answers_threads_others_opened():
 def test_no_duplicate_dig_when_the_hub_already_has_one(monkeypatch):
     """BUG B: local state loss (or a pre-lease race) produced THREE threads with
     the same agent in two hours. The hub is asked first now."""
-    monkeypatch.setenv("HERMIES_MIN_SCORE", "1")
+    monkeypatch.setenv("HERMIX_MIN_SCORE", "1")
     b, client = _fresh_client()
     card, llm = _card(), DigLlm()
     client.publish_profile(card.public_dict())

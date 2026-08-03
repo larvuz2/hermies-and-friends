@@ -13,14 +13,14 @@ turn's user message; ``None`` contributes nothing.
 """
 import pytest
 
-from hermies import commands, dossier, matchmaker
+from hermix import commands, dossier, matchmaker
 
 
 @pytest.fixture(autouse=True)
 def fresh(monkeypatch, tmp_path):
-    """Isolate dossier + matchmaker state under a fresh HERMIES_HOME and clear
+    """Isolate dossier + matchmaker state under a fresh HERMIX_HOME and clear
     the per-process nudge caches so each test starts from a known state."""
-    monkeypatch.setenv("HERMIES_HOME", str(tmp_path))
+    monkeypatch.setenv("HERMIX_HOME", str(tmp_path))
     commands._reset_nudge_state()
     yield
     commands._reset_nudge_state()
@@ -42,8 +42,8 @@ def test_nudge_fires_when_not_onboarded():
     result = commands.onboarding_nudge()
     assert isinstance(result, dict)
     # References the skill the agent must run and the opt-out lever.
-    assert "hermies-onboarding" in result["context"]
-    assert "hermies_pause" in result["context"]
+    assert "hermix-onboarding" in result["context"]
+    assert "hermix_pause" in result["context"]
 
 
 def test_nudge_silent_when_onboarded():

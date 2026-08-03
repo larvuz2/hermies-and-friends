@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # =============================================================================
-# Hermies & Friends — ONE-COMMAND plugin installer for an existing Hermes Agent
+# Hermix & Friends — ONE-COMMAND plugin installer for an existing Hermes Agent
 # =============================================================================
 #
 #   curl -fsSL https://raw.githubusercontent.com/larvuz2/hermies-and-friends/main/install.sh | bash
@@ -41,18 +41,18 @@
 #   --no-enable         clone/update only; do not touch config.yaml
 #
 # Env overrides:
-#   HERMIES_REPO   git URL to clone (default: the GitHub repo below)
+#   HERMIX_REPO   git URL to clone (default: the GitHub repo below)
 #   HERMES_HOME    Hermes data dir (default: /root/.hermes as root, else ~/.hermes)
 #
 # Tested against Hermes Agent v0.19.0 on Ubuntu 22.04/24.04.
 # =============================================================================
 set -euo pipefail
 
-REPO="${HERMIES_REPO:-https://github.com/larvuz2/hermies-and-friends}"
+REPO="${HERMIX_REPO:-https://github.com/larvuz2/hermies-and-friends}"
 REF="main"
 PLUGIN_DIR_OVERRIDE=""
 DO_ENABLE=1
-PLUGIN_NAME="hermies"
+PLUGIN_NAME="hermix"
 DOCS_URL="https://hermes-agent.nousresearch.com/docs/getting-started/installation"
 
 # --- arg parsing -------------------------------------------------------------
@@ -61,7 +61,7 @@ DOCS_URL="https://hermes-agent.nousresearch.com/docs/getting-started/installatio
 while [ "$#" -gt 0 ]; do
   case "$1" in
     --dir)
-      [ "$#" -ge 2 ] || { echo "!! --dir needs a path.  Fix: --dir /root/.hermes/plugins/hermies" >&2; exit 2; }
+      [ "$#" -ge 2 ] || { echo "!! --dir needs a path.  Fix: --dir /root/.hermes/plugins/hermix" >&2; exit 2; }
       PLUGIN_DIR_OVERRIDE="$2"; shift 2 ;;
     --ref)
       [ "$#" -ge 2 ] || { echo "!! --ref needs a branch or tag.  Fix: --ref main" >&2; exit 2; }
@@ -104,7 +104,7 @@ run_hermes() {
 git_q() { GIT_TERMINAL_PROMPT=0 GIT_ASKPASS=/bin/true git "$@" </dev/null; }
 
 echo "======================================================================"
-echo " Hermies & Friends — plugin installer"
+echo " Hermix & Friends — plugin installer"
 echo "   repo : $REPO"
 echo "   ref  : $REF"
 echo "======================================================================"
@@ -224,7 +224,7 @@ SHORT_SHA="$(git_q -C "$PLUGIN_DIR" rev-parse --short HEAD 2>/dev/null || echo u
 echo "    commit        : $SHORT_SHA"
 
 # --- config.yaml helper (stdlib python3 only — pyyaml is NOT required) --------
-PYHELPER="$(mktemp 2>/dev/null || echo "/tmp/hermies-cfg-$$.py")"
+PYHELPER="$(mktemp 2>/dev/null || echo "/tmp/hermix-cfg-$$.py")"
 cleanup() { rm -f "$PYHELPER"; }
 trap cleanup EXIT
 cat > "$PYHELPER" <<'PYEOF'
@@ -351,7 +351,7 @@ def patch(lines, r, name):
 def main():
     mode = sys.argv[1]
     path = sys.argv[2]
-    name = sys.argv[3] if len(sys.argv) > 3 else "hermies"
+    name = sys.argv[3] if len(sys.argv) > 3 else "hermix"
 
     text = ""
     if os.path.isfile(path):
@@ -468,7 +468,7 @@ elif config_check; then
 fi
 
 echo "    [a] plugin.yaml + __init__.py present   : $V_FILES"
-echo "    [b] 'hermes plugins list' shows hermies : $V_LIST"
+echo "    [b] 'hermes plugins list' shows hermix : $V_LIST"
 echo "    [c] config.yaml plugins.enabled         : $V_CONFIG"
 
 FAILED=0
@@ -478,7 +478,7 @@ case "$V_CONFIG" in PASS|SKIP*) ;; *) FAILED=1 ;; esac
 if [ "$FAILED" -ne 0 ]; then
   echo ""
   echo "========================================" >&2
-  echo " HERMIES INSTALL FAILED" >&2
+  echo " HERMIX INSTALL FAILED" >&2
   echo "========================================" >&2
   [ "$V_FILES" = "PASS" ] || {
     echo " [a] FAILED — $PLUGIN_DIR is missing plugin.yaml and/or __init__.py." >&2
@@ -500,13 +500,13 @@ fi
 # Approved ONCE, here. After this the user never runs an update command: the
 # supervisor activates approved releases during idle windows and rolls back by
 # itself if one fails. Skipped when not root or when systemd isn't available;
-# opt out entirely with HERMIES_AUTO_UPDATE=0.
+# opt out entirely with HERMIX_AUTO_UPDATE=0.
 ACTIVATOR_LINE="not installed (needs root + systemd)"
 if [ "$(id -u)" = "0" ] && command -v systemctl >/dev/null 2>&1 \
-   && [ "${HERMIES_AUTO_UPDATE:-1}" != "0" ]; then
-  if [ -f "$PLUGIN_DIR/deploy/agent/hermies-activate.sh" ]; then
-    chmod +x "$PLUGIN_DIR/deploy/agent/hermies-activate.sh" 2>/dev/null || true
-    if HERMES_HOME="$HERMES_HOME" "$PLUGIN_DIR/deploy/agent/hermies-activate.sh" \
+   && [ "${HERMIX_AUTO_UPDATE:-1}" != "0" ]; then
+  if [ -f "$PLUGIN_DIR/deploy/agent/hermix-activate.sh" ]; then
+    chmod +x "$PLUGIN_DIR/deploy/agent/hermix-activate.sh" 2>/dev/null || true
+    if HERMES_HOME="$HERMES_HOME" "$PLUGIN_DIR/deploy/agent/hermix-activate.sh" \
          --install >/dev/null 2>&1; then
       ACTIVATOR_LINE="installed (hourly, idle-aware, auto-rollback)"
     else
@@ -525,7 +525,7 @@ fi
 
 echo ""
 echo "========================================"
-echo " HERMIES INSTALLED ✓   (not active yet)"
+echo " HERMIX INSTALLED ✓   (not active yet)"
 echo "========================================"
 echo " Plugin : $PLUGIN_DIR (commit $SHORT_SHA)"
 echo " Enabled: $ENABLED_LINE"

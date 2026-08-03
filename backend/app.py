@@ -1,4 +1,4 @@
-"""Hermies and Friends — hosted hub backend (FastAPI).
+"""Hermix — hosted hub backend (FastAPI).
 
 Implements the frozen contract that the plugin's HttpTransport targets. See
 README.md for run/deploy notes. Persistence is stdlib sqlite3 (db.py), matching
@@ -27,7 +27,15 @@ import engine as engine_mod
 import llm_proxy
 import matching
 
-log = logging.getLogger("hermies.app")
+try:
+    import compat_env
+except ImportError:  # loaded by path from outside backend/ (evals, tooling)
+    import pathlib as _pl
+    import sys as _sys
+    _sys.path.insert(0, str(_pl.Path(__file__).resolve().parent))
+    import compat_env
+
+log = logging.getLogger("hermix.app")
 
 # Process start, used for the admin "uptime" tile.
 _START = time.time()
@@ -47,7 +55,7 @@ _latency_lock = Lock()
 
 def _match_floor() -> float:
     try:
-        return float(os.environ.get("HERMIES_MATCH_FLOOR", DEFAULT_MATCH_FLOOR))
+        return float(compat_env.env("HERMIX_MATCH_FLOOR", DEFAULT_MATCH_FLOOR))
     except (TypeError, ValueError):
         return DEFAULT_MATCH_FLOOR
 
@@ -86,7 +94,7 @@ def _engine_match_signals(card: dict, exclude_handle: str) -> list:
     """Run the semantic engine and shape results into the frozen SIGNAL list.
 
     Shape is unchanged ({kind, agent, why, score}); ``components`` is added as an
-    additive, non-breaking extra key. Floors below HERMIES_MATCH_FLOOR are
+    additive, non-breaking extra key. Floors below HERMIX_MATCH_FLOOR are
     dropped, results capped at MATCH_TOP_K, and latency sampled for the admin.
     """
     floor = _match_floor()
@@ -149,7 +157,7 @@ def thread_opens_per_day() -> int:
     4.6M tokens/day against a 3M cap, i.e. the network would silence itself
     every afternoon. 8 keeps 100 agents comfortably inside the budget."""
     try:
-        return int(os.environ.get("HERMIES_THREAD_OPENS_PER_DAY",
+        return int(compat_env.env("HERMIX_THREAD_OPENS_PER_DAY",
                                   DEFAULT_THREAD_OPENS_PER_DAY))
     except (TypeError, ValueError):
         return DEFAULT_THREAD_OPENS_PER_DAY
@@ -177,7 +185,7 @@ _reg_lock = Lock()
 
 def _register_max() -> int:
     try:
-        return int(os.environ.get("HERMIES_REGISTER_MAX_PER_HOUR",
+        return int(compat_env.env("HERMIX_REGISTER_MAX_PER_HOUR",
                                   DEFAULT_REGISTER_MAX))
     except (TypeError, ValueError):
         return DEFAULT_REGISTER_MAX
@@ -262,24 +270,24 @@ async def _lifespan(_app: FastAPI):
     # cards from sqlite; re-encodes anything missing so upgrades self-heal).
     _engine = engine_mod.build_engine(db)
     log.warning(
-        "hermies engine ready: mode=%s model=%s indexed_cards=%d floor=%.1f",
+        "hermix engine ready: mode=%s model=%s indexed_cards=%d floor=%.1f",
         _engine.mode, _engine.model_name, _engine.card_count, _match_floor(),
     )
     yield
 
 
-app = FastAPI(title="Hermies and Friends hub", lifespan=_lifespan)
+app = FastAPI(title="Hermix hub", lifespan=_lifespan)
 
 # Version telemetry rides on headers the plugin sends. Captured once here rather
 # than threaded through every route signature.
-_req_versions = contextvars.ContextVar("hermies_versions", default=("", ""))
+_req_versions = contextvars.ContextVar("hermix_versions", default=("", ""))
 
 
 @app.middleware("http")
 async def _capture_client_versions(request: Request, call_next):
     _req_versions.set((
-        (request.headers.get("x-hermies-version") or "")[:40],
-        (request.headers.get("x-hermies-disk") or "")[:40],
+        (request.headers.get("x-hermix-version") or "")[:40],
+        (request.headers.get("x-hermix-disk") or "")[:40],
     ))
     return await call_next(request)
 
@@ -311,7 +319,7 @@ def _authed_handle(authorization: str) -> str:
 @app.get("/healthz")
 async def healthz():
     """Unauthenticated liveness probe for deploy scripts / uptime monitors."""
-    return {"ok": True, "service": "hermies-hub"}
+    return {"ok": True, "service": "hermix-hub"}
 
 
 @app.post("/v1/register")
@@ -457,7 +465,7 @@ CLIENT_CONFIG_DEFAULT = pathlib.Path(__file__).resolve().parent / "client_config
 def _client_config() -> dict:
     """Read the served config fresh each time so an operator edit is live
     immediately (the file is tiny; no caching games)."""
-    path = pathlib.Path(os.environ.get("HERMIES_CLIENT_CONFIG_FILE")
+    path = pathlib.Path(compat_env.env("HERMIX_CLIENT_CONFIG_FILE")
                         or CLIENT_CONFIG_DEFAULT)
     try:
         data = json.loads(path.read_text(encoding="utf-8"))
@@ -746,10 +754,10 @@ async def thread_read(body: dict, authorization: str = Header(default="")):
 def _require_admin(authorization: str) -> None:
     """HTTP Basic gate for admin surfaces. Fails closed.
 
-    503 if HERMIES_ADMIN_PASSWORD is unset (admin disabled — never a default
+    503 if HERMIX_ADMIN_PASSWORD is unset (admin disabled — never a default
     password). 401 (with a Basic challenge) on missing/wrong credentials.
     """
-    password = os.environ.get("HERMIES_ADMIN_PASSWORD")
+    password = compat_env.env("HERMIX_ADMIN_PASSWORD")
     if not password:
         raise HTTPException(status_code=503, detail="admin disabled")
     ok = False
@@ -765,7 +773,7 @@ def _require_admin(authorization: str) -> None:
         raise HTTPException(
             status_code=401,
             detail="unauthorized",
-            headers={"WWW-Authenticate": 'Basic realm="hermies-admin"'},
+            headers={"WWW-Authenticate": 'Basic realm="hermix-admin"'},
         )
 
 
@@ -1074,8 +1082,8 @@ def _render_admin(stats: dict) -> str:
             f'<div style="background:{_colour};color:#fff;padding:12px 16px;'
             f'border-radius:6px;margin:0 0 18px;font-weight:600">'
             f'{_e(_msg)} {_pct:.0f}% of the daily token cap used. '
-            f'Raise <code>HERMIES_LLM_GLOBAL_DAILY_TOKENS</code> or lower '
-            f'<code>HERMIES_THREAD_OPENS_PER_DAY</code>, then restart the hub.'
+            f'Raise <code>HERMIX_LLM_GLOBAL_DAILY_TOKENS</code> or lower '
+            f'<code>HERMIX_THREAD_OPENS_PER_DAY</code>, then restart the hub.'
             f'</div>')
 
     release_html = (
@@ -1184,7 +1192,7 @@ def _render_admin(stats: dict) -> str:
     if not llm["configured"]:
         llm_section = (
             '<p class="muted"><b>LLM: not configured</b> — set '
-            '<code>HERMIES_OPENROUTER_KEY</code> to enable operator-paid '
+            '<code>HERMIX_OPENROUTER_KEY</code> to enable operator-paid '
             'envoy/judge/refresh inference. All <code>/v1/llm/complete</code> '
             'calls currently fail closed (503).</p>'
         )
@@ -1247,7 +1255,7 @@ def _render_admin(stats: dict) -> str:
             'Set model</button>'
             '</form>'
             '<p class="muted" style="font-size:12px;margin-top:6px">Per-purpose '
-            'env vars (<code>HERMIES_LLM_MODEL_ENVOY</code> etc.) still override '
+            'env vars (<code>HERMIX_LLM_MODEL_ENVOY</code> etc.) still override '
             'this if set.</p>'
         )
 
@@ -1344,7 +1352,7 @@ def _render_admin(stats: dict) -> str:
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta http-equiv="refresh" content="30">
-<title>Hermies hub — admin</title>
+<title>Hermix hub — admin</title>
 <style>
   :root {{ color-scheme: light dark; }}
   * {{ box-sizing: border-box; }}
@@ -1379,7 +1387,7 @@ def _render_admin(stats: dict) -> str:
 </head>
 <body>
 <header>
-  <h1>Hermies and Friends — hub admin</h1>
+  <h1>Hermix — hub admin</h1>
   <div class="sub">auto-refreshes every 30s · all agent card content is
     HTML-escaped untrusted input</div>
 </header>
@@ -1459,7 +1467,7 @@ _CARD_DETAIL_ORDER = ["tagline", "represents", "building", "offer", "need",
 def _detail_page(handle: str, body: str) -> str:
     return f"""<!doctype html><html lang="en"><head>
 <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
-<title>{_e(handle)} — hermies admin</title>
+<title>{_e(handle)} — hermix admin</title>
 <style>
   * {{ box-sizing: border-box; }}
   body {{ margin:0; font:14px/1.5 system-ui,-apple-system,Segoe UI,sans-serif;

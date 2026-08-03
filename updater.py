@@ -14,7 +14,7 @@ What this does NOT do, deliberately:
   * it never touches a checkout with local modifications (someone is hacking on
     it) or one that isn't a git repo.
 
-Opt out completely with HERMIES_AUTO_UPDATE=0.
+Opt out completely with HERMIX_AUTO_UPDATE=0.
 """
 import hashlib
 import logging
@@ -23,13 +23,13 @@ import pathlib
 import subprocess
 import time
 
-log = logging.getLogger("hermies.updater")
+log = logging.getLogger("hermix.updater")
 
 _LAST_CHECK = 0.0
 
 
 def enabled() -> bool:
-    raw = (os.environ.get("HERMIES_AUTO_UPDATE", "") or "").strip().lower()
+    raw = (os.environ.get("HERMIX_AUTO_UPDATE", "") or "").strip().lower()
     return raw not in ("0", "false", "no", "off")
 
 
@@ -166,7 +166,7 @@ def check_and_update(now=None, force=False) -> dict:
         result["updated"] = True
         result["pending_restart"] = True
         result["reason"] = "new code on disk; active after the next gateway restart"
-        log.info("hermies self-updated %s -> %s (restart pending)", before, after)
+        log.info("hermix self-updated %s -> %s (restart pending)", before, after)
     else:
         result["reason"] = "already current"
     return result

@@ -13,7 +13,7 @@ whole matchmaking conversation the plugin now runs for you:
          (must name the counterpart AND quote the conversation)
       -> A sends a reveal_request (its human approved sharing A's contact)
       -> B's daemon QUEUES it as a pending reveal — never auto-answers it
-      -> B's human approves via hermies_reveal_respond(human_approved=true)
+      -> B's human approves via hermix_reveal_respond(human_approved=true)
       -> A receives B's contact.
 
 The core trust assertion: B's contact identity appears ONLY after B's explicit
@@ -33,18 +33,18 @@ import sys
 import tempfile
 import time
 
-# --- make the plugin importable as the canonical `hermies` package ----------
+# --- make the plugin importable as the canonical `hermix` package ----------
 ROOT = pathlib.Path(__file__).resolve().parent.parent
-if "hermies" not in sys.modules:
+if "hermix" not in sys.modules:
     _spec = importlib.util.spec_from_file_location(
-        "hermies", ROOT / "__init__.py", submodule_search_locations=[str(ROOT)]
+        "hermix", ROOT / "__init__.py", submodule_search_locations=[str(ROOT)]
     )
     _mod = importlib.util.module_from_spec(_spec)
-    sys.modules["hermies"] = _mod
+    sys.modules["hermix"] = _mod
     _spec.loader.exec_module(_mod)
 
-from hermies import profile, envoy, service, matchmaker, tools, dossier  # noqa: E402
-from hermies.client import HttpTransport, HermiesClient  # noqa: E402
+from hermix import profile, envoy, service, matchmaker, tools, dossier  # noqa: E402
+from hermix.client import HttpTransport, HermixClient  # noqa: E402
 
 HOST = "127.0.0.1"
 PORT = 8791
@@ -91,16 +91,16 @@ def start_backend():
     if not (BACKEND_DIR / "app.py").exists():
         raise RuntimeError(f"backend/app.py not found under {BACKEND_DIR}")
 
-    tmp_db = tempfile.NamedTemporaryFile(prefix="hermies-3way-", suffix=".db", delete=False)
+    tmp_db = tempfile.NamedTemporaryFile(prefix="hermix-3way-", suffix=".db", delete=False)
     tmp_db.close()
 
     env = dict(os.environ)
-    env["HERMIES_DB"] = tmp_db.name
-    env["HERMIES_FORCE_FALLBACK_EMBED"] = "1"   # skip the model download
-    env["HERMIES_MATCH_FLOOR"] = "0"            # surface any overlap
+    env["HERMIX_DB"] = tmp_db.name
+    env["HERMIX_FORCE_FALLBACK_EMBED"] = "1"   # skip the model download
+    env["HERMIX_MATCH_FLOOR"] = "0"            # surface any overlap
     env.setdefault("PYTHONIOENCODING", "utf-8")
 
-    say("harness", f"starting backend (HERMIES_DB={tmp_db.name})")
+    say("harness", f"starting backend (HERMIX_DB={tmp_db.name})")
     proc = subprocess.Popen(
         [sys.executable, "-m", "uvicorn", "app:app", "--host", HOST, "--port", str(PORT),
          "--log-level", "warning"],
@@ -144,7 +144,7 @@ def make_agent(handle, represents, offer, need, guilds):
     resp = boot.register(handle, represents)
     api_key = resp["api_key"]
     assert api_key, f"{handle}: register returned no api_key"
-    client = HermiesClient(HttpTransport(BASE_URL, api_key))
+    client = HermixClient(HttpTransport(BASE_URL, api_key))
     card = profile.PublicCard(handle=handle, represents=represents,
                               offer=offer, need=need, guilds=guilds)
     client.publish_profile(card.public_dict())
@@ -174,13 +174,13 @@ def make_llm(envoy_line, note, tag):
 # ---------------------------------------------------------------------------
 def run() -> None:
     # Matchmaker knobs: any overlap qualifies; 3 outbound turns then conclude.
-    os.environ["HERMIES_MIN_SCORE"] = "0"
-    os.environ["HERMIES_DIG_MAX_TURNS"] = "3"
-    os.environ["HERMIES_ENVOY_MAX_REPLIES"] = "6"
-    os.environ["HERMIES_HANDSHAKE_TIMEOUT_DAYS"] = "999"
+    os.environ["HERMIX_MIN_SCORE"] = "0"
+    os.environ["HERMIX_DIG_MAX_TURNS"] = "3"
+    os.environ["HERMIX_ENVOY_MAX_REPLIES"] = "6"
+    os.environ["HERMIX_HANDSHAKE_TIMEOUT_DAYS"] = "999"
 
-    a_home = tempfile.mkdtemp(prefix="hermies-A-")
-    b_home = tempfile.mkdtemp(prefix="hermies-B-")
+    a_home = tempfile.mkdtemp(prefix="hermix-A-")
+    b_home = tempfile.mkdtemp(prefix="hermix-B-")
 
     banner("Register + publish two agents (reciprocal match)")
     a_client, a_card = make_agent(
@@ -195,9 +195,9 @@ def run() -> None:
         guilds=["music", "ai-video"])
 
     # Give each agent its own private dossier/contact (separate HERMES_HOME).
-    os.environ["HERMIES_HOME"] = a_home
+    os.environ["HERMIX_HOME"] = a_home
     dossier.set_contact(name=f"{A_CONTACT} Gus Vega", email="gus@example.com")
-    os.environ["HERMIES_HOME"] = b_home
+    os.environ["HERMIX_HOME"] = b_home
     dossier.set_contact(name=f"{B_CONTACT} Mira Vex", email="mira@example.com")
 
     # Reciprocal match sanity check.
@@ -271,9 +271,9 @@ def run() -> None:
     assert B_QUOTE in notification, "notification omits a real quote from the dig"
 
     banner("A sends a reveal_request (its human approved sharing A's contact)")
-    os.environ["HERMIES_HOME"] = a_home
+    os.environ["HERMIX_HOME"] = a_home
     a_tools = {s["name"]: s["handler"] for s in tools.build(a_client, a_card, a_llm)}
-    rr = json.loads(a_tools["hermies_reveal_request"]({
+    rr = json.loads(a_tools["hermix_reveal_request"]({
         "to": "mira-herald",
         "context": "Our dig showed a real fit — my human would like to connect.",
         "include_contact": True, "human_approved": True}))
@@ -305,9 +305,9 @@ def run() -> None:
     say("harness", "confirmed — B's contact appears nowhere before approval")
 
     banner("B's human approves -> contact is released")
-    os.environ["HERMIES_HOME"] = b_home
+    os.environ["HERMIX_HOME"] = b_home
     b_tools = {s["name"]: s["handler"] for s in tools.build(b_client, b_card, b_llm)}
-    rz = json.loads(b_tools["hermies_reveal_respond"]({
+    rz = json.loads(b_tools["hermix_reveal_respond"]({
         "thread_id": reveal_tid, "approve": True, "human_approved": True}))
     assert rz["success"] and rz["approved"] is True
     say("mira-herald", "human approved — released contact into the reveal thread")

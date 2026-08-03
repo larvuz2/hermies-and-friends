@@ -1,4 +1,4 @@
-"""Live configuration from the hub — how Hermies improves without users doing
+"""Live configuration from the hub — how Hermix improves without users doing
 anything.
 
 The problem this solves: a plugin that only reads env vars and hard-coded
@@ -31,14 +31,14 @@ _FETCHED_AT = 0.0        # monotonic-ish wall clock of the last successful fetch
 
 
 def _home() -> pathlib.Path:
-    base = os.environ.get("HERMIES_HOME")
+    base = os.environ.get("HERMIX_HOME")
     if not base:
         try:
             from hermes_constants import get_hermes_home   # type: ignore
             base = str(get_hermes_home())
         except Exception:
             base = os.path.expanduser("~/.hermes")
-    return pathlib.Path(base) / "hermies"
+    return pathlib.Path(base) / "hermix"
 
 
 def _cache_path() -> pathlib.Path:

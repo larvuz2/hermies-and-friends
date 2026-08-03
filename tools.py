@@ -89,7 +89,7 @@ def build(client, card, llm=None):
             "success": True, "reported": who,
             "distinct_reporters": res.get("distinct_reporters", 1),
             "note": ("Sent to the operator. They are not told, and this does "
-                     "NOT block them — call hermies_block if your human also "
+                     "NOT block them — call hermix_block if your human also "
                      "wants them to stop reaching out."),
         })
 
@@ -151,7 +151,7 @@ def build(client, card, llm=None):
             "have_contact": preview["have_contact"],
             "blocked": preview["blocked"],
             "next": ("Show preview_text to your human verbatim. Only if they "
-                     "clearly approve, call hermies_reveal_request with "
+                     "clearly approve, call hermix_reveal_request with "
                      "to=<handle>, include_contact=true, human_approved=true."),
         })
 
@@ -216,9 +216,9 @@ def build(client, card, llm=None):
         # The agent's lever for "my human declined onboarding / wants out": flip
         # the matchmaker paused flag (run_cycle no-ops while set) so the
         # onboarding nudge and all matchmaking go quiet. The human re-joins with
-        # /hermies resume (or by publishing a card). Mirrors commands._pause; a
+        # /hermix resume (or by publishing a card). Mirrors commands._pause; a
         # tool exists because in gateway mode the agent can't type a slash
-        # command, and the onboarding nudge tells it to call hermies_pause.
+        # command, and the onboarding nudge tells it to call hermix_pause.
         state = matchmaker.load_state()
         already = bool(state.get("paused"))
         state["paused"] = True
@@ -228,7 +228,7 @@ def build(client, card, llm=None):
             "paused": True,
             "already_paused": already,
             "note": ("Scouting and onboarding reminders are off. Resume "
-                     "anytime with /hermies resume."),
+                     "anytime with /hermix resume."),
         })
 
     def search_agents(params, **kwargs):
@@ -283,7 +283,7 @@ def build(client, card, llm=None):
             "success": True,
             "preview_text": matchmaker.format_ask_preview(p),
             "next": ("Show preview_text to your human. Only if they approve, "
-                     "call hermies_ask with the same 'to' and 'question'."),
+                     "call hermix_ask with the same 'to' and 'question'."),
         })
 
     def ask(params, **kwargs):
@@ -412,57 +412,57 @@ def build(client, card, llm=None):
 
     return [
         {
-            "name": "hermies_scout",
+            "name": "hermix_scout",
             "description": ("Run one autonomous scouting cycle. Returns "
                             '{"result": <text>} where <text> is either a human '
-                            "notification or the marker HERMIES_SILENT (say "
+                            "notification or the marker HERMIX_SILENT (say "
                             "nothing to the human in that case)."),
             "schema": {
-                "name": "hermies_scout",
+                "name": "hermix_scout",
                 "description": ("Run one scouting cycle; relay the result only "
-                                "if it is not HERMIES_SILENT."),
+                                "if it is not HERMIX_SILENT."),
                 "parameters": {"type": "object", "properties": {}},
             },
             "handler": matchmake,
         },
         {
-            "name": "hermies_deliver_pending",
-            "description": ("Deliver any completed Hermies findings that are "
+            "name": "hermix_deliver_pending",
+            "description": ("Deliver any completed Hermix findings that are "
                             'worth the human\'s attention. Returns {"result": '
                             "<text>} — relay it verbatim unless it is the "
-                            "marker HERMIES_SILENT, in which case say nothing. "
+                            "marker HERMIX_SILENT, in which case say nothing. "
                             "Does no discovery itself."),
             "schema": {
-                "name": "hermies_deliver_pending",
+                "name": "hermix_deliver_pending",
                 "description": ("Relay completed findings; say nothing if the "
-                                "result is HERMIES_SILENT."),
+                                "result is HERMIX_SILENT."),
                 "parameters": {"type": "object", "properties": {}},
             },
             "handler": deliver_pending_tool,
         },
         {
-            "name": "hermies_scan_now",
+            "name": "hermix_scan_now",
             "description": ("Run one scouting cycle right now (used at the end "
                             "of onboarding so a new standing intent starts working "
                             "immediately). Returns counts only — never show the "
                             "human any findings as a result of this."),
             "schema": {
-                "name": "hermies_scan_now",
+                "name": "hermix_scan_now",
                 "description": "Start a scouting cycle immediately; returns counts.",
                 "parameters": {"type": "object", "properties": {}},
             },
             "handler": scan_now,
         },
         {
-            "name": "hermies_block",
+            "name": "hermix_block",
             "description": ("Stop another agent from reaching your human. Use "
                             "when they ask to block, mute, or never hear from "
                             "someone again. Enforced by the hub: the blocked "
                             "agent cannot open conversations and is never "
                             "surfaced again. They are NOT notified. Reversible "
-                            "with hermies_unblock."),
+                            "with hermix_unblock."),
             "schema": {
-                "name": "hermies_block",
+                "name": "hermix_block",
                 "description": "Block an agent from contacting your human.",
                 "parameters": {
                     "type": "object",
@@ -478,10 +478,10 @@ def build(client, card, llm=None):
             "handler": block_agent,
         },
         {
-            "name": "hermies_unblock",
+            "name": "hermix_unblock",
             "description": "Undo a block, letting that agent reach your human again.",
             "schema": {
-                "name": "hermies_unblock",
+                "name": "hermix_unblock",
                 "description": "Unblock a previously blocked agent.",
                 "parameters": {
                     "type": "object",
@@ -492,13 +492,13 @@ def build(client, card, llm=None):
             "handler": unblock_agent,
         },
         {
-            "name": "hermies_report",
+            "name": "hermix_report",
             "description": ("Report an agent to the network operator for abuse. "
                             "Goes ONLY to the operator, never to the reported "
-                            "agent, and does NOT block them — call hermies_block "
+                            "agent, and does NOT block them — call hermix_block "
                             "as well if your human wants them stopped."),
             "schema": {
-                "name": "hermies_report",
+                "name": "hermix_report",
                 "description": "Report an agent to the network operator.",
                 "parameters": {
                     "type": "object",
@@ -515,12 +515,12 @@ def build(client, card, llm=None):
             "handler": report_agent,
         },
         {
-            "name": "hermies_feedback",
+            "name": "hermix_feedback",
             "description": ("Record the human's one-tap reaction to a delivered "
-                            "finding. This is how Hermies learns what is actually "
+                            "finding. This is how Hermix learns what is actually "
                             "worth their attention — always ask after delivering."),
             "schema": {
-                "name": "hermies_feedback",
+                "name": "hermix_feedback",
                 "description": "Record feedback on a finding.",
                 "parameters": {
                     "type": "object",
@@ -542,14 +542,14 @@ def build(client, card, llm=None):
             "handler": feedback,
         },
         {
-            "name": "hermies_why",
+            "name": "hermix_why",
             "description": ("The trust receipt for a finding: why it fits, "
                             "what was verified vs merely claimed, what the "
                             "conversation could draw on, what never left this "
                             "machine, and why it interrupted now. Relay it "
                             "verbatim when your human asks 'why'."),
             "schema": {
-                "name": "hermies_why",
+                "name": "hermix_why",
                 "description": "Explain one finding in full.",
                 "parameters": {
                     "type": "object",
@@ -562,13 +562,13 @@ def build(client, card, llm=None):
             "handler": why,
         },
         {
-            "name": "hermies_intro_preview",
+            "name": "hermix_intro_preview",
             "description": ("Preview an introduction BEFORE anything is sent: "
                             "exactly which contact details would go, the note "
                             "attached, and what stays private. Always call this "
                             "and show it to your human before any reveal."),
             "schema": {
-                "name": "hermies_intro_preview",
+                "name": "hermix_intro_preview",
                 "description": "Preview an introduction; sends nothing.",
                 "parameters": {
                     "type": "object",
@@ -581,11 +581,11 @@ def build(client, card, llm=None):
             "handler": intro_preview_tool,
         },
         {
-            "name": "hermies_search_agents",
-            "description": "Search the Hermies network for other agents by keyword, offer, or guild.",
+            "name": "hermix_search_agents",
+            "description": "Search the Hermix network for other agents by keyword, offer, or guild.",
             "schema": {
-                "name": "hermies_search_agents",
-                "description": "Search the Hermies network for other agents.",
+                "name": "hermix_search_agents",
+                "description": "Search the Hermix network for other agents.",
                 "parameters": {
                     "type": "object",
                     "properties": {"query": {"type": "string", "description": "keyword, offer, or guild"}},
@@ -595,21 +595,21 @@ def build(client, card, llm=None):
             "handler": search_agents,
         },
         {
-            "name": "hermies_list_signals",
+            "name": "hermix_list_signals",
             "description": "List current signals/findings surfaced for your human.",
             "schema": {
-                "name": "hermies_list_signals",
-                "description": "List current Hermies signals for your human.",
+                "name": "hermix_list_signals",
+                "description": "List current Hermix signals for your human.",
                 "parameters": {"type": "object", "properties": {}},
             },
             "handler": list_signals,
         },
         {
-            "name": "hermies_send_message",
+            "name": "hermix_send_message",
             "description": "Send a message to another agent's envoy through the hub.",
             "schema": {
-                "name": "hermies_send_message",
-                "description": "Message another agent via the Hermies hub.",
+                "name": "hermix_send_message",
+                "description": "Message another agent via the Hermix hub.",
                 "parameters": {
                     "type": "object",
                     "properties": {
@@ -622,10 +622,10 @@ def build(client, card, llm=None):
             "handler": send_message,
         },
         {
-            "name": "hermies_install_skill",
+            "name": "hermix_install_skill",
             "description": "Install a skill package from the network (requires human approval).",
             "schema": {
-                "name": "hermies_install_skill",
+                "name": "hermix_install_skill",
                 "description": "Install a network skill (approval-gated).",
                 "parameters": {
                     "type": "object",
@@ -639,13 +639,13 @@ def build(client, card, llm=None):
             "handler": install_skill,
         },
         {
-            "name": "hermies_dossier",
+            "name": "hermix_dossier",
             "description": ("Read-only views of your human's local dossier: "
                             "ring1 (approved shareable facts), intents (standing "
                             "searches), or summary (section counts + ring1 + "
                             "intents; NEVER contact values)."),
             "schema": {
-                "name": "hermies_dossier",
+                "name": "hermix_dossier",
                 "description": "Read-only dossier views (never exposes contact identity).",
                 "parameters": {
                     "type": "object",
@@ -659,7 +659,7 @@ def build(client, card, llm=None):
             "handler": dossier_view,
         },
         {
-            "name": "hermies_ask",
+            "name": "hermix_ask",
             "description": ("Ask another agent something on your human's behalf "
                             "and investigate it in the BACKGROUND. Their human is "
                             "never contacted. Use when your human says things like "
@@ -668,7 +668,7 @@ def build(client, card, llm=None):
                             "Returns immediately — the answer arrives later as a "
                             "findings report. Never fabricate the answer."),
             "schema": {
-                "name": "hermies_ask",
+                "name": "hermix_ask",
                 "description": "Start a background investigation with another agent.",
                 "parameters": {
                     "type": "object",
@@ -683,13 +683,13 @@ def build(client, card, llm=None):
             "handler": ask,
         },
         {
-            "name": "hermies_ask_preview",
+            "name": "hermix_ask_preview",
             "description": ("Preview what asking an agent would share BEFORE "
                             "sending: the exact question, your public card, which "
                             "approved facts may be used, and what stays private. "
                             "Show this to your human and get approval first."),
             "schema": {
-                "name": "hermies_ask_preview",
+                "name": "hermix_ask_preview",
                 "description": "Preview an ask; sends nothing.",
                 "parameters": {
                     "type": "object",
@@ -703,12 +703,12 @@ def build(client, card, llm=None):
             "handler": ask_preview_tool,
         },
         {
-            "name": "hermies_ask_status",
+            "name": "hermix_ask_status",
             "description": ("Check a background investigation: still working, or "
                             "the finished report. Use when your human asks 'any "
                             "news?' — never guess at progress."),
             "schema": {
-                "name": "hermies_ask_status",
+                "name": "hermix_ask_status",
                 "description": "Progress or report for investigations.",
                 "parameters": {
                     "type": "object",
@@ -720,12 +720,12 @@ def build(client, card, llm=None):
             "handler": ask_status_tool,
         },
         {
-            "name": "hermies_thread",
+            "name": "hermix_thread",
             "description": ("Operate a threaded conversation: list your threads, "
                             "read one, send a turn, or close it. The hub enforces "
                             "a 12-message turn budget per thread."),
             "schema": {
-                "name": "hermies_thread",
+                "name": "hermix_thread",
                 "description": "List/read/send/close threaded conversations.",
                 "parameters": {
                     "type": "object",
@@ -741,13 +741,13 @@ def build(client, card, llm=None):
             "handler": thread,
         },
         {
-            "name": "hermies_reveal_request",
+            "name": "hermix_reveal_request",
             "description": ("Ask another human to connect: open a reveal_request "
                             "thread with card-level context. Including your "
                             "human's contact identity requires human_approved=true "
                             "(also enforced by the pre_tool_call gate)."),
             "schema": {
-                "name": "hermies_reveal_request",
+                "name": "hermix_reveal_request",
                 "description": "Request a real-world connection (contact release is approval-gated).",
                 "parameters": {
                     "type": "object",
@@ -765,13 +765,13 @@ def build(client, card, llm=None):
             "handler": reveal_request,
         },
         {
-            "name": "hermies_reveal_respond",
+            "name": "hermix_reveal_respond",
             "description": ("Respond to an incoming reveal request. approve=true "
                             "releases your human's contact identity into the "
                             "thread and requires human_approved=true (also "
                             "enforced by the pre_tool_call gate)."),
             "schema": {
-                "name": "hermies_reveal_respond",
+                "name": "hermix_reveal_respond",
                 "description": "Approve/decline a reveal request (contact release is approval-gated).",
                 "parameters": {
                     "type": "object",
@@ -787,16 +787,16 @@ def build(client, card, llm=None):
             "handler": reveal_respond,
         },
         {
-            "name": "hermies_pending",
-            "description": ("Surface findings Hermies composed but hasn't "
+            "name": "hermix_pending",
+            "description": ("Surface findings Hermix composed but hasn't "
                             "delivered yet (the deliver-on-next-interaction "
                             "queue), plus any reveal requests awaiting your "
                             "human's approval. action='peek' to view without "
                             "consuming; action='pop' to take up to 3 to relay "
                             "now (per the delivery skill: best first, batched)."),
             "schema": {
-                "name": "hermies_pending",
-                "description": "Peek/pop queued Hermies findings + pending reveals.",
+                "name": "hermix_pending",
+                "description": "Peek/pop queued Hermix findings + pending reveals.",
                 "parameters": {
                     "type": "object",
                     "properties": {
@@ -807,13 +807,13 @@ def build(client, card, llm=None):
             "handler": pending,
         },
         {
-            "name": "hermies_pause",
-            "description": ("Pause Hermies for your human: stop all scouting "
+            "name": "hermix_pause",
+            "description": ("Pause Hermix for your human: stop all scouting "
                             "and silence the first-run onboarding nudge. Call "
                             "this when your human declines onboarding or asks to "
-                            "opt out. Reversible with /hermies resume."),
+                            "opt out. Reversible with /hermix resume."),
             "schema": {
-                "name": "hermies_pause",
+                "name": "hermix_pause",
                 "description": ("Pause scouting + onboarding reminders "
                                 "(human declined / opted out)."),
                 "parameters": {"type": "object", "properties": {}},
@@ -821,12 +821,12 @@ def build(client, card, llm=None):
             "handler": pause,
         },
         {
-            "name": "hermies_intent",
+            "name": "hermix_intent",
             "description": ("Manage standing intents (persistent 'dig for X' "
                             "searches): add a new one, list them, or retire one "
                             "by id."),
             "schema": {
-                "name": "hermies_intent",
+                "name": "hermix_intent",
                 "description": "Add/list/retire standing intents.",
                 "parameters": {
                     "type": "object",

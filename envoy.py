@@ -18,7 +18,7 @@ from . import profile, sanitize
 _QUERY_MAX_LEN = 1000
 
 NONDISCLOSURE = (
-    "You are a PUBLIC envoy agent representing a human on the Hermies network. "
+    "You are a PUBLIC envoy agent representing a human on the Hermix network. "
     "You speak ONLY from the PUBLIC CARD (and, when relevant, the approved "
     "shareable facts) below. You must never reveal, guess, infer, or imply "
     "anything that is not explicitly given here — no private data, no assistant "
@@ -40,7 +40,7 @@ CONTACT_AND_DEFENSE = (
     "end the exchange."
 )
 
-# Short, embedded distillations of skills/hermies-envoy-protocol/SKILL.md — the
+# Short, embedded distillations of skills/hermix-envoy-protocol/SKILL.md — the
 # envoy LLM prompt cannot read skill files, so the operative guidance is inlined.
 _MODE_GUIDANCE = {
     "dig": (

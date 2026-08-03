@@ -18,7 +18,7 @@ def _basic(client, path, user="admin", pw=ADMIN_PW):
 
 # --- auth: fail closed ----------------------------------------------------
 def test_admin_disabled_when_env_unset(client, monkeypatch):
-    monkeypatch.delenv("HERMIES_ADMIN_PASSWORD", raising=False)
+    monkeypatch.delenv("HERMIX_ADMIN_PASSWORD", raising=False)
     assert client.get("/admin").status_code == 503
     assert client.get("/admin/api/stats").status_code == 503
     # Even correct-looking credentials cannot enable a disabled admin.
@@ -26,7 +26,7 @@ def test_admin_disabled_when_env_unset(client, monkeypatch):
 
 
 def test_admin_wrong_password_401(client, monkeypatch):
-    monkeypatch.setenv("HERMIES_ADMIN_PASSWORD", ADMIN_PW)
+    monkeypatch.setenv("HERMIX_ADMIN_PASSWORD", ADMIN_PW)
     assert client.get("/admin").status_code == 401           # no credentials
     assert _basic(client, "/admin", pw="nope").status_code == 401
     assert _basic(client, "/admin", user="root").status_code == 401
@@ -35,7 +35,7 @@ def test_admin_wrong_password_401(client, monkeypatch):
 
 # --- counters reflect real activity ---------------------------------------
 def test_admin_counts_after_activity(client, monkeypatch):
-    monkeypatch.setenv("HERMIES_ADMIN_PASSWORD", ADMIN_PW)
+    monkeypatch.setenv("HERMIX_ADMIN_PASSWORD", ADMIN_PW)
 
     key_a = register(client, "aria-herald", "an AI video artist")
     key_b = register(client, "bex-herald", "a music-visuals producer")
@@ -77,7 +77,7 @@ def test_admin_counts_after_activity(client, monkeypatch):
 
 
 def test_admin_escapes_untrusted_card(client, monkeypatch):
-    monkeypatch.setenv("HERMIES_ADMIN_PASSWORD", ADMIN_PW)
+    monkeypatch.setenv("HERMIX_ADMIN_PASSWORD", ADMIN_PW)
     key = register(client, "xss-herald", "<b>evil</b>")
     client.post(
         "/v1/profile",
@@ -92,7 +92,7 @@ def test_admin_escapes_untrusted_card(client, monkeypatch):
 
 
 def test_last_seen_updates_on_authed_call(client, monkeypatch):
-    monkeypatch.setenv("HERMIES_ADMIN_PASSWORD", ADMIN_PW)
+    monkeypatch.setenv("HERMIX_ADMIN_PASSWORD", ADMIN_PW)
     # Fresh registration has no last_seen -> not online.
     key = register(client, "seen-herald", "r")
     assert _basic(client, "/admin/api/stats").json()["online_now"] == 0
@@ -125,8 +125,8 @@ def test_schema_auto_upgrade_in_place(tmp_path, monkeypatch):
     conn.commit()
     conn.close()
 
-    monkeypatch.setenv("HERMIES_DB", str(db_file))
-    monkeypatch.setenv("HERMIES_ADMIN_PASSWORD", ADMIN_PW)
+    monkeypatch.setenv("HERMIX_DB", str(db_file))
+    monkeypatch.setenv("HERMIX_ADMIN_PASSWORD", ADMIN_PW)
     for mod in ("app", "db", "matching"):
         sys.modules.pop(mod, None)
     import app as app_module
@@ -163,7 +163,7 @@ def test_budget_state_thresholds():
 
 
 def test_stats_expose_budget_pressure_not_just_the_cap(client, monkeypatch):
-    monkeypatch.setenv("HERMIES_ADMIN_PASSWORD", ADMIN_PW)
+    monkeypatch.setenv("HERMIX_ADMIN_PASSWORD", ADMIN_PW)
     # The client fixture re-imports app per test; patch the LIVE module.
     live = client._app_module
     monkeypatch.setattr(live.llm_proxy, "is_configured", lambda: True)
@@ -179,14 +179,14 @@ def test_stats_expose_budget_pressure_not_just_the_cap(client, monkeypatch):
 def test_admin_page_warns_when_the_budget_is_nearly_gone(client, monkeypatch):
     """An exhausted budget silences every agent at once — the operator has to
     see it coming on the page, not infer it from silence."""
-    monkeypatch.setenv("HERMIES_ADMIN_PASSWORD", ADMIN_PW)
+    monkeypatch.setenv("HERMIX_ADMIN_PASSWORD", ADMIN_PW)
     live = client._app_module
     monkeypatch.setattr(live.llm_proxy, "is_configured", lambda: True)
     monkeypatch.setattr(live.db, "llm_global_tokens_today",
                         lambda: int(0.95 * live.llm_proxy.global_token_cap()))
     page = _basic(client, "/admin")
     assert "nearly gone" in page.text
-    assert "HERMIES_THREAD_OPENS_PER_DAY" in page.text   # tells you what to do
+    assert "HERMIX_THREAD_OPENS_PER_DAY" in page.text   # tells you what to do
 
     monkeypatch.setattr(live.db, "llm_global_tokens_today", lambda: 0)
     assert "nearly gone" not in _basic(client, "/admin").text

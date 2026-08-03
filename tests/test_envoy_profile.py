@@ -14,12 +14,12 @@ import json
 
 import pytest
 
-from hermies import briefing, envoy, envoy_profile, profile
+from hermix import briefing, envoy, envoy_profile, profile
 
 
 @pytest.fixture(autouse=True)
 def _isolate(tmp_path, monkeypatch):
-    monkeypatch.setenv("HERMIES_HOME", str(tmp_path))
+    monkeypatch.setenv("HERMIX_HOME", str(tmp_path))
 
 
 def _card():
@@ -194,7 +194,7 @@ def test_briefing_lives_in_the_envoy_profile_not_beside_the_dossier():
     """It is the ENVOY's knowledge, so it belongs in the envoy's home."""
     assert envoy_profile.profile_dir() in briefing.briefing_path().parents \
         if hasattr(briefing, "briefing_path") else True
-    from hermies import envoy_profile as ep
+    from hermix import envoy_profile as ep
     assert str(ep.profile_dir()) in str(ep.briefing_path())
 
 
@@ -262,7 +262,7 @@ def test_a_failed_refresh_keeps_the_briefing_we_already_had():
 def test_the_engine_refreshes_the_briefing_principal_side(monkeypatch):
     """Wired at the IO boundary — the only place holding both dossier and model."""
     import inspect
-    from hermies import matchmaker
+    from hermix import matchmaker
     src = inspect.getsource(matchmaker.run_engine_and_persist)
     assert "refresh_if_due" in src
     assert "dossier" in src

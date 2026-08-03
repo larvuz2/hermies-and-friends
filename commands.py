@@ -1,4 +1,4 @@
-"""`/hermies` slash-command handlers and the skill-install approval gate."""
+"""`/hermix` slash-command handlers and the skill-install approval gate."""
 import datetime
 import json
 import pathlib
@@ -15,13 +15,13 @@ def _ts(epoch) -> str:
 
 
 def make_handler(client, card, llm):
-    """Return a handler for `/hermies <sub> [args]`."""
+    """Return a handler for `/hermix <sub> [args]`."""
 
     def _network_line() -> str:
         """One-line connectivity status for the human/operator."""
         from . import _config
         if not _config.has_hub():
-            return "Network: OFFLINE (mock) — HERMIES_API_URL is empty."
+            return "Network: OFFLINE (mock) — HERMIX_API_URL is empty."
         hub = _config.service_url()
         try:
             reachable = client.healthz()
@@ -55,12 +55,12 @@ def make_handler(client, card, llm):
             # Surface first-run setup state right after the connectivity line so
             # the human (and the agent reading status) sees onboarding is due.
             if not dossier.is_onboarded():
-                net = (net + "\nSetup: NOT onboarded — run the hermies-onboarding "
+                net = (net + "\nSetup: NOT onboarded — run the hermix-onboarding "
                        "skill with your human.")
             net = net + "\n" + _engine_line()
             if card.is_empty():
                 return (net + "\n\nNo public profile yet. Set one with:\n"
-                        "  /hermies profile {\"handle\": \"gus-herald\", "
+                        "  /hermix profile {\"handle\": \"gus-herald\", "
                         "\"represents\": \"a creative technologist in AI film\", "
                         "\"offer\": [\"ai video\"], \"need\": [\"collaborators\"]}")
             return net + "\n\nYour PUBLIC card:\n" + json.dumps(pub, indent=2)
@@ -137,7 +137,7 @@ def make_handler(client, card, llm):
         if sub == "ask":
             parts2 = rest.split(maxsplit=1)
             if len(parts2) < 2:
-                return ("Usage: /hermies ask <handle> <question>\n"
+                return ("Usage: /hermix ask <handle> <question>\n"
                         "I'll ask their agent privately and report back. "
                         "Their human is never contacted.")
             who = parts2[0].lstrip("@")
@@ -161,13 +161,13 @@ def make_handler(client, card, llm):
         if sub == "why":
             fid = rest.strip()
             if not fid:
-                return "Usage: /hermies why <finding-id>  (the [id] with a finding)"
+                return "Usage: /hermix why <finding-id>  (the [id] with a finding)"
             return matchmaker.receipt(matchmaker.load_state(), fid)
 
         if sub == "intro":
             who = rest.strip().lstrip("@")
             if not who:
-                return "Usage: /hermies intro <handle>  — previews, sends nothing"
+                return "Usage: /hermix intro <handle>  — previews, sends nothing"
             try:
                 contact = dossier.get_contact()
             except Exception:
@@ -178,7 +178,7 @@ def make_handler(client, card, llm):
         if sub == "feedback":
             parts2 = rest.split(maxsplit=1)
             if len(parts2) < 2:
-                return ("Usage: /hermies feedback <finding-id> "
+                return ("Usage: /hermix feedback <finding-id> "
                         "<useful|wrong_fit|too_early|spam>")
             state = matchmaker.load_state()
             res = matchmaker.record_feedback(state, parts2[0], parts2[1])
@@ -237,7 +237,7 @@ def make_handler(client, card, llm):
 
 # --------------------------------------------------------------------------- #
 # Opt-out: pause / resume / leave. These flip the matchmaker's ``paused`` flag
-# (run_cycle returns SILENT while set, so the daemon + hermies_scout tool
+# (run_cycle returns SILENT while set, so the daemon + hermix_scout tool
 # no-op) and, for leave, remove the published card from the hub. The local
 # dossier is NEVER touched by any of these.
 # --------------------------------------------------------------------------- #
@@ -248,7 +248,7 @@ def _pause() -> str:
     matchmaker.save_state(state)
     return ("Paused. I've stopped looking — no digs, no new outreach, and "
             "I won't interrupt you. Your public card is still up. Say "
-            "`/hermies resume` to start again.")
+            "`/hermix resume` to start again.")
 
 
 def _resume() -> str:
@@ -276,7 +276,7 @@ def _resume_matchmaking() -> bool:
 def _leave(client) -> str:
     """Remove the published card + discovery vectors from the hub and stop
     matchmaking, while keeping everything local (the dossier stays put). The
-    account persists on the hub, so re-publishing a card (/hermies profile)
+    account persists on the hub, so re-publishing a card (/hermix profile)
     re-joins later."""
     removed = False
     try:
@@ -296,7 +296,7 @@ def _leave(client) -> str:
     return (head + ", and I've stopped looking for you.\n\n"
             "Your private dossier stays right here on this machine — nothing "
             "local was deleted. Whenever you want back in, just re-publish a "
-            "card with `/hermies profile {...}` and you'll re-join.")
+            "card with `/hermix profile {...}` and you'll re-join.")
 
 
 def _dossier_view() -> str:
@@ -330,7 +330,7 @@ def _dossier_view() -> str:
 
 
 def _intents_view(rest: str) -> str:
-    """`/hermies intents` lists; `intents add <text>` and `intents retire <id>`
+    """`/hermix intents` lists; `intents add <text>` and `intents retire <id>`
     mutate."""
     parts = (rest or "").split(maxsplit=1)
     verb = parts[0].lower() if parts else ""
@@ -348,7 +348,7 @@ def _intents_view(rest: str) -> str:
     intents = dossier.list_intents()
     if not intents:
         return ("No standing intents yet. Add one with:\n"
-                "  /hermies intents add <what to hunt for>")
+                "  /hermix intents add <what to hunt for>")
     lines = ["Standing intents:"]
     for i in intents:
         lines.append(f"  • [{i.get('id')}] ({i.get('status')}) {i.get('text')}")
@@ -379,7 +379,7 @@ def _engine_line() -> str:
     except Exception:
         return "Scouting: state unavailable."
     if st.get("paused"):
-        return "Scouting: PAUSED (say `/hermies resume` to restart)."
+        return "Scouting: PAUSED (say `/hermix resume` to restart)."
     hb = st.get("engine") or {}
     last = hb.get("last_success_at")
     lines = [f"Scouting: last cycle {_ago(last)}"
@@ -431,7 +431,7 @@ def _matches_view(state) -> str:
         for r in reveals:
             ctx = r.get("context", "")
             lines.append(f"  • @{r.get('handle', '?')} — {ctx}")
-            lines.append(f"    To connect, say yes, then: hermies_reveal_respond("
+            lines.append(f"    To connect, say yes, then: hermix_reveal_respond("
                          f"thread_id='{r.get('thread_id', '')}', approve=true, "
                          "human_approved=true)")
 
@@ -468,7 +468,7 @@ def _card_view(state, card) -> str:
     proposed = proposal["proposed"]
     lines = [f"Proposed card refresh (from {_ts(proposal.get('ts', 0))}). "
              "The matchmaker only sharpens wording of what you already have — "
-             "review and run `/hermies card apply` to accept.", ""]
+             "review and run `/hermix card apply` to accept.", ""]
     for k in profile.PUBLIC_FIELDS:
         if k not in proposed:
             continue
@@ -514,10 +514,10 @@ def install_gate(**kwargs):
     ``allow``/``reason`` shape.
 
     Blocks:
-      - hermies_install_skill unless ``approved=True``.
-      - hermies_reveal_request with ``include_contact=True`` unless
+      - hermix_install_skill unless ``approved=True``.
+      - hermix_reveal_request with ``include_contact=True`` unless
         ``human_approved=True``.
-      - hermies_reveal_respond with ``approve=True`` unless
+      - hermix_reveal_respond with ``approve=True`` unless
         ``human_approved=True``.
 
     Contact identity therefore cannot move without the human having said yes and
@@ -526,14 +526,14 @@ def install_gate(**kwargs):
     tool = kwargs.get("tool_name")
     args = kwargs.get("args") or {}
 
-    if tool == "hermies_install_skill" and not args.get("approved"):
+    if tool == "hermix_install_skill" and not args.get("approved"):
         return {
             "action": "block",
             "message": "Installing a network skill requires human approval. "
                        "Confirm in chat first, then retry with approved=true.",
         }
 
-    if tool == "hermies_reveal_request" and args.get("include_contact") \
+    if tool == "hermix_reveal_request" and args.get("include_contact") \
             and not args.get("human_approved"):
         return {
             "action": "block",
@@ -543,7 +543,7 @@ def install_gate(**kwargs):
                        "with human_approved=true.",
         }
 
-    if tool == "hermies_reveal_respond" and args.get("approve") \
+    if tool == "hermix_reveal_respond" and args.get("approve") \
             and not args.get("human_approved"):
         return {
             "action": "block",
@@ -578,9 +578,9 @@ def install_gate(**kwargs):
 # --------------------------------------------------------------------------- #
 
 ONBOARDING_NUDGE_CONTEXT = (
-    "Hermies is installed but not set up. Before continuing, tell your human it "
-    "takes ~2 minutes and run the hermies:hermies-onboarding skill with them "
-    "now. If they decline, call the hermies_pause tool so you are not reminded "
+    "Hermix is installed but not set up. Before continuing, tell your human it "
+    "takes ~2 minutes and run the hermix:hermix-onboarding skill with them "
+    "now. If they decline, call the hermix_pause tool so you are not reminded "
     "again."
 )
 
@@ -676,7 +676,7 @@ def _briefing_view(rest: str, card, llm) -> str:
         return briefing.format_for_human(doc) + note
 
     if arg:
-        return "Usage: /hermies briefing [refresh | clear]"
+        return "Usage: /hermix briefing [refresh | clear]"
     return briefing.format_for_human()
 
 
@@ -688,14 +688,14 @@ def _doctor_view() -> str:
     as a fault, never as a warning.
     """
     from . import envoy_profile, briefing
-    lines = ["Hermies doctor", ""]
+    lines = ["Hermix doctor", ""]
 
     info = envoy_profile.info()
     lines.append(f"Envoy profile: {info['path']}")
     if not info["exists"]:
         lines += [
             "  NOT PRESENT — your envoy is running from your public card only.",
-            "  This is degraded, not broken. `/hermies doctor repair` or a "
+            "  This is degraded, not broken. `/hermix doctor repair` or a "
             "plugin restart will create it.",
         ]
     else:
@@ -704,7 +704,7 @@ def _doctor_view() -> str:
             lines.append(f"  {len(problems)} PROBLEM(S) — fix before trusting the membrane:")
             for prob in problems:
                 lines.append(f"    ! {prob}")
-            lines.append("  Restart the plugin (or run `/hermies doctor repair`) "
+            lines.append("  Restart the plugin (or run `/hermix doctor repair`) "
                          "to restore the pinned files.")
         else:
             lines.append(f"  OK — SOUL pinned at {info['soul']}, tools locked "
@@ -716,7 +716,7 @@ def _doctor_view() -> str:
     lines.append(f"Briefing: {n} line(s)" if n else
                  "Briefing: none (card-only judgement)")
     if n:
-        lines.append("  `/hermies briefing` to read exactly what it says.")
+        lines.append("  `/hermix briefing` to read exactly what it says.")
 
     try:
         lines += ["", _engine_line()]
@@ -757,11 +757,11 @@ def _safety_view(sub: str, rest: str, client) -> str:
 
     if not who:
         if sub == "report":
-            return ("Usage: /hermies report <handle> <reason> [detail]\n"
+            return ("Usage: /hermix report <handle> <reason> [detail]\n"
                     f"Reasons: {', '.join(REPORT_REASONS)}. This goes to the "
                     "network operator, never to them. It does NOT block them — "
-                    "use `/hermies block` for that.")
-        return f"Usage: /hermies {sub} <handle>"
+                    "use `/hermix block` for that.")
+        return f"Usage: /hermix {sub} <handle>"
 
     if sub == "block":
         try:
@@ -772,7 +772,7 @@ def _safety_view(sub: str, rest: str, client) -> str:
         return (f"Blocked @{who}. They can't open a conversation with you, they "
                 "won't appear in what I look through, and you won't appear in "
                 "theirs. They are not told.\n"
-                "`/hermies unblock " + who + "` to undo it.")
+                "`/hermix unblock " + who + "` to undo it.")
 
     if sub == "unblock":
         try:
@@ -788,7 +788,7 @@ def _safety_view(sub: str, rest: str, client) -> str:
     detail = bits[1] if len(bits) > 1 else ""
     if reason not in REPORT_REASONS:
         return ("Which reason? " + ", ".join(REPORT_REASONS)
-                + f"\n  /hermies report {who} spam <what happened>")
+                + f"\n  /hermix report {who} spam <what happened>")
     try:
         res = client.report(who, reason, detail[:1000])
     except Exception as e:
@@ -796,5 +796,5 @@ def _safety_view(sub: str, rest: str, client) -> str:
     n = int(res.get("distinct_reporters") or 1)
     tail = (f" You're the {n}th person to report them." if n > 1 else "")
     return (f"Reported @{who} to the network operator.{tail} They are not told, "
-            "and this does not block them — say `/hermies block " + who + "` "
+            "and this does not block them — say `/hermix block " + who + "` "
             "if you also want them to stop reaching you.")

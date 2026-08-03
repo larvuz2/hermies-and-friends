@@ -18,7 +18,7 @@ import time
 
 from . import envoy, sanitize, _config
 
-log = logging.getLogger("hermies.service")
+log = logging.getLogger("hermix.service")
 
 
 def _is_ours(frm, handle) -> bool:
@@ -54,11 +54,11 @@ def drain_threads(client, card, llm, state, ring1=None) -> dict:
 
     For every open thread with unread counterpart turns:
       - reveal_request threads are NEVER auto-answered; each is queued once into
-        ``state['pending_reveals']`` for the human (surfaced via /hermies matches
-        and the delivery tool). Only the human, via hermies_reveal_respond, may
+        ``state['pending_reveals']`` for the human (surfaced via /hermix matches
+        and the delivery tool). Only the human, via hermix_reveal_respond, may
         release contact.
       - dig / ask threads are answered by ``envoy.respond`` in the thread's mode,
-        capped at ``HERMIES_ENVOY_MAX_REPLIES`` replies from our side; once the
+        capped at ``HERMIX_ENVOY_MAX_REPLIES`` replies from our side; once the
         cap is hit we post one polite conclusion and close the thread.
 
     Mutates ``state`` in place; caller persists it. Returns a summary dict."""
@@ -220,7 +220,7 @@ def run_once(client, card, inject, llm, ring1=None, inject_works=True) -> dict:
 
     # OUTWARD (threads): drain conversational threads as the envoy. Persist the
     # reply-cap counters + queued reveals into the shared matchmaker state so
-    # /hermies matches and the delivery tool see them. Only touch the state file
+    # /hermix matches and the delivery tool see them. Only touch the state file
     # when there is actually a thread to act on.
     threads_summary = None
     if hasattr(client, "list_threads"):
@@ -257,13 +257,13 @@ def _format_digest(signals) -> str:
     # Network content is untrusted: strip control/zero-width chars, collapse
     # line breaks, drop unknown keys, cap length.
     top = [sanitize.clean_signal(s) for s in (signals or [])[:5]]
-    lines = ["🕊️  Hermies signals for you:"]
+    lines = ["🕊️  Hermix signals for you:"]
     for s in top:
         if s.get("kind") == "match":
             lines.append(f"  • fit: @{s.get('agent', '')} — {s.get('why', '')}")
         else:
             lines.append(f"  • {s.get('kind') or 'signal'}: {s.get('why', '')}")
-    lines.append("Reply `/hermies discover` to explore, or ask me to reach out.")
+    lines.append("Reply `/hermix discover` to explore, or ask me to reach out.")
     return "\n".join(lines)
 
 
@@ -386,7 +386,7 @@ def start(client, card, inject, llm, interval: int = 90, matchmake=None,
                 if _config.is_live():
                     _mark_sidecar_alive()
                 else:
-                    log.warning("sidecar not authenticated (no HERMIES_API_KEY) "
+                    log.warning("sidecar not authenticated (no HERMIX_API_KEY) "
                                 "— leaving the network work to the plugin")
             elif sidecar_active():
                 # A sidecar owns the network work; in the gateway we are only
@@ -455,9 +455,9 @@ def start(client, card, inject, llm, interval: int = 90, matchmake=None,
         # that compounded into ~48 req/min from two idle agents.
         global _STARTED
         if _STARTED is not None and _STARTED.is_alive():
-            log.debug("hermies service already running in this process")
+            log.debug("hermix service already running in this process")
             return _STARTED
-        _STARTED = threading.Thread(target=_loop, name="hermies-service",
+        _STARTED = threading.Thread(target=_loop, name="hermix-service",
                                     daemon=True)
         _STARTED.start()
         return _STARTED

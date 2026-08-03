@@ -11,7 +11,7 @@ from conftest import register, auth
 
 
 ADMIN_PW = "s3cret-pw"
-KEY_ENV = "HERMIES_OPENROUTER_KEY"
+KEY_ENV = "HERMIX_OPENROUTER_KEY"
 
 
 class _FakeResp:
@@ -91,7 +91,7 @@ def test_happy_path_returns_text_and_records_usage(client, monkeypatch):
 # --- budgets --------------------------------------------------------------
 def test_per_agent_budget_429(client, monkeypatch):
     monkeypatch.setenv(KEY_ENV, "sk-operator-xyz")
-    monkeypatch.setenv("HERMIES_LLM_DAILY_TOKENS", "5")   # tiny per-agent cap
+    monkeypatch.setenv("HERMIX_LLM_DAILY_TOKENS", "5")   # tiny per-agent cap
     _install_upstream(monkeypatch, _FakeResp(200, _ok_payload("x", 10, 5)))
     key = register(client, "envoy-herald", "r")
 
@@ -109,7 +109,7 @@ def test_per_agent_budget_429(client, monkeypatch):
 
 def test_global_budget_429(client, monkeypatch):
     monkeypatch.setenv(KEY_ENV, "sk-operator-xyz")
-    monkeypatch.setenv("HERMIES_LLM_GLOBAL_DAILY_TOKENS", "5")   # tiny global cap
+    monkeypatch.setenv("HERMIX_LLM_GLOBAL_DAILY_TOKENS", "5")   # tiny global cap
     _install_upstream(monkeypatch, _FakeResp(200, _ok_payload("x", 10, 5)))
     # Two different agents: the global cap trips regardless of who calls.
     key_a = register(client, "envoy-a", "r")
@@ -178,7 +178,7 @@ def test_upstream_error_502_redacts_details(client, monkeypatch):
 # --- purpose -> model routing ---------------------------------------------
 def test_purpose_routes_to_model(client, monkeypatch):
     monkeypatch.setenv(KEY_ENV, "sk-operator-xyz")
-    monkeypatch.setenv("HERMIES_LLM_MODEL_JUDGE", "test/judge-model")
+    monkeypatch.setenv("HERMIX_LLM_MODEL_JUDGE", "test/judge-model")
     captured = {}
     _install_upstream(monkeypatch, _FakeResp(200, _ok_payload()), captured)
     key = register(client, "envoy-herald", "r")
@@ -249,7 +249,7 @@ def test_profile_remove_clears_card_and_matches_then_republish(client):
 
 # --- admin LLM section ----------------------------------------------------
 def test_admin_llm_section_configured(client, monkeypatch):
-    monkeypatch.setenv("HERMIES_ADMIN_PASSWORD", ADMIN_PW)
+    monkeypatch.setenv("HERMIX_ADMIN_PASSWORD", ADMIN_PW)
     monkeypatch.setenv(KEY_ENV, "sk-operator-xyz")
     page = client.get("/admin", auth=("admin", ADMIN_PW))
     assert page.status_code == 200
@@ -263,7 +263,7 @@ def test_admin_llm_section_configured(client, monkeypatch):
 
 
 def test_admin_llm_section_unconfigured(client, monkeypatch):
-    monkeypatch.setenv("HERMIES_ADMIN_PASSWORD", ADMIN_PW)
+    monkeypatch.setenv("HERMIX_ADMIN_PASSWORD", ADMIN_PW)
     monkeypatch.delenv(KEY_ENV, raising=False)
     page = client.get("/admin", auth=("admin", ADMIN_PW))
     assert page.status_code == 200
@@ -276,16 +276,16 @@ def test_admin_llm_section_unconfigured(client, monkeypatch):
 # --- model picker ---------------------------------------------------------
 def test_default_model_is_qwen(monkeypatch):
     for p in ("ENVOY", "JUDGE", "REFRESH"):
-        monkeypatch.delenv(f"HERMIES_LLM_MODEL_{p}", raising=False)
+        monkeypatch.delenv(f"HERMIX_LLM_MODEL_{p}", raising=False)
     assert llm_proxy.DEFAULT_MODEL == "qwen/qwen3.7-max"
     assert llm_proxy.model_for("envoy") == "qwen/qwen3.7-max"
 
 
 def test_selected_model_used_in_upstream_call(client, monkeypatch):
     monkeypatch.setenv(KEY_ENV, "sk-operator-xyz")
-    monkeypatch.setenv("HERMIES_ADMIN_PASSWORD", ADMIN_PW)
+    monkeypatch.setenv("HERMIX_ADMIN_PASSWORD", ADMIN_PW)
     for p in ("ENVOY", "JUDGE", "REFRESH"):
-        monkeypatch.delenv(f"HERMIES_LLM_MODEL_{p}", raising=False)
+        monkeypatch.delenv(f"HERMIX_LLM_MODEL_{p}", raising=False)
     captured = {}
     _install_upstream(monkeypatch, _FakeResp(200, _ok_payload()), captured)
     key = register(client, "envoy-herald", "r")
@@ -300,14 +300,14 @@ def test_selected_model_used_in_upstream_call(client, monkeypatch):
 
 
 def test_set_model_rejects_unknown(client, monkeypatch):
-    monkeypatch.setenv("HERMIES_ADMIN_PASSWORD", ADMIN_PW)
+    monkeypatch.setenv("HERMIX_ADMIN_PASSWORD", ADMIN_PW)
     r = client.get("/admin/model", params={"model": "evil/not-a-model"},
                    auth=("admin", ADMIN_PW), follow_redirects=False)
     assert r.status_code == 400
 
 
 def test_set_model_requires_auth(client, monkeypatch):
-    monkeypatch.setenv("HERMIES_ADMIN_PASSWORD", ADMIN_PW)
+    monkeypatch.setenv("HERMIX_ADMIN_PASSWORD", ADMIN_PW)
     r = client.get("/admin/model", params={"model": "moonshotai/kimi-k3"},
                    follow_redirects=False)
     assert r.status_code == 401
@@ -315,7 +315,7 @@ def test_set_model_requires_auth(client, monkeypatch):
 
 def test_admin_renders_model_picker(client, monkeypatch):
     monkeypatch.setenv(KEY_ENV, "sk-operator-xyz")
-    monkeypatch.setenv("HERMIES_ADMIN_PASSWORD", ADMIN_PW)
+    monkeypatch.setenv("HERMIX_ADMIN_PASSWORD", ADMIN_PW)
     page = client.get("/admin", auth=("admin", ADMIN_PW)).text
     assert "Active model" in page
     assert 'action="/admin/model"' in page

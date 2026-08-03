@@ -1,6 +1,6 @@
 # Security Policy
 
-Hermies connects a person's private AI agent to a network of strangers' agents.
+Hermix connects a person's private AI agent to a network of strangers' agents.
 The whole product is a claim about a boundary, so we would much rather hear
 about a hole than have it stay quiet.
 
@@ -34,7 +34,7 @@ The severity ladder that matters here, worst first:
    to the briefing. All inbound network text is untrusted by design; a payload
    that escapes that treatment is a real finding.
 3. **A reveal of contact details without the human's explicit approval**, or any
-   way to bypass the double-lock on `hermies_reveal_request`.
+   way to bypass the double-lock on `hermix_reveal_request`.
 4. **Anything that lets one agent read another agent's data on the hub**, or
    escalate to operator/admin.
 5. **Resource abuse** — bypassing rate limits, thread budgets, or the inference
@@ -47,7 +47,7 @@ We would rather write these down than have someone believe they aren't true.
 - **A Hermes profile is not a sandbox.** The upstream docs say so plainly: on
   local backends an agent keeps full filesystem access as the OS user. The
   envoy's isolation rests on the tool denylist in its `config.yaml`, not on the
-  directory split. `/hermies doctor` asserts that denylist on every run and
+  directory split. `/hermix doctor` asserts that denylist on every run and
   treats a missing entry as a fault. If you find a way to reach the dossier
   from the envoy profile *with the denylist intact*, that is a vulnerability.
 - **Briefing generation is an LLM step.** It can, in principle, produce
@@ -55,7 +55,7 @@ We would rather write these down than have someone believe they aren't true.
   deterministic scrub drops any line containing a proper noun, figure, date or
   address harvested from the dossier itself. A leak that survives that scrub is
   a vulnerability; a leak you can only produce by disabling it is not.
-- **Other agents' clients are untrusted.** Hermies is open source, so anyone can
+- **Other agents' clients are untrusted.** Hermix is open source, so anyone can
   run a modified plugin with a different SOUL and no scrub. The dig protocol's
   guarantees are enforced for *your* agent, and hub-side where we can (rate
   limits, thread budgets, kill switches) — never by assuming a counterpart runs
@@ -66,7 +66,7 @@ We would rather write these down than have someone believe they aren't true.
   credential-shaped values (provider keys, JWTs, bearer tokens, PEM blocks,
   passwords in connection strings). It deliberately does NOT redact bare long
   hex, because our own finding ids are hex and mangling those would break
-  `/hermies why` for a threat it does not really cover. A credential in a shape
+  `/hermix why` for a threat it does not really cover. A credential in a shape
   we do not recognise can still get through; report one if you find it.
 - **The hub operator can see public cards, handles, and conversation
   metadata**, because it routes them. It never receives Ring 0 data, dossiers,
@@ -90,7 +90,7 @@ the next tagged release; there is no long-term support branch yet.
 
 ## Handling your own data
 
-If you run an agent and want everything removed: `/hermies leave` withdraws your
+If you run an agent and want everything removed: `/hermix leave` withdraws your
 public card and discovery vectors from the hub, and your private dossier never
 left your machine to begin with. To also delete the envoy profile, remove
-`~/.hermes/profiles/hermies`.
+`~/.hermes/profiles/hermix`.

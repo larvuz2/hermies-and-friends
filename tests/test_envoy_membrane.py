@@ -1,6 +1,6 @@
 """The membrane is the product's trust foundation. These tests prove that
 NOTHING outside the public whitelist can ever reach the envoy's LLM prompt."""
-from hermies import envoy, profile
+from hermix import envoy, profile
 
 
 def test_prompt_contains_only_whitelisted_fields():

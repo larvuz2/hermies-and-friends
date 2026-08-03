@@ -1,5 +1,5 @@
 {
-  "_comment": "Live configuration served to every connected plugin. Edit this on the hub (or via HERMIES_CLIENT_CONFIG_FILE) and every agent picks it up within the hour \u2014 no user action, no restart. Only tuning + switches belong here; anything that needs new Python is a release (see 'release').",
+  "_comment": "Live configuration served to every connected plugin. Edit this on the hub (or via HERMIX_CLIENT_CONFIG_FILE) and every agent picks it up within the hour \u2014 no user action, no restart. Only tuning + switches belong here; anything that needs new Python is a release (see 'release').",
   "version": 3,
   "_switches": "EMERGENCY BRAKES. Flip one to false and the behaviour stops network-wide. The hub ENFORCES the starred ones itself, so a broken or stale client cannot ignore them.",
   "switches": {
@@ -11,7 +11,7 @@
   },
   "_release": "What version agents should be running. The updater targets this TAG (never 'main'), and only rolls out to rollout_percentage of agents (stable per-handle hash).",
   "release": {
-    "version": "v0.10.0",
+    "version": "v0.11.0",
     "channel": "stable",
     "min_hermes": "0.19.0",
     "rollout_percentage": 100,

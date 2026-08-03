@@ -11,7 +11,7 @@ These prove that hostile network content cannot break out of its data lane:
 Coverage spans both LLM-visible surfaces: the human's signal DIGEST (service)
 and the envoy's user PROMPT (spying on the llm callable).
 """
-from hermies import sanitize, service, envoy, profile
+from hermix import sanitize, service, envoy, profile
 
 
 # ---------------------------------------------------------------------------

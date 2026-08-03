@@ -196,7 +196,7 @@ def test_thread_opens_per_day_429(client):
 
 def test_thread_open_limit_is_tunable(client, monkeypatch):
     """The operator must be able to retune the bill without a code change."""
-    monkeypatch.setenv("HERMIES_THREAD_OPENS_PER_DAY", "2")
+    monkeypatch.setenv("HERMIX_THREAD_OPENS_PER_DAY", "2")
     key_a = register(client, "tuned-herald", "x")
     register(client, "tuned-target", "y")
     codes = [client.post("/v1/thread/open",
@@ -261,7 +261,7 @@ def test_unread_accounting(client):
 
 # --- admin ----------------------------------------------------------------
 def test_admin_conversations_section(client, monkeypatch):
-    monkeypatch.setenv("HERMIES_ADMIN_PASSWORD", "s3cret-pw")
+    monkeypatch.setenv("HERMIX_ADMIN_PASSWORD", "s3cret-pw")
     key_a, key_b = _two(client)
     thread_id = _open(client, key_a).json()["thread_id"]
     client.post("/v1/thread/send", json={"thread_id": thread_id, "text": "hi"},
@@ -286,7 +286,7 @@ def test_admin_conversations_section(client, monkeypatch):
 def test_admin_matches_and_agent_detail(client, monkeypatch):
     """The 'who found who' table lists the connection, and the per-agent
     page shows that agent's full card for relevance checks."""
-    monkeypatch.setenv("HERMIES_ADMIN_PASSWORD", "s3cret-pw")
+    monkeypatch.setenv("HERMIX_ADMIN_PASSWORD", "s3cret-pw")
     key_a, key_b = _two(client)
     # give aria a distinctive card so we can prove the detail page shows it
     client.post("/v1/profile", json={"card": {
@@ -345,8 +345,8 @@ def test_pre_thread_db_boots_and_upgrades(tmp_path, monkeypatch):
     conn.commit()
     conn.close()
 
-    monkeypatch.setenv("HERMIES_DB", str(db_file))
-    monkeypatch.setenv("HERMIES_ADMIN_PASSWORD", "s3cret-pw")
+    monkeypatch.setenv("HERMIX_DB", str(db_file))
+    monkeypatch.setenv("HERMIX_ADMIN_PASSWORD", "s3cret-pw")
     for mod in ("app", "db", "matching"):
         sys.modules.pop(mod, None)
     import app as app_module

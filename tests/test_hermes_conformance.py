@@ -14,8 +14,8 @@ import pathlib
 
 import pytest
 
-import hermies
-from hermies import commands, envoy, service
+import hermix
+from hermix import commands, envoy, service
 
 
 # Hook names Hermes accepts (subset of VALID_HOOKS, hermes_cli/plugins.py:135).
@@ -117,12 +117,12 @@ def loaded(monkeypatch, tmp_path):
     """Run our real register(ctx) against a spy, WITHOUT spawning the daemon
     thread — capture the (client, card, inject, llm) the plugin wired instead.
 
-    HERMIES_HOME is redirected to a fresh tmp dir so the dossier is deterministic
+    HERMIX_HOME is redirected to a fresh tmp dir so the dossier is deterministic
     (absent -> not onboarded -> the register() bootstrap injection fires)."""
-    monkeypatch.setenv("HERMIES_HOME", str(tmp_path))
+    monkeypatch.setenv("HERMIX_HOME", str(tmp_path))
     # Force offline/mock so register()'s connectivity probe never hits the real
     # hub during unit tests (the default URL is now the public hub).
-    monkeypatch.setenv("HERMIES_API_URL", "")
+    monkeypatch.setenv("HERMIX_API_URL", "")
     captured = {}
 
     def fake_start(client, card, inject, llm, interval=90, matchmake=None,
@@ -134,7 +134,7 @@ def loaded(monkeypatch, tmp_path):
 
     monkeypatch.setattr(service, "start", fake_start)
     ctx = SpyContext()
-    hermies.register(ctx)
+    hermix.register(ctx)
     return ctx, captured
 
 
@@ -143,25 +143,25 @@ def loaded(monkeypatch, tmp_path):
 # --------------------------------------------------------------------------- #
 
 def test_register_is_sync_single_positional_ctx():
-    sig = inspect.signature(hermies.register)
+    sig = inspect.signature(hermix.register)
     params = list(sig.parameters.values())
     assert len(params) == 1 and params[0].name == "ctx"
-    assert not inspect.iscoroutinefunction(hermies.register)
+    assert not inspect.iscoroutinefunction(hermix.register)
 
 
 def test_register_wires_expected_surface(loaded):
     ctx, _ = loaded
     assert set(ctx.tools) == {
-        "hermies_scout", "hermies_search_agents", "hermies_list_signals",
-        "hermies_send_message", "hermies_install_skill",
-        "hermies_dossier", "hermies_ask", "hermies_thread",
-        "hermies_reveal_request", "hermies_reveal_respond", "hermies_intent",
-        "hermies_pending", "hermies_pause", "hermies_deliver_pending",
-        "hermies_scan_now", "hermies_feedback", "hermies_why",
-        "hermies_intro_preview", "hermies_ask_preview", "hermies_ask_status",
-        "hermies_block", "hermies_unblock", "hermies_report",
+        "hermix_scout", "hermix_search_agents", "hermix_list_signals",
+        "hermix_send_message", "hermix_install_skill",
+        "hermix_dossier", "hermix_ask", "hermix_thread",
+        "hermix_reveal_request", "hermix_reveal_respond", "hermix_intent",
+        "hermix_pending", "hermix_pause", "hermix_deliver_pending",
+        "hermix_scan_now", "hermix_feedback", "hermix_why",
+        "hermix_intro_preview", "hermix_ask_preview", "hermix_ask_status",
+        "hermix_block", "hermix_unblock", "hermix_report",
     }
-    assert set(ctx.commands) == {"hermies"}
+    assert set(ctx.commands) == {"hermix"}
     # Both hooks are wired: the pre_tool_call consent gate and the pre_llm_call
     # first-run onboarding nudge (the gateway-safe bootstrap).
     assert list(ctx.hooks) == ["pre_tool_call", "pre_llm_call"]
@@ -170,8 +170,8 @@ def test_register_wires_expected_surface(loaded):
 def test_register_wires_the_five_behavioral_skills(loaded):
     ctx, _ = loaded
     assert set(ctx.skills) == {
-        "hermies-context", "hermies-voice", "hermies-onboarding",
-        "hermies-envoy-protocol", "hermies-delivery",
+        "hermix-context", "hermix-voice", "hermix-onboarding",
+        "hermix-envoy-protocol", "hermix-delivery",
     }
     # Every registered skill path points at a real SKILL.md.
     for spec in ctx.skills.values():
@@ -193,7 +193,7 @@ def test_first_run_injects_onboarding_bootstrap_once(loaded):
 def test_tool_schema_shape_and_toolset(loaded):
     ctx, _ = loaded
     for name, spec in ctx.tools.items():
-        assert spec["toolset"] == "hermies"
+        assert spec["toolset"] == "hermix"
         schema = spec["schema"]
         # Real shape (Spotify SPOTIFY_*_SCHEMA): {name, description, parameters}
         assert schema.get("name") == name, "schema.name must equal the tool name"
@@ -204,7 +204,7 @@ def test_tool_schema_shape_and_toolset(loaded):
 def test_tool_handler_convention(loaded):
     """Real dispatch (tools/registry.py:631): handler(args: dict, **kwargs) -> str."""
     ctx, _ = loaded
-    out = ctx.tools["hermies_search_agents"]["handler"]({"query": "video"})
+    out = ctx.tools["hermix_search_agents"]["handler"]({"query": "video"})
     assert isinstance(out, str)  # JSON string, normalized by the registry
     import json
     assert json.loads(out)["success"] is True
@@ -216,7 +216,7 @@ def test_tool_handler_convention(loaded):
 
 def test_command_handler_takes_single_raw_args_string(loaded):
     ctx, _ = loaded
-    handler = ctx.commands["hermies"]["handler"]
+    handler = ctx.commands["hermix"]["handler"]
     # Real call site (cli.py:9575 / gateway/run.py:12039): handler(user_args)
     result = handler("status")
     assert isinstance(result, str) and result
@@ -231,7 +231,7 @@ def test_install_gate_block_contract(loaded):
     gate = ctx.hooks["pre_tool_call"][0]
     # Real invocation is kwargs-only with tool_name + args
     # (hermes_cli/plugins.py:2145).
-    directive = gate(tool_name="hermies_install_skill", args={"name": "x:y"})
+    directive = gate(tool_name="hermix_install_skill", args={"name": "x:y"})
     assert directive == {
         "action": "block",
         "message": directive["message"],
@@ -245,7 +245,7 @@ def test_install_gate_block_contract(loaded):
 def test_install_gate_allows_when_approved(loaded):
     ctx, _ = loaded
     gate = ctx.hooks["pre_tool_call"][0]
-    assert gate(tool_name="hermies_install_skill",
+    assert gate(tool_name="hermix_install_skill",
                 args={"name": "x:y", "approved": True}) is None
 
 
@@ -254,7 +254,7 @@ def test_install_gate_ignores_other_tools(loaded):
     gate = ctx.hooks["pre_tool_call"][0]
     assert gate(tool_name="some_other_tool", args={"a": 1}) is None
     # Only real kwargs supplied; must not read a legacy 'params'/'name' key.
-    assert gate(tool_name="hermies_send_message", args={}) is None
+    assert gate(tool_name="hermix_send_message", args={}) is None
 
 
 def test_gate_hook_name_is_real(loaded):
@@ -309,13 +309,13 @@ def _repo_root():
 
 def test_manifest_declares_every_registered_tool():
     import re
-    from hermies import tools as tools_mod, profile as profile_mod
-    from hermies.client import HermiesClient
-    from hermies.mock_backend import MockBackend
+    from hermix import tools as tools_mod, profile as profile_mod
+    from hermix.client import HermixClient
+    from hermix.mock_backend import MockBackend
 
     registered = {s["name"] for s in tools_mod.build(
-        HermiesClient(MockBackend()), profile_mod.PublicCard(handle="x"), llm=None)}
-    manifest = set(re.findall(r"- (hermies_\w+)",
+        HermixClient(MockBackend()), profile_mod.PublicCard(handle="x"), llm=None)}
+    manifest = set(re.findall(r"- (hermix_\w+)",
                               (_repo_root() / "plugin.yaml").read_text(encoding="utf-8")))
     assert registered == manifest, {
         "missing from plugin.yaml": sorted(registered - manifest),

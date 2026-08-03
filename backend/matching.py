@@ -1,4 +1,4 @@
-"""Deterministic, stdlib-only matching engine for the Hermies hub.
+"""Deterministic, stdlib-only matching engine for the Hermix hub.
 
 Score for a pair (me -> them):
   * my (need + curious + signals_wanted)  vs  their (offer + abilities)

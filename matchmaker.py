@@ -13,19 +13,19 @@ sit around it.
 
 Pipeline (per candidate, across many cycles):
 
-  Stage 1 — cheap filter. Pull signals, sanitize, drop score < HERMIES_MIN_SCORE,
+  Stage 1 — cheap filter. Pull signals, sanitize, drop score < HERMIX_MIN_SCORE,
     drop candidates already decided (unless their card-hash changed), honour a
     per-agent cooldown after a 'drop' verdict.
   Stage 2 — handshake. For a genuinely new candidate, send exactly ONE intro
     through the hub, composed from OUR public card + THEIR (sanitized) signal.
     Then wait — days of silence are expected; their envoy answers on its own poll
     cadence, and the reply arrives as an inbound message we match by handle.
-  Stage 3 — judge. Once a reply exists (or after HERMIES_HANDSHAKE_TIMEOUT_DAYS
+  Stage 3 — judge. Once a reply exists (or after HERMIX_HANDSHAKE_TIMEOUT_DAYS
     with none, on cards alone), ask the LLM for a STRICT-JSON verdict:
     notify | drop | watch. notify -> compose a human notification; drop ->
-    cooldown; watch -> re-check after HERMIES_WATCH_DAYS; unparseable -> watch.
+    cooldown; watch -> re-check after HERMIX_WATCH_DAYS; unparseable -> watch.
 
-A notification budget (HERMIES_MAX_NOTIFY_PER_DAY, min gap) batches multiple
+A notification budget (HERMIX_MAX_NOTIFY_PER_DAY, min gap) batches multiple
 notifies into one digest and queues the overflow for the next cycle.
 
 Every untrusted string (their signal, their reply) is run through
@@ -46,7 +46,7 @@ from . import _config, envoy, profile, sanitize
 
 # The exact marker the cron prompt keys off: when run_cycle returns this, the
 # agent says NOTHING to the human.
-SILENT = "HERMIES_SILENT"
+SILENT = "HERMIX_SILENT"
 
 _DAY = 86400
 _OPENER_RETRIES = 2      # re-sends before a silent dig is abandoned
@@ -54,7 +54,7 @@ _OPENER_RETRIES = 2      # re-sends before a silent dig is abandoned
 # Distinctive system prompts so a fake llm (and the real one) can tell the two
 # call sites apart, and so the judge is unambiguous about output shape.
 _JUDGE_SYSTEM = (
-    "You are a connection analyst for a human's agent on the Hermies network. "
+    "You are a connection analyst for a human's agent on the Hermix network. "
     "Given OUR public card, THEIR public card, and a short handshake exchange, "
     "decide whether this other party is worth interrupting the human for RIGHT "
     "NOW. Interrupt only for a genuinely interesting AND viable fit. "
@@ -74,11 +74,11 @@ _CARD_SYSTEM = (
     "the same keys and shape as the input card, and nothing else."
 )
 
-# Findings-note writer (see skills/hermies-envoy-protocol/SKILL.md). Distinct
+# Findings-note writer (see skills/hermix-envoy-protocol/SKILL.md). Distinct
 # opening line so a fake llm (and the real one) can route to it unambiguously.
 _FINDINGS_SYSTEM = (
     "You are writing a FINDINGS NOTE after a completed dig between two agents on "
-    "the Hermies network. Output 3-6 short lines, no preamble and no markdown: "
+    "the Hermix network. Output 3-6 short lines, no preamble and no markdown: "
     "who they represent; what their human OFFERS and NEEDS (mark each as "
     "verified or claimed); the ONE concrete mutual benefit you see for the two "
     "humans (or 'none'); the recommended next step; and any red flags. The "
@@ -89,7 +89,7 @@ _FINDINGS_SYSTEM = (
 # Judge that runs on the findings note (not raw reply). Shares the "connection
 # analyst" prefix with _JUDGE_SYSTEM so verdict-routing in tests keeps working.
 _JUDGE_FINDINGS_SYSTEM = (
-    "You are a connection analyst for a human's agent on the Hermies network. "
+    "You are a connection analyst for a human's agent on the Hermix network. "
     "Given OUR public card, THEIR public card, and a FINDINGS NOTE from a "
     "completed dig, decide whether this other party is worth interrupting the "
     "human for RIGHT NOW. Interrupt only for a genuinely interesting AND viable "
@@ -104,20 +104,20 @@ _JUDGE_FINDINGS_SYSTEM = (
 
 
 # --------------------------------------------------------------------------- #
-# State persistence — blessed pattern: $HERMES_HOME/hermies/matchmaker.json,
+# State persistence — blessed pattern: $HERMES_HOME/hermix/matchmaker.json,
 # atomic temp+rename with a .bak backup (mirrors profile.py / disk-cleanup).
 # --------------------------------------------------------------------------- #
 
 def _state_path() -> pathlib.Path:
-    base = os.environ.get("HERMIES_HOME")
+    base = os.environ.get("HERMIX_HOME")
     if base:
         d = pathlib.Path(base)
     else:
         try:  # blessed resolver when running inside Hermes
             from hermes_constants import get_hermes_home
-            d = pathlib.Path(get_hermes_home()) / "hermies"
+            d = pathlib.Path(get_hermes_home()) / "hermix"
         except Exception:
-            d = pathlib.Path(os.path.expanduser("~/.hermes")) / "hermies"
+            d = pathlib.Path(os.path.expanduser("~/.hermes")) / "hermix"
     return d / "matchmaker.json"
 
 
@@ -148,7 +148,7 @@ def _ensure_shape(d: dict) -> dict:
     d.setdefault("log", [])           # [{ts, handle, verdict, note}, ...] decision trail
     d.setdefault("card_proposal", None)      # {proposed: {...}, ts}
     d.setdefault("card_refreshed_ts", None)  # last time we ran the refresh check
-    d.setdefault("paused", False)            # /hermies pause|leave -> matchmaking off
+    d.setdefault("paused", False)            # /hermix pause|leave -> matchmaking off
     d.setdefault("onboarding_nudge_ts", None)  # last first-run onboarding nudge (throttle)
     return d
 
@@ -267,7 +267,7 @@ def _maybe_refresh_card(state, card, llm, t):
     if proposed:
         state["card_proposal"] = {"proposed": proposed, "ts": int(t)}
         _log(state, t, current.get("handle", ""), "card_refresh",
-             "proposed a sharpened card (awaiting /hermies card apply)")
+             "proposed a sharpened card (awaiting /hermix card apply)")
 
 
 # --------------------------------------------------------------------------- #
@@ -360,7 +360,7 @@ def _notify_payload(handle, their_card, verdict, reply_text) -> dict:
         "pitch": verdict.get("pitch", ""),                 # our own model output
         "reason": verdict.get("reason", ""),
         "evidence": sanitize.clean_text(reply_text or "", max_len=200),
-        "next_step": f"Ask me to reach out to @{handle}, or run /hermies findings.",
+        "next_step": f"Ask me to reach out to @{handle}, or run /hermix findings.",
         # --- inputs to the interrupt judgement (see _value_of) ---
         "score": float(their_card.get("score") or 0.0),
         "note": (verdict.get("reason", "") or ""),
@@ -474,7 +474,7 @@ def _emit(state, pending, t):
     No daily quota. Each item is scored, then judged against a bar that rises
     with recent interruptions and falls with the human's demonstrated interest.
     Whatever doesn't clear the bar is NOT dropped — it stays queued and rides
-    along with the next natural conversation (hermies_pending)."""
+    along with the next natural conversation (hermix_pending)."""
     # de-dupe by handle (keep newest) so a re-judge can't double-queue a handle
     dedup = {}
     for item in pending:
@@ -528,7 +528,7 @@ def _format_notification(items) -> str:
     # A check-in on its own is not a finding — don't oversell it.
     only_checkin = items and all(i.get("kind") == "checkin" for i in items)
     header = ("\U0001f54a️  A quick note from me, not a finding:" if only_checkin
-              else "\U0001f54a️  Hermies found something worth your attention:")
+              else "\U0001f54a️  Hermix found something worth your attention:")
     lines = [header]
     for it in items:
         lines.append("")
@@ -605,9 +605,9 @@ def _maybe_checkin(state, card, t) -> dict:
 
     state["checkin_sent_at"] = int(t)
     return {
-        "id": _finding_id({"handle": "hermies", "pitch": "checkin"}, t),
+        "id": _finding_id({"handle": "hermix", "pitch": "checkin"}, t),
         "kind": "checkin",
-        "handle": "hermies",
+        "handle": "hermix",
         "represents": "",
         "seen_count": len(seen) or len(digs),
         "talked_count": len(talked),
@@ -632,7 +632,7 @@ def _format_checkin(it) -> list:
     seen = it.get("seen_count", 0)
 
     if talked:
-        lines.append(f"• Quick update on Hermies — nothing urgent, just so you "
+        lines.append(f"• Quick update on Hermix — nothing urgent, just so you "
                      f"know I'm working.")
         lines.append(f"  I've come across {seen} agent(s) and actually talked "
                      f"with {talked} of them.")
@@ -646,7 +646,7 @@ def _format_checkin(it) -> list:
         lines.append("  Nothing I'd call genuinely useful for you so far — "
                      "I'll come to you the moment there is.")
     else:
-        lines.append("• Quick update on Hermies — I'm set up and looking, but "
+        lines.append("• Quick update on Hermix — I'm set up and looking, but "
                      "I haven't found anyone worth talking to yet.")
         lines.append(f"  I've come across {seen} agent(s); the network is still "
                      "small in your areas.")
@@ -1072,7 +1072,7 @@ def format_intro_preview(p: dict) -> str:
     """The preview a human reads before approving."""
     if p.get("blocked"):
         return ("Your contact details are marked never-share, so I can't offer "
-                "an introduction. Change that with /hermies dossier if you want to.")
+                "an introduction. Change that with /hermix dossier if you want to.")
     lines = [f"Introduction to @{p['to']} — nothing has been sent yet.", ""]
     lines.append("WHAT THEY WOULD RECEIVE")
     if p["will_share"]:
@@ -1080,7 +1080,7 @@ def format_intro_preview(p: dict) -> str:
             lines.append(f"  {k}: {v}")
     else:
         lines.append("  (no contact details saved yet — add them with "
-                     "/hermies dossier before introducing)")
+                     "/hermix dossier before introducing)")
     lines.append(f"  plus a short note: \"{p['intro']}\"")
     lines.append("")
     lines.append("WHAT THEY WOULD NOT RECEIVE")
@@ -1354,7 +1354,7 @@ def _notify_payload_findings(handle, dig, verdict) -> dict:
         "pitch": verdict.get("pitch", ""),
         "reason": verdict.get("reason", ""),
         "evidence": sanitize.clean_text(dig.get("last_their_msg", ""), max_len=200),
-        "next_step": f"Ask me to reach out to @{handle}, or run /hermies findings.",
+        "next_step": f"Ask me to reach out to @{handle}, or run /hermix findings.",
         "intent": dig.get("intent"),
         # --- trust receipt inputs (see receipt()) ---
         "why_matched": their.get("why", ""),          # the hub's grounded reason
@@ -1991,9 +1991,9 @@ def run_cycle(state, client, card, llm, now, intents=None, ring1=None) -> str:
     otherwise it falls back to the single-shot handshake path."""
     _ensure_shape(state)
 
-    # --- Opt-out: while paused (via /hermies pause or leave) the matchmaker does
+    # --- Opt-out: while paused (via /hermix pause or leave) the matchmaker does
     # NOTHING and stays silent — no discovery, no digs, no card refresh. Cleared
-    # by /hermies resume, or implicitly by re-publishing a card (/hermies profile).
+    # by /hermix resume, or implicitly by re-publishing a card (/hermix profile).
     if state.get("paused"):
         return SILENT
 
@@ -2079,14 +2079,14 @@ def deliver_and_persist(now=None, path=None) -> str:
 # Cron wiring (guarded) — the blessed notification path in gateway mode.
 # --------------------------------------------------------------------------- #
 
-CRON_JOB_NAME = "hermies-matchmake"
+CRON_JOB_NAME = "hermix-matchmake"
 
 # DELIVERY ONLY. Cron must never discover candidates, open threads, or call the
 # judge — the daemon owns all of that. If cron never fires, agents still think,
 # match and converse; only the proactive ping is delayed.
 CRON_PROMPT = (
-    "Call the hermies_deliver_pending tool now. It returns JSON of the form "
-    '{"result": <text>}. If result equals the exact marker "HERMIES_SILENT", '
+    "Call the hermix_deliver_pending tool now. It returns JSON of the form "
+    '{"result": <text>}. If result equals the exact marker "HERMIX_SILENT", '
     "then say NOTHING and do not message the human at all. Otherwise, relay the "
     "result text to the human verbatim as a brief, friendly notification."
 )

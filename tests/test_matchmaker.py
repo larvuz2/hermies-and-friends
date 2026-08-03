@@ -10,9 +10,9 @@ import json
 
 import pytest
 
-from hermies import matchmaker, profile, sanitize
-from hermies.client import HermiesClient
-from hermies.mock_backend import MockBackend
+from hermix import matchmaker, profile, sanitize
+from hermix.client import HermixClient
+from hermix.mock_backend import MockBackend
 
 DAY = 86400
 
@@ -202,7 +202,7 @@ def test_value_scoring_reflects_what_matters(monkeypatch):
 def test_no_quota_many_strong_findings_go_in_one_interruption(monkeypatch):
     """The old hard 2/day cap is gone: several genuinely strong findings are
     delivered together, and that costs ONE interruption, not four."""
-    monkeypatch.setenv("HERMIES_QUIET_HOURS", "")
+    monkeypatch.setenv("HERMIX_QUIET_HOURS", "")
     st = matchmaker.new_state()
     out = matchmaker._emit(st, [_item(f"h{i}", 9) for i in range(4)], 1_000_000.0)
     assert out.count("• @") == 4
@@ -213,9 +213,9 @@ def test_no_quota_many_strong_findings_go_in_one_interruption(monkeypatch):
 def test_pressure_holds_then_battery_recovers(monkeypatch):
     """Right after an interruption the bar is high, so a decent-but-not-urgent
     finding is HELD (never dropped). Once the battery recovers, it goes."""
-    monkeypatch.setenv("HERMIES_QUIET_HOURS", "")
-    monkeypatch.setenv("HERMIES_INTERRUPT_THRESHOLD", "5.0")
-    monkeypatch.setenv("HERMIES_PRESSURE_WEIGHT", "3.0")
+    monkeypatch.setenv("HERMIX_QUIET_HOURS", "")
+    monkeypatch.setenv("HERMIX_INTERRUPT_THRESHOLD", "5.0")
+    monkeypatch.setenv("HERMIX_PRESSURE_WEIGHT", "3.0")
     t = 1_000_000.0
     st = matchmaker.new_state()
     assert matchmaker._emit(st, [_item("a", 9)], t) != matchmaker.SILENT   # charges battery
@@ -232,8 +232,8 @@ def test_pressure_holds_then_battery_recovers(monkeypatch):
 
 def test_urgent_breaks_through_pressure_and_quiet_hours(monkeypatch):
     """A friend still calls you at midnight if it's genuinely urgent."""
-    monkeypatch.setenv("HERMIES_QUIET_HOURS", "0-23")     # ~always quiet
-    monkeypatch.setenv("HERMIES_URGENT_THRESHOLD", "8.5")
+    monkeypatch.setenv("HERMIX_QUIET_HOURS", "0-23")     # ~always quiet
+    monkeypatch.setenv("HERMIX_URGENT_THRESHOLD", "8.5")
     t = 1_000_000.0
     st = matchmaker.new_state()
     # normal-value finding is held during quiet hours...
@@ -249,9 +249,9 @@ def test_urgent_breaks_through_pressure_and_quiet_hours(monkeypatch):
 def test_engagement_lowers_the_bar(monkeypatch):
     """When the human asks for intros, borderline findings start getting
     through — the agent reads that they want more of this."""
-    monkeypatch.setenv("HERMIES_QUIET_HOURS", "")
-    monkeypatch.setenv("HERMIES_INTERRUPT_THRESHOLD", "7.5")
-    monkeypatch.setenv("HERMIES_ENGAGEMENT_WEIGHT", "1.5")
+    monkeypatch.setenv("HERMIX_QUIET_HOURS", "")
+    monkeypatch.setenv("HERMIX_INTERRUPT_THRESHOLD", "7.5")
+    monkeypatch.setenv("HERMIX_ENGAGEMENT_WEIGHT", "1.5")
     t = 1_000_000.0
     cold = matchmaker.new_state()
     assert matchmaker._emit(cold, [_item("m", 5)], t) == matchmaker.SILENT
@@ -263,8 +263,8 @@ def test_engagement_lowers_the_bar(monkeypatch):
 
 def test_optional_hard_cap_still_available(monkeypatch):
     """Operators who explicitly want a ceiling can still set one."""
-    monkeypatch.setenv("HERMIES_QUIET_HOURS", "")
-    monkeypatch.setenv("HERMIES_MAX_NOTIFY_PER_DAY", "1")
+    monkeypatch.setenv("HERMIX_QUIET_HOURS", "")
+    monkeypatch.setenv("HERMIX_MAX_NOTIFY_PER_DAY", "1")
     t = 1_000_000.0
     st = matchmaker.new_state()
     assert matchmaker._emit(st, [_item("a", 9)], t) != matchmaker.SILENT
@@ -273,7 +273,7 @@ def test_optional_hard_cap_still_available(monkeypatch):
 
 
 def test_two_notifies_batch_into_one_digest(monkeypatch):
-    monkeypatch.setenv("HERMIES_QUIET_HOURS", "")
+    monkeypatch.setenv("HERMIX_QUIET_HOURS", "")
     state = matchmaker.new_state()
     client = FakeClient([_sig("a-herald", "offers X", 5), _sig("b-herald", "offers Y", 5)])
     clock = Clock()
@@ -294,7 +294,7 @@ def test_no_reply_judged_on_cards_after_timeout(monkeypatch):
     """After the timeout we still JUDGE on cards alone — but a candidate whose
     agent never replied is the weakest kind of finding, so it is held for the
     next natural conversation rather than interrupting the human."""
-    monkeypatch.setenv("HERMIES_HANDSHAKE_TIMEOUT_DAYS", "4")
+    monkeypatch.setenv("HERMIX_HANDSHAKE_TIMEOUT_DAYS", "4")
     state = matchmaker.new_state()
     client = FakeClient([_sig()])
     clock = Clock()
@@ -313,7 +313,7 @@ def test_no_reply_judged_on_cards_after_timeout(monkeypatch):
 # Drop -> cooldown
 # --------------------------------------------------------------------------- #
 def test_drop_then_cooldown_then_only_on_card_change(monkeypatch):
-    monkeypatch.setenv("HERMIES_DROP_COOLDOWN_DAYS", "14")
+    monkeypatch.setenv("HERMIX_DROP_COOLDOWN_DAYS", "14")
     state = matchmaker.new_state()
     client = FakeClient([_sig()])
     clock = Clock()
@@ -350,7 +350,7 @@ def test_drop_then_cooldown_then_only_on_card_change(monkeypatch):
 # Watch -> re-judged after the watch window
 # --------------------------------------------------------------------------- #
 def test_watch_is_rejudged_after_window(monkeypatch):
-    monkeypatch.setenv("HERMIES_WATCH_DAYS", "7")
+    monkeypatch.setenv("HERMIX_WATCH_DAYS", "7")
     state = matchmaker.new_state()
     client = FakeClient([_sig()])
     clock = Clock()
@@ -440,7 +440,7 @@ def test_card_hash_change_triggers_reeval_after_notify():
 # State persistence roundtrip -> identical decisions
 # --------------------------------------------------------------------------- #
 def test_state_persistence_roundtrip(tmp_path, monkeypatch):
-    monkeypatch.setenv("HERMIES_HOME", str(tmp_path))
+    monkeypatch.setenv("HERMIX_HOME", str(tmp_path))
     client = FakeClient([_sig()])
     clock = Clock()
     card, llm = _card(), FakeLlm()
@@ -466,7 +466,7 @@ def test_state_persistence_roundtrip(tmp_path, monkeypatch):
 # Card refresh: proposes only after 7 days, never auto-applies
 # --------------------------------------------------------------------------- #
 def test_card_refresh_proposes_only_after_window_and_never_applies(monkeypatch):
-    monkeypatch.setenv("HERMIES_CARD_REFRESH_DAYS", "7")
+    monkeypatch.setenv("HERMIX_CARD_REFRESH_DAYS", "7")
     state = matchmaker.new_state()
     client = FakeClient([])
     clock = Clock()
@@ -544,8 +544,8 @@ def test_all_untrusted_strings_pass_through_sanitize(monkeypatch):
 # End-to-end against the REAL MockBackend
 # --------------------------------------------------------------------------- #
 def test_end_to_end_against_mock_backend(monkeypatch):
-    monkeypatch.setenv("HERMIES_MIN_SCORE", "1")            # mock scores are small
-    client = HermiesClient(MockBackend())
+    monkeypatch.setenv("HERMIX_MIN_SCORE", "1")            # mock scores are small
+    client = HermixClient(MockBackend())
     client.t._inbox = []                                    # start with a clean mailbox
     card = _card()
     client.publish_profile(card.public_dict())

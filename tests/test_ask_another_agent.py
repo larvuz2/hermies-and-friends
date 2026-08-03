@@ -8,17 +8,17 @@ import json
 
 import pytest
 
-from hermies import matchmaker, profile, tools
-from hermies.client import HermiesClient
-from hermies.mock_backend import MockBackend
+from hermix import matchmaker, profile, tools
+from hermix.client import HermixClient
+from hermix.mock_backend import MockBackend
 
 DAY = 86400
 
 
 @pytest.fixture(autouse=True)
 def _isolate(tmp_path, monkeypatch):
-    monkeypatch.setenv("HERMIES_HOME", str(tmp_path))
-    monkeypatch.setenv("HERMIES_QUIET_HOURS", "")
+    monkeypatch.setenv("HERMIX_HOME", str(tmp_path))
+    monkeypatch.setenv("HERMIX_QUIET_HOURS", "")
 
 
 def _card():
@@ -44,7 +44,7 @@ class AskLlm:
 def _client():
     b = MockBackend()
     b._inbox = []
-    return b, HermiesClient(b)
+    return b, HermixClient(b)
 
 
 # --- preview (MVP steps 3-4) ------------------------------------------------
@@ -119,8 +119,8 @@ def test_reply_produces_a_structured_report_delivered_to_the_human():
 
 def test_an_answer_is_never_suppressed_by_the_interrupt_bar(monkeypatch):
     """The human ASKED. That is not an interruption to be rationed."""
-    monkeypatch.setenv("HERMIES_INTERRUPT_THRESHOLD", "9.9")
-    monkeypatch.setenv("HERMIES_QUIET_HOURS", "0-23")     # always "quiet"
+    monkeypatch.setenv("HERMIX_INTERRUPT_THRESHOLD", "9.9")
+    monkeypatch.setenv("HERMIX_QUIET_HOURS", "0-23")     # always "quiet"
     st = matchmaker.new_state()
     st["notify_log"] = [1_000_000, 1_000_050]             # battery fully charged
     payload = matchmaker._ask_payload(
@@ -144,7 +144,7 @@ def test_no_reply_reports_honestly_instead_of_hanging():
 
 
 def test_turn_budget_is_respected(monkeypatch):
-    monkeypatch.setenv("HERMIES_ASK_MAX_TURNS", "1")
+    monkeypatch.setenv("HERMIX_ASK_MAX_TURNS", "1")
     b, client = _client()
     card, llm = _card(), AskLlm()
     st = matchmaker.new_state()
@@ -191,7 +191,7 @@ def test_ask_tool_returns_immediately_and_tells_the_agent_not_to_invent():
     b, client = _client()
     handlers = {s["name"]: s["handler"]
                 for s in tools.build(client, _card(), llm=AskLlm())}
-    res = json.loads(handlers["hermies_ask"](
+    res = json.loads(handlers["hermix_ask"](
         {"to": "@mira-herald", "question": "have you handled distribution?"}))
     assert res["success"] is True
     assert "invent" in res["note"].lower()
@@ -203,7 +203,7 @@ def test_ask_preview_tool_sends_nothing():
     handlers = {s["name"]: s["handler"]
                 for s in tools.build(client, _card(), llm=AskLlm())}
     before = len(b.list_threads()["threads"])
-    res = json.loads(handlers["hermies_ask_preview"](
+    res = json.loads(handlers["hermix_ask_preview"](
         {"to": "mira-herald", "question": "q?"}))
     assert res["success"] is True and "nothing has been sent" in res["preview_text"]
     assert len(b.list_threads()["threads"]) == before

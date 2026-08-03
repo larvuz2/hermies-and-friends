@@ -1,6 +1,6 @@
-"""Matchmaking quality harness for Hermies and Friends.
+"""Matchmaking quality harness for Hermix.
 
-Loads the deterministic corpus into a FRESH engine (temp sqlite via HERMIES_DB),
+Loads the deterministic corpus into a FRESH engine (temp sqlite via HERMIX_DB),
 runs ``match()`` for every card, and scores the engine on the metrics that
 decide whether matching is good enough for a public launch:
 
@@ -48,12 +48,12 @@ def _load_from_path(mod_name, path):
 
 
 def load_db_module():
-    """backend/db.py, pointed at a fresh temp sqlite via HERMIES_DB."""
-    tmp = tempfile.NamedTemporaryFile(prefix="hermies_eval_", suffix=".db",
+    """backend/db.py, pointed at a fresh temp sqlite via HERMIX_DB."""
+    tmp = tempfile.NamedTemporaryFile(prefix="hermix_eval_", suffix=".db",
                                       delete=False)
     tmp.close()
-    os.environ["HERMIES_DB"] = tmp.name
-    db = _load_from_path("hermies_eval_db", BACKEND / "db.py")
+    os.environ["HERMIX_DB"] = tmp.name
+    db = _load_from_path("hermix_eval_db", BACKEND / "db.py")
     db.init_db()  # engine.build_engine expects an initialized schema (app does this on boot)
     return db, tmp.name
 
@@ -71,13 +71,13 @@ def load_engine_module():
         if str(BACKEND) not in sys.path:
             sys.path.insert(0, str(BACKEND))
         try:
-            mod = _load_from_path("hermies_eval_engine", engine_path)
+            mod = _load_from_path("hermix_eval_engine", engine_path)
             return mod, "backend/engine.py"
         except Exception as exc:  # missing ML deps, etc.
             note = f"backend/engine.py present but failed to import ({exc!r}); using stub"
-            mod = _load_from_path("hermies_eval_engine_stub", HERE / "_stub_engine.py")
+            mod = _load_from_path("hermix_eval_engine_stub", HERE / "_stub_engine.py")
             return mod, note
-    mod = _load_from_path("hermies_eval_engine_stub", HERE / "_stub_engine.py")
+    mod = _load_from_path("hermix_eval_engine_stub", HERE / "_stub_engine.py")
     return mod, "evals/_stub_engine.py (backend/engine.py not present)"
 
 
@@ -85,7 +85,7 @@ def detect_mode(engine, engine_module):
     """Fallback vs real-model. Ordered heuristics, all deterministic.
 
     1. explicit ``mode`` attribute on the engine instance or module
-    2. env HERMIES_FORCE_FALLBACK_EMBED truthy -> fallback
+    2. env HERMIX_FORCE_FALLBACK_EMBED truthy -> fallback
     3. fastembed + numpy importable -> real, else fallback
     """
     for obj in (engine, engine_module):
@@ -96,8 +96,8 @@ def detect_mode(engine, engine_module):
                 return "fallback", "engine.mode attribute"
             if "real" in low or "model" in low or "embed" in low or "fastembed" in low:
                 return "real", "engine.mode attribute"
-    if os.environ.get("HERMIES_FORCE_FALLBACK_EMBED", "").lower() in ("1", "true", "yes"):
-        return "fallback", "HERMIES_FORCE_FALLBACK_EMBED env"
+    if os.environ.get("HERMIX_FORCE_FALLBACK_EMBED", "").lower() in ("1", "true", "yes"):
+        return "fallback", "HERMIX_FORCE_FALLBACK_EMBED env"
     try:
         import fastembed  # noqa: F401
         import numpy  # noqa: F401
@@ -382,7 +382,7 @@ def gates_for_mode(mode, m):
 def _scorecard_lines(mode, mode_reason, source, cstats, m, gates):
     L = []
     L.append("=" * 66)
-    L.append("  HERMIES MATCHMAKING QUALITY SCORECARD")
+    L.append("  HERMIX MATCHMAKING QUALITY SCORECARD")
     L.append("=" * 66)
     L.append(f"  engine source : {source}")
     L.append(f"  mode          : {mode}  ({mode_reason})")
@@ -468,7 +468,7 @@ def write_report(results, real_note=None):
     cstats = corpus.stats()
     overall = all(r["all_pass"] for r in results)
     lines = []
-    lines.append("# Hermies Matchmaking Quality Report\n")
+    lines.append("# Hermix Matchmaking Quality Report\n")
     lines.append(f"- **Overall:** {'ALL GATES PASS' if overall else 'GATE FAILURE'} "
                  f"across {len(results)} mode(s): "
                  f"{', '.join(r['mode'] for r in results)}")
@@ -531,9 +531,9 @@ def write_report(results, real_note=None):
 def _run_core(force=None, max_filler=None):
     """Evaluate one mode. force: None=current env, True=fallback, False=real."""
     if force is True:
-        os.environ["HERMIES_FORCE_FALLBACK_EMBED"] = "1"
+        os.environ["HERMIX_FORCE_FALLBACK_EMBED"] = "1"
     elif force is False:
-        os.environ.pop("HERMIES_FORCE_FALLBACK_EMBED", None)
+        os.environ.pop("HERMIX_FORCE_FALLBACK_EMBED", None)
 
     db, db_path = load_db_module()
     engine_module, source = load_engine_module()

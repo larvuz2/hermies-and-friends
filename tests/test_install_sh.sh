@@ -7,7 +7,7 @@
 #   * a fake `hermes` executable on PATH that logs argv and emulates
 #     `plugins enable` / `plugins list` (and can be forced to FAIL)
 #   * a local bare git repo standing in for GitHub, injected through the
-#     HERMIES_REPO env var that install.sh honours
+#     HERMIX_REPO env var that install.sh honours
 #
 # Usage:  bash tests/test_install_sh.sh
 # Exit 0 only when every case passes.
@@ -35,7 +35,7 @@ case_start() {
 # -----------------------------------------------------------------------------
 # World builder
 # -----------------------------------------------------------------------------
-ROOT="$(mktemp -d 2>/dev/null || echo "/tmp/hermies-tests-$$")"
+ROOT="$(mktemp -d 2>/dev/null || echo "/tmp/hermix-tests-$$")"
 mkdir -p "$ROOT"
 cleanup_all() { rm -rf "$ROOT" 2>/dev/null || true; }
 trap cleanup_all EXIT
@@ -54,9 +54,9 @@ make_remote() {
   git -C "$work" config user.email "harness@example.com"
   git -C "$work" config user.name "harness"
   git -C "$work" config commit.gpgsign false
-  echo "# hermies test fixture" > "$work/README.md"
+  echo "# hermix test fixture" > "$work/README.md"
   if [ "$2" = "valid" ]; then
-    printf 'name: hermies\nversion: 0.0.0-test\n' > "$work/plugin.yaml"
+    printf 'name: hermix\nversion: 0.0.0-test\n' > "$work/plugin.yaml"
     printf 'def register(ctx):\n    return None\n' > "$work/__init__.py"
   fi
   git -C "$work" add -A >/dev/null
@@ -177,7 +177,7 @@ _run() {
     PATH="$path" \
     HOME="$(dirname "$home")" \
     HERMES_HOME="$home" \
-    HERMIES_REPO="$repo" \
+    HERMIX_REPO="$repo" \
     FAKE_HERMES_LOG="${FAKE_HERMES_LOG:-/dev/null}" \
     FAKE_HERMES_FAIL_ENABLE="${FAKE_HERMES_FAIL_ENABLE:-0}" \
     FAKE_HERMES_FAIL_LIST="${FAKE_HERMES_FAIL_LIST:-0}" \
@@ -202,11 +202,11 @@ run_install_nohermes() {
   _run "/usr/bin:/bin:$SYS_PATH" "$@"
 }
 
-# Count occurrences of a `- hermies` list entry in a config file.
+# Count occurrences of a `- hermix` list entry in a config file.
 # (`grep -c` prints 0 AND exits 1 on no-match, so the fallback must not echo.)
-count_hermies() {
+count_hermix() {
   local n
-  n="$(grep -cE '^[[:space:]]*-[[:space:]]*hermies[[:space:]]*$' "$1" 2>/dev/null)" || n=0
+  n="$(grep -cE '^[[:space:]]*-[[:space:]]*hermix[[:space:]]*$' "$1" 2>/dev/null)" || n=0
   echo "${n:-0}"
 }
 
@@ -229,18 +229,18 @@ H1="$(new_home)"
 export FAKE_HERMES_LOG="$ROOT/hermes1.log"; : > "$FAKE_HERMES_LOG"
 run_install "$H1" "$REMOTE_OK"
 [ "$RC" = "0" ]; check $? "exit code 0 (got $RC)"
-[ -f "$H1/plugins/hermies/plugin.yaml" ] && [ -f "$H1/plugins/hermies/__init__.py" ]
-check $? "plugin.yaml + __init__.py cloned into \$HERMES_HOME/plugins/hermies"
-[ -d "$H1/plugins/hermies/.git" ]; check $? "clone is a git checkout"
-contains "HERMIES INSTALLED"; check $? "prints the HERMIES INSTALLED banner"
+[ -f "$H1/plugins/hermix/plugin.yaml" ] && [ -f "$H1/plugins/hermix/__init__.py" ]
+check $? "plugin.yaml + __init__.py cloned into \$HERMES_HOME/plugins/hermix"
+[ -d "$H1/plugins/hermix/.git" ]; check $? "clone is a git checkout"
+contains "HERMIX INSTALLED"; check $? "prints the HERMIX INSTALLED banner"
 contains "not active yet"; check $? "banner is honest: '(not active yet)'"
 contains "hermes gateway restart"; check $? "tells the human to run 'hermes gateway restart'"
 contains "NOT from your agent chat"; check $? "warns it must be a separate shell"
-[ "$(count_hermies "$H1/config.yaml")" = "1" ]; check $? "config.yaml lists hermies exactly once"
+[ "$(count_hermix "$H1/config.yaml")" = "1" ]; check $? "config.yaml lists hermix exactly once"
 grep -q "model: anthropic/claude-opus-4" "$H1/config.yaml"; check $? "unrelated key 'model' preserved"
 grep -q "port: 8080" "$H1/config.yaml"; check $? "unrelated nested key 'gateway.port' preserved"
 grep -q "    - browser" "$H1/config.yaml"; check $? "unrelated 'tools.enabled' list preserved"
-grep -q "plugins enable hermies" "$FAKE_HERMES_LOG"; check $? "invoked 'hermes plugins enable hermies'"
+grep -q "plugins enable hermix" "$FAKE_HERMES_LOG"; check $? "invoked 'hermes plugins enable hermix'"
 ! grep -qE '(^| )update' "$FAKE_HERMES_LOG"; check $? "NEVER invoked 'hermes update'"
 ! grep -q "gateway" "$FAKE_HERMES_LOG"; check $? "NEVER invoked 'hermes gateway ...'"
 
@@ -253,13 +253,13 @@ run_install "$H1" "$REMOTE_OK"
 [ "$RC" = "0" ]; check $? "second run exits 0 (got $RC)"
 contains "Existing git checkout found"; check $? "detected the existing checkout"
 contains "git pull --ff-only: OK"; check $? "updated via git pull --ff-only"
-[ "$(count_hermies "$H1/config.yaml")" = "1" ]; check $? "hermies still listed exactly once (no duplicate)"
-! ls -d "$H1/plugins/hermies.bak."* >/dev/null 2>&1; check $? "no spurious .bak. backup dir created"
+[ "$(count_hermix "$H1/config.yaml")" = "1" ]; check $? "hermix still listed exactly once (no duplicate)"
+! ls -d "$H1/plugins/hermix.bak."* >/dev/null 2>&1; check $? "no spurious .bak. backup dir created"
 run_install "$H1" "$REMOTE_OK"
 run_install "$H1" "$REMOTE_OK"
 run_install "$H1" "$REMOTE_OK"
 [ "$RC" = "0" ]; check $? "runs 3,4,5 also exit 0 (safe to run 5 times)"
-[ "$(count_hermies "$H1/config.yaml")" = "1" ]; check $? "still exactly one hermies entry after 5 runs"
+[ "$(count_hermix "$H1/config.yaml")" = "1" ]; check $? "still exactly one hermix entry after 5 runs"
 ! grep -qE '(^| )update|gateway' "$FAKE_HERMES_LOG"; check $? "still never runs update/gateway"
 
 # =============================================================================
@@ -267,20 +267,20 @@ run_install "$H1" "$REMOTE_OK"
 # =============================================================================
 case_start "existing non-git dir backed up"
 H3="$(new_home)"
-mkdir -p "$H3/plugins/hermies"
-echo "precious user data" > "$H3/plugins/hermies/USER_DATA.txt"
+mkdir -p "$H3/plugins/hermix"
+echo "precious user data" > "$H3/plugins/hermix/USER_DATA.txt"
 export FAKE_HERMES_LOG="$ROOT/hermes3.log"; : > "$FAKE_HERMES_LOG"
 run_install "$H3" "$REMOTE_OK"
 [ "$RC" = "0" ]; check $? "exit code 0 (got $RC)"
 contains "not a git repo"; check $? "announced the non-git directory"
-[ -f "$H3/plugins/hermies.bak.1/USER_DATA.txt" ]; check $? "old dir moved to hermies.bak.1 with contents intact"
-[ -d "$H3/plugins/hermies/.git" ]; check $? "fresh git clone in place"
-[ -f "$H3/plugins/hermies/plugin.yaml" ]; check $? "plugin.yaml present after re-clone"
+[ -f "$H3/plugins/hermix.bak.1/USER_DATA.txt" ]; check $? "old dir moved to hermix.bak.1 with contents intact"
+[ -d "$H3/plugins/hermix/.git" ]; check $? "fresh git clone in place"
+[ -f "$H3/plugins/hermix/plugin.yaml" ]; check $? "plugin.yaml present after re-clone"
 # second non-git collision increments the suffix
-rm -rf "$H3/plugins/hermies"
-mkdir -p "$H3/plugins/hermies"; echo two > "$H3/plugins/hermies/USER_DATA.txt"
+rm -rf "$H3/plugins/hermix"
+mkdir -p "$H3/plugins/hermix"; echo two > "$H3/plugins/hermix/USER_DATA.txt"
 run_install "$H3" "$REMOTE_OK"
-[ -d "$H3/plugins/hermies.bak.2" ]; check $? "second collision backs up to hermies.bak.2"
+[ -d "$H3/plugins/hermix.bak.2" ]; check $? "second collision backs up to hermix.bak.2"
 
 # =============================================================================
 # CASE 4 — `hermes plugins enable` FAILS -> config.yaml fallback
@@ -295,7 +295,7 @@ export FAKE_HERMES_FAIL_ENABLE=0
 contains "returned non-zero"; check $? "reported the CLI failure"
 contains "config fallback"; check $? "announced the config.yaml fallback path"
 contains "config.yaml fallback"; check $? "final banner names the fallback path used"
-[ "$(count_hermies "$H4/config.yaml")" = "1" ]; check $? "hermies written under plugins.enabled exactly once"
+[ "$(count_hermix "$H4/config.yaml")" = "1" ]; check $? "hermix written under plugins.enabled exactly once"
 [ -f "$H4/config.yaml.bak" ]; check $? "a .bak of config.yaml was written first"
 grep -q "model: anthropic/claude-opus-4" "$H4/config.yaml"; check $? "unrelated keys preserved by the fallback"
 grep -q "    - browser" "$H4/config.yaml"; check $? "unrelated tools.enabled list untouched"
@@ -307,24 +307,24 @@ export FAKE_HERMES_FAIL_ENABLE=1
 run_install "$H4" "$REMOTE_OK"
 export FAKE_HERMES_FAIL_ENABLE=0
 [ "$RC" = "0" ]; check $? "fallback path is idempotent (exit 0)"
-[ "$(count_hermies "$H4/config.yaml")" = "1" ]; check $? "fallback path did not duplicate the entry"
+[ "$(count_hermix "$H4/config.yaml")" = "1" ]; check $? "fallback path did not duplicate the entry"
 
 # =============================================================================
-# CASE 5 — config.yaml ALREADY contains hermies -> untouched, no duplicate
+# CASE 5 — config.yaml ALREADY contains hermix -> untouched, no duplicate
 # =============================================================================
-case_start "config.yaml already has hermies"
+case_start "config.yaml already has hermix"
 H5="$(new_home)"
 cat >> "$H5/config.yaml" <<'EOF'
 plugins:
   enabled:
     - someotherplugin
-    - hermies
+    - hermix
 EOF
 BEFORE="$(cat "$H5/config.yaml")"
 export FAKE_HERMES_LOG="$ROOT/hermes5.log"; : > "$FAKE_HERMES_LOG"
 run_install "$H5" "$REMOTE_OK"
 [ "$RC" = "0" ]; check $? "exit code 0 (got $RC)"
-[ "$(count_hermies "$H5/config.yaml")" = "1" ]; check $? "hermies NOT duplicated"
+[ "$(count_hermix "$H5/config.yaml")" = "1" ]; check $? "hermix NOT duplicated"
 grep -q "    - someotherplugin" "$H5/config.yaml"; check $? "sibling plugin 'someotherplugin' preserved"
 [ "$BEFORE" = "$(cat "$H5/config.yaml")" ]; check $? "config.yaml byte-identical (nothing rewritten)"
 
@@ -339,7 +339,7 @@ export FAKE_HERMES_FAIL_ENABLE=1
 run_install "$H6" "$REMOTE_OK"
 export FAKE_HERMES_FAIL_ENABLE=0
 [ "$RC" = "0" ]; check $? "exit code 0 (got $RC)"
-[ "$(count_hermies "$H6/config.yaml")" = "1" ]; check $? "an enabled: list was created with hermies"
+[ "$(count_hermix "$H6/config.yaml")" = "1" ]; check $? "an enabled: list was created with hermix"
 grep -qE '^  enabled:' "$H6/config.yaml"; check $? "well-formed 'enabled:' key inserted under plugins:"
 grep -q "provider: anthropic" "$H6/config.yaml"; check $? "unrelated keys preserved"
 
@@ -353,7 +353,7 @@ run_install_nohermes "$H7" "$REMOTE_OK"
 contains "Hermes Agent was not found"; check $? "clear 'not found' message"
 contains "https://hermes-agent.nousresearch.com/docs/getting-started/installation"
 check $? "points at the official installation docs"
-[ ! -d "$H7/plugins/hermies" ]; check $? "did not clone anything before failing"
+[ ! -d "$H7/plugins/hermix" ]; check $? "did not clone anything before failing"
 
 # =============================================================================
 # CASE 8 — verification failure (repo lacks plugin.yaml/__init__.py) -> non-zero
@@ -363,11 +363,11 @@ H8="$(new_home)"
 export FAKE_HERMES_LOG="$ROOT/hermes8.log"; : > "$FAKE_HERMES_LOG"
 run_install "$H8" "$REMOTE_BROKEN"
 [ "$RC" != "0" ]; check $? "non-zero exit (got $RC)"
-contains "HERMIES INSTALL FAILED"; check $? "prints the loud failure banner"
+contains "HERMIX INSTALL FAILED"; check $? "prints the loud failure banner"
 contains "[a] plugin.yaml + __init__.py present   : FAIL"
 check $? "verification (a) reported FAIL"
 contains "Do NOT restart the gateway yet"; check $? "tells the user not to restart"
-! contains "HERMIES INSTALLED"; check $? "never claims success when verification failed"
+! contains "HERMIX INSTALLED"; check $? "never claims success when verification failed"
 
 # =============================================================================
 # CASE 9 — --no-enable clones only
@@ -377,8 +377,8 @@ H9="$(new_home)"
 export FAKE_HERMES_LOG="$ROOT/hermes9.log"; : > "$FAKE_HERMES_LOG"
 run_install "$H9" "$REMOTE_OK" --no-enable
 [ "$RC" = "0" ]; check $? "exit code 0 (got $RC)"
-[ -f "$H9/plugins/hermies/plugin.yaml" ]; check $? "plugin still cloned"
-[ "$(count_hermies "$H9/config.yaml")" = "0" ]; check $? "config.yaml NOT modified"
+[ -f "$H9/plugins/hermix/plugin.yaml" ]; check $? "plugin still cloned"
+[ "$(count_hermix "$H9/config.yaml")" = "0" ]; check $? "config.yaml NOT modified"
 [ ! -s "$FAKE_HERMES_LOG" ] || ! grep -q "plugins enable" "$FAKE_HERMES_LOG"
 check $? "'hermes plugins enable' never called"
 
@@ -387,12 +387,12 @@ check $? "'hermes plugins enable' never called"
 # =============================================================================
 case_start "--dir override"
 H10="$(new_home)"
-ALT="$ROOT/altplugins/hermies"
+ALT="$ROOT/altplugins/hermix"
 export FAKE_HERMES_LOG="$ROOT/hermes10.log"; : > "$FAKE_HERMES_LOG"
 run_install "$H10" "$REMOTE_OK" --dir "$ALT"
 [ "$RC" = "0" ]; check $? "exit code 0 (got $RC)"
 [ -f "$ALT/plugin.yaml" ]; check $? "cloned into the overridden directory"
-[ ! -d "$H10/plugins/hermies" ]; check $? "default directory left alone"
+[ ! -d "$H10/plugins/hermix" ]; check $? "default directory left alone"
 
 # =============================================================================
 # CASE 11 — inline (flow-style) enabled: [a, b] list
@@ -405,8 +405,8 @@ export FAKE_HERMES_FAIL_ENABLE=1
 run_install "$H11" "$REMOTE_OK"
 export FAKE_HERMES_FAIL_ENABLE=0
 [ "$RC" = "0" ]; check $? "exit code 0 (got $RC)"
-grep -q 'enabled: \[alpha, beta, hermies\]' "$H11/config.yaml"
-check $? "hermies appended into the flow list without losing alpha/beta"
+grep -q 'enabled: \[alpha, beta, hermix\]' "$H11/config.yaml"
+check $? "hermix appended into the flow list without losing alpha/beta"
 
 # =============================================================================
 # CASE 12 — piped to bash (the real `curl -fsSL ... | bash` shape)
@@ -418,14 +418,14 @@ PIPEOUT="$ROOT/piped.txt"
 PRC=0
 cat "$INSTALL_SH" | env -i "${PASSTHRU[@]}" \
   PATH="$BINDIR:/usr/bin:/bin:/usr/local/bin:$SYS_PATH" \
-  HOME="$(dirname "$H12")" HERMES_HOME="$H12" HERMIES_REPO="$REMOTE_OK" \
+  HOME="$(dirname "$H12")" HERMES_HOME="$H12" HERMIX_REPO="$REMOTE_OK" \
   FAKE_HERMES_LOG="$FAKE_HERMES_LOG" TMPDIR="$ROOT" \
   bash >"$PIPEOUT" 2>&1 || PRC=$?
 OUT="$(cat "$PIPEOUT")"
 [ "$PRC" = "0" ]; check $? "exit code 0 when piped to bash (got $PRC)"
-contains "HERMIES INSTALLED"; check $? "full banner reached (script not eaten from stdin)"
-[ -f "$H12/plugins/hermies/plugin.yaml" ]; check $? "plugin cloned"
-[ "$(count_hermies "$H12/config.yaml")" = "1" ]; check $? "hermies enabled exactly once"
+contains "HERMIX INSTALLED"; check $? "full banner reached (script not eaten from stdin)"
+[ -f "$H12/plugins/hermix/plugin.yaml" ]; check $? "plugin cloned"
+[ "$(count_hermix "$H12/config.yaml")" = "1" ]; check $? "hermix enabled exactly once"
 ! grep -q "read" "$INSTALL_SH" || ! grep -nE '^[^#]*\bread\b[[:space:]]+-?[a-zA-Z]*[[:space:]]*[A-Z_]+' "$INSTALL_SH" | grep -v 'read -r cand' >/dev/null
 check $? "no interactive \`read\` prompting on stdin"
 

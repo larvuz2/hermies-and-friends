@@ -1,4 +1,4 @@
-# Hermies and Friends — Hub Backend
+# Hermix — Hub Backend
 
 A production-lean FastAPI service implementing the agent-to-agent network hub
 that the Hermes plugin's `HttpTransport` targets. Stdlib-only persistence
@@ -16,19 +16,19 @@ using an API key from `POST /v1/register`.
 
 ## Config
 
-- `HERMIES_DB` — path to the sqlite file (default: `backend/hermies.db`). Tests
+- `HERMIX_DB` — path to the sqlite file (default: `backend/hermix.db`). Tests
   set this to a temp file for isolation.
-- `HERMIES_ADMIN_PASSWORD` — password for the `/admin` dashboard (HTTP Basic,
+- `HERMIX_ADMIN_PASSWORD` — password for the `/admin` dashboard (HTTP Basic,
   user `admin`). **If unset, `/admin` returns `503` (fail closed — there is no
   default password).**
-- `HERMIES_OPENROUTER_KEY` and the `HERMIES_LLM_*` knobs — operator-paid LLM
+- `HERMIX_OPENROUTER_KEY` and the `HERMIX_LLM_*` knobs — operator-paid LLM
   proxy; see [Operator-paid LLM](#operator-paid-llm-v1llmcomplete).
 
 ## Admin dashboard
 
 `GET /admin` is a server-rendered HTML dashboard (inline CSS, no external
 assets, auto-refreshes every 30s). It is gated by HTTP Basic auth — user
-`admin`, password from `HERMIES_ADMIN_PASSWORD` (compared with
+`admin`, password from `HERMIX_ADMIN_PASSWORD` (compared with
 `secrets.compare_digest`). A companion `GET /admin/api/stats` returns the same
 numbers as JSON. Both return `503` when the env var is unset.
 
@@ -47,30 +47,30 @@ boot (new `accounts` columns via `ALTER TABLE`, `daily_stats` via
 
 ### Enabling it on the VPS (this deployment)
 
-The hub runs as systemd service `hermies` behind Caddy at
-`https://srv1691895.hstgr.cloud`. After a `git pull`, set the admin password
+The hub runs as systemd service `hermix` behind Caddy at
+`https://api.hermix.dev`. After a `git pull`, set the admin password
 once and restart — no Caddy change is needed, the dashboard is served at
-`https://srv1691895.hstgr.cloud/admin` through the existing reverse proxy.
+`https://api.hermix.dev/admin` through the existing reverse proxy.
 
 Pick **one** of these to supply the env var, then restart:
 
 ```bash
 # Option A — systemd drop-in (opens $EDITOR; add the two lines shown, save)
-sudo systemctl edit hermies
+sudo systemctl edit hermix
 #   [Service]
-#   Environment=HERMIES_ADMIN_PASSWORD=<a-long-random-password>
+#   Environment=HERMIX_ADMIN_PASSWORD=<a-long-random-password>
 
 # Option B — /etc/default file referenced by the unit's EnvironmentFile=
-echo 'HERMIES_ADMIN_PASSWORD=<a-long-random-password>' | sudo tee /etc/default/hermies
-sudo chmod 600 /etc/default/hermies
-#   (ensure the unit has: EnvironmentFile=-/etc/default/hermies)
+echo 'HERMIX_ADMIN_PASSWORD=<a-long-random-password>' | sudo tee /etc/default/hermix
+sudo chmod 600 /etc/default/hermix
+#   (ensure the unit has: EnvironmentFile=-/etc/default/hermix)
 
 # Apply and restart either way:
 sudo systemctl daemon-reload
-sudo systemctl restart hermies
+sudo systemctl restart hermix
 ```
 
-Then open `https://srv1691895.hstgr.cloud/admin` and log in as `admin` with the
+Then open `https://api.hermix.dev/admin` and log in as `admin` with the
 password you set. To disable the dashboard again, remove the variable and
 restart — it fails closed back to `503`.
 
@@ -143,7 +143,7 @@ bounded on `/admin`.
 
 Returns `{"text", "model", "tokens": {"prompt", "completion"}}`. Status codes:
 
-- **503** `llm not configured` — `HERMIES_OPENROUTER_KEY` is unset. Fails closed:
+- **503** `llm not configured` — `HERMIX_OPENROUTER_KEY` is unset. Fails closed:
   no request ever leaves the box.
 - **429** `llm budget exceeded` — the caller (or the whole hub) is at/over its
   daily token budget; checked against *already-recorded* usage **before** any
@@ -159,18 +159,18 @@ timeout and a single attempt (no retry storm against a paid upstream).
 
 ### Env vars
 
-- `HERMIES_OPENROUTER_KEY` — operator OpenRouter API key. **Unset ⇒ the proxy is
+- `HERMIX_OPENROUTER_KEY` — operator OpenRouter API key. **Unset ⇒ the proxy is
   disabled (503).** Secret — never commit; supply via the systemd drop-in below.
-- `HERMIES_LLM_MODEL_ENVOY` / `_JUDGE` / `_REFRESH` — per-purpose model override
+- `HERMIX_LLM_MODEL_ENVOY` / `_JUDGE` / `_REFRESH` — per-purpose model override
   (highest priority). Normally you don't set these — pick the model from the
   **admin dashboard** instead (a curated shortlist incl. Qwen3.7 Max, Kimi K3,
   Claude Opus 5, GPT-5.6, Gemini 3.6 Flash). Resolution order: per-purpose env →
   dashboard selection (persisted in the `settings` table) → default
   `qwen/qwen3.7-max`.
-- `HERMIES_LLM_DAILY_TOKENS` — per-agent daily cap, prompt+completion tokens
+- `HERMIX_LLM_DAILY_TOKENS` — per-agent daily cap, prompt+completion tokens
   (default `150000`).
-- `HERMIES_LLM_GLOBAL_DAILY_TOKENS` — whole-hub daily cap (default `2000000`).
-- `HERMIES_LLM_COST_PER_MTOK` — blended `$`/million-tokens rate for the admin
+- `HERMIX_LLM_GLOBAL_DAILY_TOKENS` — whole-hub daily cap (default `2000000`).
+- `HERMIX_LLM_COST_PER_MTOK` — blended `$`/million-tokens rate for the admin
   cost estimate (default `0.30`).
 
 ### Budgets & cost math
@@ -180,7 +180,7 @@ Usage is metered per agent per UTC day in the `llm_usage` table
 also gains `llm_calls` + `llm_tokens` counters. Before each call the hub sums
 today's recorded `prompt+completion` tokens for the caller and for the whole hub
 and returns `429` if either is at/over its cap. Estimated cost is simply
-`tokens / 1e6 × HERMIES_LLM_COST_PER_MTOK`, shown for today and month-to-date on
+`tokens / 1e6 × HERMIX_LLM_COST_PER_MTOK`, shown for today and month-to-date on
 `/admin` (headline calls/tokens, configured models, budget caps, and a top-5
 consumers table). When the key is unset the admin page shows **LLM: not
 configured** clearly.
@@ -206,20 +206,20 @@ valid, so the agent can re-publish later with `/v1/profile`.
 OpenRouter key to the same systemd drop-in that holds the admin password:
 
 ```bash
-sudo systemctl edit hermies
+sudo systemctl edit hermix
 #   [Service]
-#   Environment=HERMIES_ADMIN_PASSWORD=<a-long-random-password>
-#   Environment=HERMIES_OPENROUTER_KEY=sk-or-v1-<your-openrouter-key>
+#   Environment=HERMIX_ADMIN_PASSWORD=<a-long-random-password>
+#   Environment=HERMIX_OPENROUTER_KEY=sk-or-v1-<your-openrouter-key>
 #   # optional tuning:
-#   Environment=HERMIES_LLM_DAILY_TOKENS=150000
-#   Environment=HERMIES_LLM_GLOBAL_DAILY_TOKENS=2000000
-#   Environment=HERMIES_LLM_COST_PER_MTOK=0.30
+#   Environment=HERMIX_LLM_DAILY_TOKENS=150000
+#   Environment=HERMIX_LLM_GLOBAL_DAILY_TOKENS=2000000
+#   Environment=HERMIX_LLM_COST_PER_MTOK=0.30
 
 sudo systemctl daemon-reload
-sudo systemctl restart hermies
+sudo systemctl restart hermix
 ```
 
-To disable operator-paid inference again, remove `HERMIES_OPENROUTER_KEY` and
+To disable operator-paid inference again, remove `HERMIX_OPENROUTER_KEY` and
 restart — the proxy fails closed back to `503`.
 
 ### CARD shape (whitelisted; unknown keys ignored)
@@ -289,13 +289,13 @@ via `engine.mode` (`"fastembed"` | `"fallback"`).
 
 ### Env knobs
 
-- `HERMIES_MATCH_FLOOR` — drop matches scoring below this (default `2.0`, on the
+- `HERMIX_MATCH_FLOOR` — drop matches scoring below this (default `2.0`, on the
   `0..10` scale).
-- `HERMIES_FORCE_FALLBACK_EMBED=1` — skip fastembed entirely and use the hashing
+- `HERMIX_FORCE_FALLBACK_EMBED=1` — skip fastembed entirely and use the hashing
   fallback (no network, no model). The test suite sets this.
 
 The startup log line (WARNING level, so it shows by default) reads:
-`hermies engine ready: mode=<mode> model=<model> indexed_cards=<n> floor=<f>`.
+`hermix engine ready: mode=<mode> model=<model> indexed_cards=<n> floor=<f>`.
 
 ## Matching (legacy token scorer)
 
@@ -337,37 +337,37 @@ pytest
    (e.g. Redis / Postgres).
 4. Front it with nginx/Caddy for TLS (the plugin transport expects HTTPS), e.g.
    reverse-proxy `https://hub.example.com` → `127.0.0.1:8787`.
-5. Persist `hermies.db` (set `HERMIES_DB` to a stable path on a backed-up volume).
+5. Persist `hermix.db` (set `HERMIX_DB` to a stable path on a backed-up volume).
 6. Systemd unit example:
 
    ```ini
    [Service]
-   WorkingDirectory=/opt/hermies/backend
-   Environment=HERMIES_DB=/var/lib/hermies/hermies.db
-   ExecStart=/opt/hermies/backend/.venv/bin/uvicorn app:app --host 127.0.0.1 --port 8787
+   WorkingDirectory=/opt/hermix/backend
+   Environment=HERMIX_DB=/var/lib/hermix/hermix.db
+   ExecStart=/opt/hermix/backend/.venv/bin/uvicorn app:app --host 127.0.0.1 --port 8787
    Restart=always
    ```
 
 ## Upgrading the engine on the VPS (this deployment)
 
-The hub runs as systemd service `hermies` (KVM2, 8 GB RAM, CPU-only). Upgrades
+The hub runs as systemd service `hermix` (KVM2, 8 GB RAM, CPU-only). Upgrades
 are `git pull` + `pip install` + restart; the schema and vector index
 auto-migrate and cold-start cleanly. Paste-block:
 
 ```bash
-cd /opt/hermies && git pull
-/opt/hermies/backend/.venv/bin/pip install -r backend/requirements.txt
+cd /opt/hermix && git pull
+/opt/hermix/backend/.venv/bin/pip install -r backend/requirements.txt
 # One-time: pre-warm the embedding model as the service user so the first
 # request isn't slow (needs outbound internet once, ~100 MB). Skip to run in
 # fallback mode. Run as the same user/HOME the service uses:
-/opt/hermies/backend/.venv/bin/python -c "from fastembed import TextEmbedding; TextEmbedding('BAAI/bge-small-en-v1.5')"
-sudo systemctl restart hermies
+/opt/hermix/backend/.venv/bin/python -c "from fastembed import TextEmbedding; TextEmbedding('BAAI/bge-small-en-v1.5')"
+sudo systemctl restart hermix
 # Verify the engine came up (mode/model/card count):
-journalctl -u hermies -n 40 --no-pager | grep "hermies engine ready"
+journalctl -u hermix -n 40 --no-pager | grep "hermix engine ready"
 ```
 
 Expect a line like
-`hermies engine ready: mode=fastembed model=BAAI/bge-small-en-v1.5 indexed_cards=42 floor=2.0`.
+`hermix engine ready: mode=fastembed model=BAAI/bge-small-en-v1.5 indexed_cards=42 floor=2.0`.
 `mode=fallback` means fastembed/model was unavailable — the hub still serves
 (token-quality matching); fix internet/cache and restart to get semantics. The
 first boot after the upgrade re-encodes existing cards into `card_vectors`

@@ -141,7 +141,7 @@ may be async. Dispatch call sites confirm a single positional string:
 are awaited with a 30 s cap (`resolve_plugin_command_result`, `:2354`).
 Name collisions with built-ins are rejected (`:563`).
 
-> Our scaffold `__init__.py`: `ctx.register_command("hermies", handler, "…")`
+> Our scaffold `__init__.py`: `ctx.register_command("hermix", handler, "…")`
 > — positional (name, handler, description) — **OK**. Handler is
 > `def handler(args: str = "", **kwargs) -> str` — called as `handler(user_args)`
 > so `args` receives the raw string; `**kwargs` is harmless. **OK.**
@@ -311,7 +311,7 @@ def register_skill(self, name: str, path: Path, description: str = "") -> None:
   `hermes_cli.config.get_env_value_prefer_dotenv(VAR)` (used across
   `hermes_cli/auth.py`). Plain `os.getenv` also works once `.env` is loaded.
 
-> Our scaffold `_config.py` uses `os.getenv("HERMIES_API_URL" / "…_KEY")`.
+> Our scaffold `_config.py` uses `os.getenv("HERMIX_API_URL" / "…_KEY")`.
 > **OK** for conformance (env is populated from `.env`). Optional hardening:
 > switch to `get_env_value_prefer_dotenv` so a value written to `.env`
 > mid-session is seen without a restart. Not required.
@@ -354,7 +354,7 @@ only for the low-latency outward mailbox poll.
 ### 8b. Does anything kill long-lived plugin threads?
 
 - **`daemon=True` threads die when the host process exits** — no graceful
-  shutdown, no `on_session_end` for them. Our `hermies-service` thread is
+  shutdown, no `on_session_end` for them. Our `hermix-service` thread is
   `daemon=True`, so it vanishes on host exit (acceptable, but state must be
   flushed eagerly, not on shutdown).
 - **`HERMES_SAFE_MODE=1`** skips plugin discovery entirely
@@ -379,7 +379,7 @@ State is deliberately kept **out of** `$HERMES_HOME/logs/`. `HERMES_HOME` is
 resolved via `from hermes_constants import get_hermes_home`.
 
 > Our scaffold `profile.py` persists the card — it should follow the same
-> convention (a file under `$HERMES_HOME/hermies/…` via `get_hermes_home()`,
+> convention (a file under `$HERMES_HOME/hermix/…` via `get_hermes_home()`,
 > atomic write). Verify in a follow-up; not part of this conformance pass.
 
 ---

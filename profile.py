@@ -1,4 +1,4 @@
-"""The public agent card — the ONLY thing Hermies ever exposes to the network.
+"""The public agent card — the ONLY thing Hermix ever exposes to the network.
 
 This is the structured-card model. The whitelist PUBLIC_FIELDS is the single
 source of truth for what may ever leave this machine; the envoy membrane
@@ -27,7 +27,7 @@ PUBLIC_FIELDS = [
 
 
 def _store_path() -> pathlib.Path:
-    base = os.environ.get("HERMIES_HOME") or os.path.expanduser("~/.hermes/hermies")
+    base = os.environ.get("HERMIX_HOME") or os.path.expanduser("~/.hermes/hermix")
     return pathlib.Path(base) / "profile.json"
 
 

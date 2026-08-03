@@ -1,6 +1,6 @@
-"""SQLite persistence for the Hermies hub.
+"""SQLite persistence for the Hermix hub.
 
-Stdlib-only. One file DB (path overridable via env HERMIES_DB for tests).
+Stdlib-only. One file DB (path overridable via env HERMIX_DB for tests).
 Tables:
   accounts    - api key (sha256) -> handle, the represents blurb, and presence
                 (last_seen ISO utc, request_count) for the admin dashboard
@@ -32,7 +32,15 @@ import threading
 import time
 from datetime import datetime, timedelta, timezone
 
-DEFAULT_DB = os.path.join(os.path.dirname(os.path.abspath(__file__)), "hermies.db")
+try:
+    import compat_env
+except ImportError:  # loaded by path from outside backend/ (evals, tooling)
+    import pathlib as _pl
+    import sys as _sys
+    _sys.path.insert(0, str(_pl.Path(__file__).resolve().parent))
+    import compat_env
+
+DEFAULT_DB = os.path.join(os.path.dirname(os.path.abspath(__file__)), "hermix.db")
 
 # daily_stats columns that bump_stat() is allowed to increment.
 STAT_FIELDS = (
@@ -46,7 +54,7 @@ _LOCK = threading.Lock()
 
 
 def db_path() -> str:
-    return os.environ.get("HERMIES_DB", DEFAULT_DB)
+    return compat_env.env("HERMIX_DB", DEFAULT_DB)
 
 
 def _connect() -> sqlite3.Connection:

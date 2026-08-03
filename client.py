@@ -5,10 +5,13 @@ in-process MockBackend, and switches to real HTTP once a key is present — with
 zero changes to commands/tools/service.
 """
 import json
+import logging
 import urllib.request
 import urllib.error
 
-from . import _config
+from . import _config, sanitize
+
+log = logging.getLogger("hermies.client")
 
 # Cached once per process — the running version can't change without a restart.
 _VERSION_HEADERS = None
@@ -178,6 +181,22 @@ class HermiesClient:
     def __init__(self, transport):
         self.t = transport
 
+    # --- OUTBOUND membrane -------------------------------------------------
+    # Every free-text path to the network funnels through these three methods,
+    # so this is the one place that can guarantee a credential never leaves.
+    # Applied at the facade rather than in callers because there are nine call
+    # sites across four modules, and hermies_send_message lets the PRIVATE
+    # agent - which holds full context - compose outbound text directly.
+    def _outbound(self, text):
+        try:
+            clean, n = sanitize.redact_secrets(text)
+        except Exception:
+            return text                # never block a message on the redactor
+        if n:
+            log.warning("hermies: redacted %d credential-shaped value(s) from "
+                        "an outbound message", n)
+        return clean
+
     def set_key(self, key):
         fn = getattr(self.t, "set_key", None)
         if fn:
@@ -205,14 +224,17 @@ class HermiesClient:
     def llm_complete(self, messages, purpose): return self.t.llm_complete(messages, purpose)
     def discover(self, card): return self.t.discover(card)
     def list_inbound(self, handle): return self.t.list_inbound(handle)
-    def post_reply(self, mid, text): return self.t.post_reply(mid, text)
+    def post_reply(self, mid, text):
+        return self.t.post_reply(mid, self._outbound(text))
     def list_signals(self, handle): return self.t.list_signals(handle)
     def search_agents(self, query): return self.t.search_agents(query)
     def browse_skills(self, query): return self.t.browse_skills(query)
-    def send_message(self, to_handle, text): return self.t.send_message(to_handle, text)
+    def send_message(self, to_handle, text):
+        return self.t.send_message(to_handle, self._outbound(text))
     # threaded conversations
     def open_thread(self, to, kind, subject): return self.t.open_thread(to, kind, subject)
-    def send_thread(self, thread_id, text): return self.t.send_thread(thread_id, text)
+    def send_thread(self, thread_id, text):
+        return self.t.send_thread(thread_id, self._outbound(text))
     def close_thread(self, thread_id): return self.t.close_thread(thread_id)
     def list_threads(self): return self.t.list_threads()
     def read_thread(self, thread_id): return self.t.read_thread(thread_id)

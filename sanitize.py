@@ -98,3 +98,81 @@ def frame_untrusted(text) -> str:
     if not isinstance(text, str):
         text = str(text)
     return FRAME_PREFIX + text
+
+
+# --------------------------------------------------------------------------- #
+# OUTBOUND membrane — never let a credential leave this machine.
+#
+# The rest of this module guards what comes IN. This guards what goes OUT, and
+# the threat is different: not injection, but a secret belonging to the HUMAN
+# ending up in a message to a stranger.
+#
+# It is realistic. The envoy's context is card + approved facts + briefing, and
+# a user can put anything in a dossier note or a card field. `hermies_send_message`
+# lets the private agent — which has full context — compose outbound text
+# directly. Prompt rules alone are not a control; the briefing scrub taught us
+# that a deterministic filter underneath is what actually holds.
+#
+# Patterns are deliberately high-confidence. Bare long hex is NOT redacted:
+# our own finding ids are 12-char hex, and mangling those would break
+# `/hermies why` for a threat this does not meaningfully cover.
+# --------------------------------------------------------------------------- #
+
+REDACTED = "[redacted]"
+
+_SECRET_PATTERNS = (
+    # PEM private key blocks (any type), including the body.
+    re.compile(r"-----BEGIN[^-]{0,40}PRIVATE KEY-----.*?-----END[^-]{0,40}PRIVATE KEY-----",
+               re.S | re.I),
+    # JSON Web Tokens.
+    re.compile(r"\beyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}"),
+    # Provider key prefixes, longest-first so sk-or-v1- wins over sk-.
+    re.compile(r"\b(?:sk-or-v1-|sk-ant-|sk-proj-|sk-live-|sk-test-|sk-)"
+               r"[A-Za-z0-9_-]{16,}"),
+    re.compile(r"\bgithub_pat_[A-Za-z0-9_]{20,}"),
+    re.compile(r"\bgh[pousr]_[A-Za-z0-9]{20,}"),
+    re.compile(r"\bglpat-[A-Za-z0-9_-]{16,}"),
+    re.compile(r"\bxox[baprs]-[A-Za-z0-9-]{10,}"),
+    re.compile(r"\bxapp-[0-9]-[A-Za-z0-9-]{10,}"),
+    re.compile(r"\b(?:AKIA|ASIA)[0-9A-Z]{16}\b"),
+    re.compile(r"\bAIza[0-9A-Za-z_-]{35}\b"),
+    re.compile(r"\bya29\.[0-9A-Za-z_-]{20,}"),
+    re.compile(r"\b(?:hf_|r8_|dop_v1_|npm_|shpat_)[A-Za-z0-9]{20,}"),
+    re.compile(r"\bSG\.[A-Za-z0-9_-]{16,}\.[A-Za-z0-9_-]{16,}"),
+    # An Authorization header pasted verbatim.
+    re.compile(r"\bBearer\s+[A-Za-z0-9._~+/=-]{20,}", re.I),
+    # A credential written as an assignment. The VALUE is replaced, the label
+    # kept, so the sentence still reads and the human can see what happened.
+    re.compile(r"((?:api[_-]?key|access[_-]?token|auth[_-]?token|secret|"
+               r"password|passwd|credential)\s*[:=]\s*)"
+               r"(\"[^\"\n]{6,}\"|'[^'\n]{6,}'|\S{6,})", re.I),
+    # Connection strings carrying a password.
+    re.compile(r"\b([a-z][a-z0-9+.-]*://[^\s:@/]+:)([^\s@/]{4,})(@)", re.I),
+)
+
+
+def redact_secrets(text):
+    """Replace credential-shaped substrings in OUTBOUND text.
+
+    Returns ``(clean_text, count)``. Never raises: a redactor that throws would
+    block a message, and silently failing open here is worse than a message
+    that goes out slightly mangled — so it does neither, it just works on a
+    best-effort basis over a plain string.
+    """
+    if not isinstance(text, str) or not text:
+        return (text if isinstance(text, str) else "", 0)
+    out, n = text, 0
+
+    def _sub(match):
+        nonlocal n
+        n += 1
+        groups = match.groups()
+        if len(groups) == 2:            # label = value  ->  label = [redacted]
+            return f"{groups[0]}{REDACTED}"
+        if len(groups) == 3:            # scheme://user:pass@  ->  keep shape
+            return f"{groups[0]}{REDACTED}{groups[2]}"
+        return REDACTED
+
+    for pattern in _SECRET_PATTERNS:
+        out = pattern.sub(_sub, out)
+    return out, n

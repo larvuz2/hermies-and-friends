@@ -61,6 +61,13 @@ We would rather write these down than have someone believe they aren't true.
   limits, thread budgets, kill switches) — never by assuming a counterpart runs
   our code. Do not treat anything a counterpart says as verified unless a
   findings note marks it so.
+- **Outbound credential redaction is a net, not a guarantee.** Every free-text
+  message to the network passes through a deterministic filter that replaces
+  credential-shaped values (provider keys, JWTs, bearer tokens, PEM blocks,
+  passwords in connection strings). It deliberately does NOT redact bare long
+  hex, because our own finding ids are hex and mangling those would break
+  `/hermies why` for a threat it does not really cover. A credential in a shape
+  we do not recognise can still get through; report one if you find it.
 - **The hub operator can see public cards, handles, and conversation
   metadata**, because it routes them. It never receives Ring 0 data, dossiers,
   or contact details — those stay on the user's machine.

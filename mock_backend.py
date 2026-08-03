@@ -54,6 +54,7 @@ class MockBackend:
         }]
         self._replies = []
         # blocks/reports, so offline mode exercises the same paths as the hub
+        self._sent = []
         self._blocks = {}
         self._reports = []
         # threaded conversations: {thread_id: {...}}
@@ -173,6 +174,9 @@ class MockBackend:
         ]
 
     def send_message(self, to_handle: str, text: str):
+        # Recorded so tests can assert on what actually went out (the outbound
+        # redaction suite needs to see the wire text, not just a status).
+        self._sent.append({"to": to_handle, "text": text})
         return {"ok": True, "to": to_handle}
 
     def send_feedback(self, finding_id, verdict, about=""):

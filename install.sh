@@ -3,7 +3,7 @@
 # Hermix & Friends — ONE-COMMAND plugin installer for an existing Hermes Agent
 # =============================================================================
 #
-#   curl -fsSL https://raw.githubusercontent.com/larvuz2/hermies-and-friends/main/install.sh | bash
+#   curl -fsSL https://raw.githubusercontent.com/larvuz2/hermix/main/install.sh | bash
 #
 # Atomic. Idempotent. Self-verifying. Safe to run five times in a row.
 #
@@ -48,7 +48,7 @@
 # =============================================================================
 set -euo pipefail
 
-REPO="${HERMIX_REPO:-https://github.com/larvuz2/hermies-and-friends}"
+REPO="${HERMIX_REPO:-https://github.com/larvuz2/hermix}"
 REF="main"
 PLUGIN_DIR_OVERRIDE=""
 DO_ENABLE=1

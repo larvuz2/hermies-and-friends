@@ -3,17 +3,17 @@
 # e.g. Hostinger KVM). Run as root from the VPS terminal:
 #
 #   With a domain (recommended — gives you HTTPS):
-#     bash <(curl -fsSL https://raw.githubusercontent.com/larvuz2/hermies-and-friends/main/deploy/hostinger/deploy.sh) api.yourdomain.com you@email.com
+#     bash <(curl -fsSL https://raw.githubusercontent.com/larvuz2/hermix/main/deploy/hostinger/deploy.sh) api.yourdomain.com you@email.com
 #
 #   Without a domain (HTTP on the VPS IP, port 80):
-#     bash <(curl -fsSL https://raw.githubusercontent.com/larvuz2/hermies-and-friends/main/deploy/hostinger/deploy.sh)
+#     bash <(curl -fsSL https://raw.githubusercontent.com/larvuz2/hermix/main/deploy/hostinger/deploy.sh)
 #
 # Idempotent: safe to re-run to update (git pull + restart).
 set -euo pipefail
 
 DOMAIN="${1:-}"
 EMAIL="${2:-}"
-REPO="https://github.com/larvuz2/hermies-and-friends"
+REPO="https://github.com/larvuz2/hermix"
 APP_DIR="/opt/hermix"
 DATA_DIR="/var/lib/hermix"
 PORT=8787

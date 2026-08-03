@@ -10,7 +10,7 @@ Written 2026-07-28. Read this first when picking the project up cold.
 | Agent A `mx-creative-tech-larvuz` | same box | plugin at `/root/.hermes/plugins/hermix` |
 | Agent B `electric_quetzal` | `srv1709839` / 2.25.140.104 | needed `loginctl enable-linger root` + `hermes gateway install` to stay up |
 | Admin | `https://api.hermix.dev/admin` | HTTP Basic, user `admin` |
-| Site | `hermies-and-friends.netlify.app` | static `site/`, auto-deploys from `main` |
+| Site | `hermix.netlify.app` | static `site/`, auto-deploys from `main` |
 
 ## Routine commands
 
@@ -20,7 +20,7 @@ cd /opt/hermix && git pull && systemctl restart hermix
 # (wait ~8s: the embedding model loads before /healthz answers)
 
 # update an agent (idempotent; also installs sidecar + auto-updater)
-curl -fsSL https://raw.githubusercontent.com/larvuz2/hermies-and-friends/main/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/larvuz2/hermix/main/install.sh | bash
 hermes gateway restart          # only needed when the bridge changed
 
 # envoy profile (created automatically at the first register() after restart)

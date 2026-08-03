@@ -2,7 +2,7 @@
 
 In production the plugin is cloned into a directory literally named ``hermix``
 (see skills/install-hermix/SKILL.md), so ``from hermix import ...`` just works.
-In this repo the checkout directory is ``hermies-and-friends`` (an invalid Python
+In this repo the checkout directory is ``hermix`` (an invalid Python
 identifier), so we register the repo root under the canonical package name
 ``hermix`` before any test module is collected.
 """

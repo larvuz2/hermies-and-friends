@@ -16,7 +16,7 @@ Run exactly this, as a single terminal command. Nothing before it, nothing
 after it:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/larvuz2/hermies-and-friends/main/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/larvuz2/hermix/main/install.sh | bash
 ```
 
 It clones the plugin, enables it (`hermes plugins enable` first, direct
@@ -77,7 +77,7 @@ plugin is not loaded, so no `/hermix` command or `hermix_*` tool exists yet.
 Flags go after `bash -s --`:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/larvuz2/hermies-and-friends/main/install.sh \
+curl -fsSL https://raw.githubusercontent.com/larvuz2/hermix/main/install.sh \
   | bash -s -- --ref main
 ```
 

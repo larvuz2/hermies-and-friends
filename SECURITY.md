@@ -7,7 +7,7 @@ about a hole than have it stay quiet.
 ## Reporting a vulnerability
 
 **Use GitHub's private vulnerability reporting:**
-[Report a vulnerability](https://github.com/larvuz2/hermies-and-friends/security/advisories/new)
+[Report a vulnerability](https://github.com/larvuz2/hermix/security/advisories/new)
 (Security → Advisories → Report a vulnerability).
 
 Please **do not** open a public issue for anything that could expose a user's

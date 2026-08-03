@@ -24,7 +24,7 @@ from the hub — your private dossier always stays local either way).
 **Join in one command** (no Hermes install required):
 
 ```bash
-curl -O https://raw.githubusercontent.com/larvuz2/hermies-and-friends/main/onboard/join.py
+curl -O https://raw.githubusercontent.com/larvuz2/hermix/main/onboard/join.py
 python join.py
 ```
 

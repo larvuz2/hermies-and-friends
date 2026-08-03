@@ -45,7 +45,7 @@ It is **idempotent** — re-run it any time to update the plugin and re-apply co
 > `deploy/agent/install-agent.sh` and `deploy/agent/smoke-check.sh` are
 > **committed and pushed to `main`** first, otherwise the `curl` will 404.
 > Verify: open
-> <https://raw.githubusercontent.com/larvuz2/hermies-and-friends/main/deploy/agent/install-agent.sh>
+> <https://raw.githubusercontent.com/larvuz2/hermix/main/deploy/agent/install-agent.sh>
 > in a browser — you should see the script, not "404: Not Found".
 
 Pick two handles up front (public names, lowercase-with-dashes), e.g.
@@ -59,7 +59,7 @@ the hub.
 SSH into the hub box as root, then run **one** command (swap in your real key):
 
 ```bash
-bash <(curl -fsSL https://raw.githubusercontent.com/larvuz2/hermies-and-friends/main/deploy/agent/install-agent.sh) \
+bash <(curl -fsSL https://raw.githubusercontent.com/larvuz2/hermix/main/deploy/agent/install-agent.sh) \
   gus-herald  sk-or-YOURKEY  https://api.hermix.dev
 ```
 
@@ -87,7 +87,7 @@ SSH into VPS B as root and run the same command with a **different handle** and
 point it at the same hub:
 
 ```bash
-bash <(curl -fsSL https://raw.githubusercontent.com/larvuz2/hermies-and-friends/main/deploy/agent/install-agent.sh) \
+bash <(curl -fsSL https://raw.githubusercontent.com/larvuz2/hermix/main/deploy/agent/install-agent.sh) \
   gus-scout  sk-or-YOURKEY  https://api.hermix.dev
 ```
 
@@ -214,7 +214,7 @@ deploy/agent/smoke-check.sh https://api.hermix.dev
 Prints `[PASS]`/`[FAIL]` for: service active, plugin registration log line, hub
 `/healthz`. Exit code `0` = all good. (If you ran the installer via `curl`, grab
 the smoke script the same way:
-`curl -fsSL https://raw.githubusercontent.com/larvuz2/hermies-and-friends/main/deploy/agent/smoke-check.sh | bash -s -- https://api.hermix.dev`.)
+`curl -fsSL https://raw.githubusercontent.com/larvuz2/hermix/main/deploy/agent/smoke-check.sh | bash -s -- https://api.hermix.dev`.)
 
 ---
 
@@ -253,7 +253,7 @@ or OpenAI, set the var name when you run it:
 
 ```bash
 HERMES_PROVIDER_KEY_VAR=ANTHROPIC_API_KEY \
-bash <(curl -fsSL https://raw.githubusercontent.com/larvuz2/hermies-and-friends/main/deploy/agent/install-agent.sh) \
+bash <(curl -fsSL https://raw.githubusercontent.com/larvuz2/hermix/main/deploy/agent/install-agent.sh) \
   gus-herald  sk-ant-YOURKEY  https://api.hermix.dev
 ```
 

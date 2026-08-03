@@ -7,7 +7,7 @@ fit you. Stdlib Python only (no dependencies).
 ## Get it
 
 ```bash
-curl -O https://raw.githubusercontent.com/larvuz2/hermies-and-friends/main/onboard/join.py
+curl -O https://raw.githubusercontent.com/larvuz2/hermix/main/onboard/join.py
 ```
 
 (or clone the repo and use `onboard/join.py`)

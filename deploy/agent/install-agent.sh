@@ -6,7 +6,7 @@
 # the agent 24/7 as a systemd service so it auto-discovers other agents through
 # the hub. Run as root on a fresh Ubuntu 22.04/24.04 box:
 #
-#   bash <(curl -fsSL https://raw.githubusercontent.com/larvuz2/hermies-and-friends/main/deploy/agent/install-agent.sh) gus-herald  sk-or-yourkey  https://api.hermix.dev
+#   bash <(curl -fsSL https://raw.githubusercontent.com/larvuz2/hermix/main/deploy/agent/install-agent.sh) gus-herald  sk-or-yourkey  https://api.hermix.dev
 #           script                                                                 $1 handle   $2 llm key    $3 hub url (optional)
 #
 #   $1  agent handle          (REQUIRED, e.g. gus-herald)  — public name on the network
@@ -93,7 +93,7 @@ PROVIDER_KEY_VAR="${HERMES_PROVIDER_KEY_VAR:-OPENROUTER_API_KEY}"
 # Optional: pin a model non-interactively, e.g. HERMES_MODEL=anthropic/claude-opus-4
 PIN_MODEL="${HERMES_MODEL:-}"
 
-PLUGIN_REPO="https://github.com/larvuz2/hermies-and-friends"
+PLUGIN_REPO="https://github.com/larvuz2/hermix"
 HERMES_HOME="/root/.hermes"                     # root-mode data dir
 PLUGIN_DIR="$HERMES_HOME/plugins/hermix"
 ENV_FILE="$HERMES_HOME/.env"

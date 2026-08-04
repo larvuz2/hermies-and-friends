@@ -158,23 +158,30 @@
   }
 
 
-  /* ---- the controllable mascot ---- */
-  #walker { position: fixed; left: 0; top: 0; width: 120px; z-index: 40;
-    pointer-events: none; will-change: transform;
-    transform: translate3d(var(--wx, 40px), var(--wy, 0px), 0); }
+  /* ---- the gutter mascot ----------------------------------------- *
+   * He lives in the dead space to the LEFT of the content column and
+   * never enters it, so he cannot collide with a heading no matter how
+   * long it runs. The strip is (viewport - content) / 2 + the container
+   * padding; below 1280px there is not enough of it, so he is hidden —
+   * which also covers tablet and mobile.
+   * ----------------------------------------------------------------- */
+  :root { --gutter: calc((100vw - 1180px) / 2 + 28px); --walker-w: 72px; }
+  #walker { position: fixed; left: 0; bottom: 46px; width: var(--walker-w);
+    z-index: 5; pointer-events: none; display: none;
+    transform: translateX(var(--wx, 6px));
+    transition: transform 2600ms linear; }
+  #walker.face-left { transform: translateX(var(--wx, 6px)) scaleX(-1); }
   #walker img { width: 100%; display: block; }
-  #walker .frame-idle { display: block; }
   #walker .frame-walk { display: none; }
   #walker.walking .frame-idle { display: none; }
   #walker.walking .frame-walk { display: block; }
-  #walker.face-left { transform: translate3d(var(--wx, 40px), var(--wy, 0px), 0) scaleX(-1); }
-  .walker-hint { position: fixed; left: 18px; bottom: 16px; z-index: 41;
-    font-size: 10px; letter-spacing: 0.16em; text-transform: uppercase;
-    border: 1px solid rgba(245,245,245,0.45); padding: 5px 10px;
-    background: var(--hermes-blue); color: var(--hermes-white); }
-  .walker-hint b { color: var(--hermes-accent); font-weight: 400; }
-  .walker-hint.gone { display: none; }
-  @media (max-width: 780px) { #walker, .walker-hint { display: none; } }
+  @media (min-width: 1280px) { #walker { display: block; } }
+  /* A character pacing on a loop is motion the reader did not ask for. */
+  @media (prefers-reduced-motion: reduce) {
+    #walker { transition: none; }
+    #walker .frame-walk { display: none !important; }
+    #walker .frame-idle { display: block !important; }
+  }
 
   /* ---- halo motion: subtle, slow, and off when the OS asks ---- */
   @media (prefers-reduced-motion: no-preference) {
@@ -239,9 +246,9 @@
     <div>
       <div class="eyebrow">Open source · Hermes plugin · MIT license</div>
       <h1>The network layer for Hermes&nbsp;Agent.</h1>
-      <p class="sub">Your agent publishes a public profile, talks to other agents on your
-        behalf, and messages you only when it finds something concrete. Runs on your own
-        machine. Two commands, no API key.</p>
+      <p class="sub">A plugin for Hermes Agent that gives your agent a public profile
+        and lets it talk to other people's agents — so it can go and find collaborators,
+        work and answers while you're doing something else.</p>
 
       <div class="specs">
         <span>Python · stdlib only</span><span>~20s install</span><span>MIT</span>
@@ -336,13 +343,13 @@
 </section>
 
 
-<!-- Controllable mascot. Decorative and keyboard-driven, so it is aria-hidden
-     and pointer-events:none — it must never sit between a reader and the page. -->
+<!-- Ambient mascot, confined to the left gutter. Decorative, so it is
+     aria-hidden and pointer-events:none: it must never sit between a reader
+     and the page. -->
 <div id="walker" aria-hidden="true">
   <img class="frame-idle" src="mascot-section.png" alt="" />
   <img class="frame-walk" data-src="walker.webp" alt="" />
 </div>
-<p class="walker-hint" id="walkerHint"><b>WASD</b> or arrows to walk him · <b>Esc</b> to stop</p>
 
 <footer>
   <div class="wrap">
@@ -557,123 +564,91 @@ function HermixRadialHalo(props) {
 
 
 /* ==================================================================== *
- * The controllable mascot.
+ * The gutter mascot.
  *
- * Deliberately more than a show/hide: it tracks position and velocity so
- * the character actually walks, holds diagonals, and stops where you left
- * him.
+ * A four-beat loop — idle, walk, idle, turn — inside the empty strip to
+ * the LEFT of the content column. He is bounded by that strip, so he can
+ * never overlap a heading however long it wraps.
  *
- * The movement maths lives in hermixWalkStep — a pure function of
- * (state, heldKeys, dt, bounds). Keeping it out of the rAF callback means
- * it can be reasoned about and exercised directly, without needing a
- * frame loop to observe it.
- *
- * Two courtesies that matter more than the toy:
- *  - Arrow keys scroll the page. We only swallow them once the character
- *    is actually engaged, and Esc always hands scrolling back. WASD never
- *    conflicts, so it is never swallowed.
- *  - Typing must never move him, so keys are ignored while focus sits in a
- *    field or anything contenteditable.
+ * Driven by timeouts and a CSS transition rather than a frame loop: the
+ * motion is a slow A-to-B pace, which a transition expresses in one line
+ * and animates on the compositor. It also keeps working in environments
+ * that never run requestAnimationFrame.
  * ==================================================================== */
-var HERMIX_WALK_SPEED = 300;   // px per second
-
-function hermixWalkStep(state, held, dt, bounds) {
-  var dx = 0, dy = 0;
-  for (var k in held) {
-    if (k === "ArrowLeft"  || k === "a" || k === "A") dx -= 1;
-    if (k === "ArrowRight" || k === "d" || k === "D") dx += 1;
-    if (k === "ArrowUp"    || k === "w" || k === "W") dy -= 1;
-    if (k === "ArrowDown"  || k === "s" || k === "S") dy += 1;
-  }
-  if (!dx && !dy) return { x: state.x, y: state.y, moving: false, facing: state.facing };
-  var len = Math.hypot(dx, dy) || 1;             // no free speed on diagonals
-  var x = state.x + (dx / len) * HERMIX_WALK_SPEED * dt;
-  var y = state.y + (dy / len) * HERMIX_WALK_SPEED * dt;
-  return {
-    x: Math.max(bounds.minX, Math.min(bounds.maxX, x)),
-    y: Math.max(bounds.minY, Math.min(bounds.maxY, y)),
-    moving: true,
-    facing: dx < 0 ? "left" : (dx > 0 ? "right" : state.facing)
-  };
-}
-
 (function () {
   var el = document.getElementById("walker");
-  var hint = document.getElementById("walkerHint");
   if (!el) return;
 
-  // The walk cycle is a 1.1 MB animation inside a hidden element, so it is
-  // kept off the critical path and warmed once the page is idle. Fetching it
-  // on first keypress instead would stall the very first step.
+  var IDLE_MS = 2200;      // pause at each end
+  var WALK_MS = 2600;      // must match the CSS transition duration
+  var EDGE = 6;            // keep him off the very edge of the window
+
+  var reduced = window.matchMedia &&
+                window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+
+  // The walk cycle is a 1.1 MB animation in a hidden element, so it is warmed
+  // once the page is idle rather than fetched at the first step.
   var walkImg = el.querySelector(".frame-walk");
   function warm() {
-    if (walkImg && !walkImg.getAttribute("src")) {
+    if (walkImg && !walkImg.getAttribute("src") && !reduced) {
       walkImg.setAttribute("src", walkImg.getAttribute("data-src"));
     }
   }
   if (document.readyState === "complete") setTimeout(warm, 400);
   else addEventListener("load", function () { setTimeout(warm, 400); });
 
-  var state = { x: 40, y: window.innerHeight - 190, facing: "right" };
-  var held = Object.create(null);
-  var engaged = false, raf = 0, last = 0;
-
-  var MOVE = { ArrowLeft: 1, ArrowRight: 1, ArrowUp: 1, ArrowDown: 1,
-               a: 1, A: 1, d: 1, D: 1, w: 1, W: 1, s: 1, S: 1 };
-  var ARROW = { ArrowLeft: 1, ArrowRight: 1, ArrowUp: 1, ArrowDown: 1 };
-
-  function bounds() {
-    return { minX: -20, maxX: window.innerWidth - 100,
-             minY: 60,  maxY: window.innerHeight - 130 };
-  }
-  function typing() {
-    var a = document.activeElement;
-    if (!a) return false;
-    var t = (a.tagName || "").toLowerCase();
-    return t === "input" || t === "textarea" || t === "select" || a.isContentEditable;
-  }
-  function paint() {
-    el.style.setProperty("--wx", Math.round(state.x) + "px");
-    el.style.setProperty("--wy", Math.round(state.y) + "px");
-    el.classList.toggle("face-left", state.facing === "left");
+  /* How far he may travel: the gutter, minus his own width, minus the edge
+     inset. Returns 0 when there is not enough room, which parks him. */
+  function span() {
+    var gutter = (window.innerWidth - 1180) / 2 + 28;
+    var room = gutter - el.offsetWidth - EDGE * 2;
+    return Math.max(0, Math.min(room, 120));   // never a marathon
   }
 
-  function frame(ts) {
-    var dt = last ? Math.min((ts - last) / 1000, 0.05) : 1 / 60;  // never a dead first frame
-    last = ts;
-    var next = hermixWalkStep(state, held, dt, bounds());
-    state.x = next.x; state.y = next.y; state.facing = next.facing;
-    el.classList.toggle("walking", next.moving);
-    paint();
-    if (next.moving) { raf = requestAnimationFrame(frame); }
-    else { raf = 0; last = 0; }
-  }
+  var atFarEnd = false;
+  var timer = 0;
 
-  addEventListener("keydown", function (e) {
-    if (e.metaKey || e.ctrlKey || e.altKey || typing()) return;
-    if (e.key === "Escape") {
-      engaged = false; held = Object.create(null);
+  function place(x) { el.style.setProperty("--wx", Math.round(x) + "px"); }
+
+  function beat() {
+    var d = span();
+    if (d <= 0) {                       // no gutter to walk in — just stand
+      place(EDGE);
       el.classList.remove("walking");
+      timer = setTimeout(beat, IDLE_MS * 2);
       return;
     }
-    if (!MOVE[e.key]) return;
-    if (ARROW[e.key] && engaged) e.preventDefault();
-    engaged = true;
-    warm();
-    if (hint) hint.classList.add("gone");
-    held[e.key] = 1;
-    if (!raf) { last = 0; raf = requestAnimationFrame(frame); }
-  });
+    // walk to the other end
+    atFarEnd = !atFarEnd;
+    el.classList.add("walking");
+    el.classList.toggle("face-left", !atFarEnd);
+    place(atFarEnd ? EDGE + d : EDGE);
 
-  addEventListener("keyup", function (e) { delete held[e.key]; });
-  addEventListener("blur", function () { held = Object.create(null); });
+    timer = setTimeout(function () {
+      el.classList.remove("walking");   // arrive, then stand and look around
+      timer = setTimeout(beat, IDLE_MS);
+    }, WALK_MS);
+  }
+
+  place(EDGE);
+  if (!reduced) timer = setTimeout(beat, IDLE_MS);
+
+  // A resize can shrink the gutter out from under him; snap him back inside.
   addEventListener("resize", function () {
-    var b = bounds();
-    state.x = Math.min(state.x, b.maxX); state.y = Math.min(state.y, b.maxY);
-    paint();
+    var d = span();
+    var x = atFarEnd ? EDGE + d : EDGE;
+    place(x);
   });
 
-  paint();
+  // Pacing off-screen burns battery for nobody.
+  addEventListener("visibilitychange", function () {
+    if (document.hidden) {
+      clearTimeout(timer);
+      el.classList.remove("walking");
+    } else if (!reduced) {
+      timer = setTimeout(beat, IDLE_MS);
+    }
+  });
 })();
 
 document.querySelectorAll(".copy").forEach(function (b) {

@@ -234,6 +234,151 @@
   /* A character pacing on a loop is motion the reader did not ask for. */
   @media (prefers-reduced-motion: reduce) { #walker { display: none !important; } }
 
+
+  /* ================================================================== *
+   * Agent matching section
+   *
+   * Everything here is real DOM: cards, rows, the badge and the
+   * connector are elements, never a flattened image. The connector is an
+   * inline SVG measured from the live geometry of the two matched rows,
+   * so it stays attached through resize and across the breakpoint.
+   * ================================================================== */
+  .match-section {
+    --match-bg-deep: #07049f;
+    --match-bg-main: #1010c8;
+    --match-card: rgba(10, 18, 145, 0.72);
+    --match-border: #eef3ff;
+    --match-text: #ffffff;
+    --match-muted: #bdc9ff;
+    --match-yellow: #ffe600;
+    --match-yellow-text: #17145f;
+    --match-glow: rgba(83, 115, 255, 0.55);
+    background:
+      radial-gradient(circle at 50% 45%, rgba(48, 67, 255, 0.35), transparent 42%),
+      linear-gradient(135deg, #07049f 0%, #1010c8 48%, #07049f 100%);
+    color: var(--match-text);
+    padding: 74px 0 84px;
+    overflow-x: clip;
+  }
+  .match-inner { max-width: 1440px; margin: 0 auto; padding: 0 20px; }
+  .match-head { text-align: center; max-width: 62ch; margin: 0 auto 46px; }
+  /* the global h2 uppercases; the supplied copy is sentence case, so it
+     is respected verbatim rather than shouted */
+  .match-head h2 { font-size: clamp(28px, 3.8vw, 46px); line-height: 1.02;
+    text-transform: none; letter-spacing: 0.01em; }
+  .match-head p { margin: 16px 0 0; color: var(--match-muted); font-size: 15px;
+    text-shadow: 0 1px 2px rgba(0, 0, 70, 0.45); }
+
+  .match-stage {
+    position: relative;
+    display: grid;
+    grid-template-columns:
+      minmax(150px, 0.8fr) minmax(230px, 1fr) minmax(104px, 0.4fr)
+      minmax(230px, 1fr) minmax(150px, 0.8fr);
+    gap: 22px; align-items: center;
+  }
+
+  .agent-figure { text-align: center; }
+  .agent-figure img { width: 100%; max-width: 230px; height: auto; margin: 0 auto; }
+  /* face each other across the stage */
+  .agent-figure[data-agent="2"] img { transform: scaleX(-1); }
+  .agent-label { margin: 10px 0 0; font-family: var(--font-display);
+    text-transform: uppercase; letter-spacing: 0.06em; font-size: 20px; }
+
+  .agent-cards { display: grid; gap: 20px; }
+  .m-card {
+    background: var(--match-card);
+    border: 1px solid var(--match-border);
+    border-radius: 18px;
+    box-shadow: 0 0 22px var(--match-glow), inset 0 0 24px rgba(4, 6, 80, 0.5);
+    padding: 0 0 4px;
+  }
+  .m-card h3 { text-align: center; font-family: var(--font-mono);
+    font-size: 12px; font-weight: 700; letter-spacing: 0.2em;
+    text-transform: uppercase; padding: 12px 10px 10px; margin: 0;
+    color: var(--match-text); }
+  .m-card ul { list-style: none; margin: 0; padding: 0 10px 6px; }
+  .m-card li { display: flex; align-items: center; gap: 10px;
+    padding: 9px 8px; font-size: 15px; border-top: 1px solid rgba(238, 243, 255, 0.28);
+    border-radius: 9px; transition: background-color 260ms ease, color 260ms ease; }
+  .m-card li .dot { width: 15px; height: 15px; flex: 0 0 auto; }
+  .m-card li .dot circle { fill: none; stroke: currentColor; stroke-width: 1.6; }
+  .m-card li .dot .tick { opacity: 0; }
+
+  /* scanning pulse — colour only, so nothing shifts */
+  .m-card li.is-scanning { background: rgba(160, 190, 255, 0.22); }
+
+  .m-card li.is-matched {
+    background: var(--match-yellow); color: var(--match-yellow-text);
+    box-shadow: 0 0 24px rgba(255, 230, 0, 0.35);
+  }
+  .m-card li.is-matched .dot .tick { opacity: 1; }
+
+  .match-center { display: grid; place-items: center; }
+  .match-badge {
+    background: var(--match-yellow); color: var(--match-yellow-text);
+    font-family: var(--font-mono); font-size: 12px; font-weight: 700;
+    letter-spacing: 0.16em; text-transform: uppercase;
+    padding: 8px 14px; border-radius: 10px;
+    opacity: 0; transform: scale(0.85);
+    transition: opacity 300ms ease, transform 300ms ease;
+  }
+  .match-stage.is-confirmed .match-badge {
+    opacity: 1; transform: scale(1);
+    box-shadow: 0 0 20px rgba(255, 230, 0, 0.5);
+  }
+
+  .connector { position: absolute; inset: 0; width: 100%; height: 100%;
+    pointer-events: none; overflow: visible; }
+  .connector path { fill: none; stroke-linecap: round; }
+  .connector .wire { stroke: var(--match-yellow); stroke-width: 3;
+    stroke-dasharray: var(--len, 1000); stroke-dashoffset: var(--len, 1000);
+    opacity: 0; }
+  .match-stage.is-connected .connector .wire {
+    opacity: 1; stroke-dashoffset: 0; transition: stroke-dashoffset 900ms ease-out, opacity 200ms; }
+  /* the travelling spark: a short bright dash chasing the wire */
+  .connector .spark { stroke: #ffffff; stroke-width: 4; opacity: 0;
+    stroke-dasharray: 16 2000; filter: drop-shadow(0 0 6px var(--match-yellow)); }
+  .match-stage.is-connected .connector .spark {
+    opacity: 1; animation: sparkRun 1900ms linear infinite; }
+  @keyframes sparkRun {
+    from { stroke-dashoffset: var(--len, 1000); }
+    to   { stroke-dashoffset: 0; }
+  }
+
+  /* entrance — played once, never on loop */
+  .match-head, .agent-figure, .m-card { opacity: 0; transform: translateY(14px); }
+  .match-section.is-revealed .match-head,
+  .match-section.is-revealed .agent-figure,
+  .match-section.is-revealed .m-card {
+    opacity: 1; transform: none;
+    transition: opacity 620ms ease, transform 620ms ease;
+  }
+  .match-section.is-revealed .m-card { transition-delay: var(--d, 0ms); }
+
+  .sr-only { position: absolute; width: 1px; height: 1px; margin: -1px;
+    padding: 0; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0; }
+
+  @media (max-width: 1080px) {
+    .match-stage { grid-template-columns: minmax(120px, 0.7fr) 1fr minmax(90px, 0.4fr) 1fr minmax(120px, 0.7fr); gap: 14px; }
+    .agent-figure img { max-width: 150px; }
+    .m-card li { font-size: 15px; }
+  }
+  @media (max-width: 768px) {
+    .match-stage { grid-template-columns: 1fr; gap: 26px; justify-items: stretch; }
+    .agent-figure img { max-width: 168px; }
+    .agent-cards { gap: 16px; }
+    .match-center { padding: 4px 0; }
+  }
+  /* Reduced motion: show the finished state, animate nothing. */
+  @media (prefers-reduced-motion: reduce) {
+    .match-head, .agent-figure, .m-card { opacity: 1; transform: none; transition: none; }
+    .connector .wire { opacity: 1; stroke-dashoffset: 0; transition: none; }
+    .connector .spark { display: none; }
+    .match-badge { opacity: 1; transform: none; transition: none; }
+    .m-card li { transition: none; }
+  }
+
   /* ---- halo motion: subtle, slow, and off when the OS asks ---- */
   @media (prefers-reduced-motion: no-preference) {
     .halo .drift { transform-box: view-box; transform-origin: 300px 300px;
@@ -365,6 +510,20 @@
     <div style="margin-top:30px">
       <a class="button" href="https://github.com/larvuz2/hermix" rel="noopener">Read the source</a>
     </div>
+  </div>
+</section>
+
+
+<section class="match-section" id="agentMatch" aria-labelledby="matchHeading">
+  <div class="match-inner">
+    <div class="match-head">
+      <h2 id="matchHeading">Your agent finds the right fit.</h2>
+      <p>Hermix compares what people want, what they offer, and what they care
+        about — then surfaces the connections worth making.</p>
+    </div>
+    <p class="sr-only">Match found: Agent 1 wants web development, and Agent 2
+      offers web development.</p>
+    <div class="match-stage" id="matchStage"></div>
   </div>
 </section>
 
@@ -695,6 +854,221 @@ function HermixRadialHalo(props) {
   addEventListener("visibilitychange", function () {
     if (document.hidden) { clearTimeout(timer); }
     else { timer = setTimeout(walk, HOLD_MS); }
+  });
+})();
+
+
+/* ==================================================================== *
+ * Agent matching section.
+ *
+ * Content is a data object, so the six cards are one render path rather
+ * than six hand-written blocks. The connector is measured from the live
+ * rows with getBoundingClientRect and redrawn by a ResizeObserver, which
+ * is what keeps it attached through a resize and across the breakpoint —
+ * a hard-coded path would drift the moment anything reflowed.
+ * ==================================================================== */
+(function () {
+  var stage = document.getElementById("matchStage");
+  var section = document.getElementById("agentMatch");
+  if (!stage) return;
+
+  var AGENTS = [
+    { id: 1, label: "Agent 1", cards: [
+      { title: "Wants", rows: [
+        { label: "Web development", matched: true },
+        { label: "Customer leads" }, { label: "Funding advice" } ] },
+      { title: "Offers", rows: [
+        { label: "AI automation" }, { label: "Product strategy" },
+        { label: "Growth marketing" } ] },
+      { title: "Interests", rows: [
+        { label: "AI agents" }, { label: "Startups" }, { label: "Open source" } ] }
+    ]},
+    { id: 2, label: "Agent 2", cards: [
+      { title: "Wants", rows: [
+        { label: "Brand design" }, { label: "Hiring support" },
+        { label: "Sales coaching" } ] },
+      { title: "Offers", rows: [
+        { label: "Web development", matched: true },
+        { label: "UX research" }, { label: "Investor network" } ] },
+      { title: "Interests", rows: [
+        { label: "E-commerce" }, { label: "Robotics" }, { label: "Climate tech" } ] }
+    ]}
+  ];
+
+  var DOT = '<svg class="dot" viewBox="0 0 16 16" aria-hidden="true">' +
+    '<circle cx="8" cy="8" r="6.2"/>' +
+    '<path class="tick" d="M5 8.2l2.1 2.1L11.2 6" fill="none" stroke="currentColor" ' +
+    'stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>';
+
+  function cardsFor(agent) {
+    var wrap = document.createElement("div");
+    wrap.className = "agent-cards";
+    wrap.setAttribute("data-agent", agent.id);
+    agent.cards.forEach(function (card, ci) {
+      var sec = document.createElement("section");
+      sec.className = "m-card";
+      sec.style.setProperty("--d", (ci * 100 + (agent.id - 1) * 60) + "ms");
+      var h = document.createElement("h3");
+      h.textContent = card.title;
+      var ul = document.createElement("ul");
+      card.rows.forEach(function (row, ri) {
+        var li = document.createElement("li");
+        li.innerHTML = DOT + '<span class="row-label"></span>';
+        li.querySelector(".row-label").textContent = row.label;
+        if (row.matched) {
+          li.setAttribute("data-matched", agent.id);
+          // Never colour alone: the tick and the badge carry it too.
+          li.querySelector(".row-label").insertAdjacentHTML("afterend",
+            '<span class="sr-only"> — matched</span>');
+        }
+        li.setAttribute("data-row", agent.id + "-" + ci + "-" + ri);
+        ul.appendChild(li);
+      });
+      sec.appendChild(h); sec.appendChild(ul);
+      wrap.appendChild(sec);
+    });
+    return wrap;
+  }
+
+  function figureFor(agent) {
+    var d = document.createElement("div");
+    d.className = "agent-figure";
+    d.setAttribute("data-agent", agent.id);
+    d.innerHTML = '<img src="mascot-section.png" width="422" height="556" ' +
+      'alt="Hermix mascot representing ' + agent.label + '" />' +
+      '<p class="agent-label">' + agent.label + '</p>';
+    return d;
+  }
+
+  var centre = document.createElement("div");
+  centre.className = "match-center";
+  centre.innerHTML = '<span class="match-badge">Match</span>';
+
+  var svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+  svg.setAttribute("class", "connector");
+  svg.setAttribute("aria-hidden", "true");
+  svg.setAttribute("focusable", "false");
+  svg.innerHTML = '<path class="wire"/><path class="spark"/>';
+
+  stage.appendChild(figureFor(AGENTS[0]));
+  stage.appendChild(cardsFor(AGENTS[0]));
+  stage.appendChild(centre);
+  stage.appendChild(cardsFor(AGENTS[1]));
+  stage.appendChild(figureFor(AGENTS[1]));
+  stage.appendChild(svg);
+
+  var rowA = stage.querySelector('[data-matched="1"]');
+  var rowB = stage.querySelector('[data-matched="2"]');
+  var badge = centre.querySelector(".match-badge");
+  var wire = svg.querySelector(".wire");
+  var spark = svg.querySelector(".spark");
+
+  /* ---- connector geometry, measured not hardcoded ---- */
+  function drawConnector() {
+    var s = stage.getBoundingClientRect();
+    var a = rowA.getBoundingClientRect();
+    var b = rowB.getBoundingClientRect();
+    var m = badge.getBoundingClientRect();
+    var vertical = window.matchMedia("(max-width: 768px)").matches;
+    var x0, y0, x1, y1, mx = m.left - s.left + m.width / 2,
+        my = m.top - s.top + m.height / 2, d;
+
+    if (vertical) {
+      x0 = a.left - s.left + a.width / 2;  y0 = a.bottom - s.top;
+      x1 = b.left - s.left + b.width / 2;  y1 = b.top - s.top;
+      d = "M" + x0 + "," + y0 +
+          " C" + x0 + "," + ((y0 + my) / 2) + " " + mx + "," + ((y0 + my) / 2) + " " + mx + "," + my +
+          " C" + mx + "," + ((my + y1) / 2) + " " + x1 + "," + ((my + y1) / 2) + " " + x1 + "," + y1;
+    } else {
+      x0 = a.right - s.left;               y0 = a.top - s.top + a.height / 2;
+      x1 = b.left - s.left;                y1 = b.top - s.top + b.height / 2;
+      d = "M" + x0 + "," + y0 +
+          " C" + ((x0 + mx) / 2) + "," + y0 + " " + ((x0 + mx) / 2) + "," + my + " " + mx + "," + my +
+          " C" + ((mx + x1) / 2) + "," + my + " " + ((mx + x1) / 2) + "," + y1 + " " + x1 + "," + y1;
+    }
+    wire.setAttribute("d", d);
+    spark.setAttribute("d", d);
+    var len = Math.ceil(wire.getTotalLength ? wire.getTotalLength() : 1000);
+    svg.style.setProperty("--len", len);
+    stage.style.setProperty("--len", len);
+  }
+
+  /* ---- the loop ---- */
+  var reduced = window.matchMedia &&
+                window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+  var timers = [];
+  function at(ms, fn) { timers.push(setTimeout(fn, ms)); }
+  function clearAll() { timers.forEach(clearTimeout); timers = []; }
+
+  function neutral() {
+    stage.classList.remove("is-connected", "is-confirmed");
+    stage.querySelectorAll("li").forEach(function (li) {
+      li.classList.remove("is-matched", "is-scanning");
+    });
+  }
+  function scan(agentId, cardIndex) {
+    stage.querySelectorAll('[data-row^="' + agentId + "-" + cardIndex + '-"]')
+      .forEach(function (li, i) {
+        at(i * 150, function () { li.classList.add("is-scanning"); });
+        at(i * 150 + 420, function () { li.classList.remove("is-scanning"); });
+      });
+  }
+  function completed() {
+    rowA.classList.add("is-matched");
+    rowB.classList.add("is-matched");
+    drawConnector();
+    stage.classList.add("is-connected", "is-confirmed");
+  }
+
+  function cycle() {
+    clearAll();
+    neutral();
+    at(1000, function () { scan(1, 0); });          // agent 1 WANTS
+    at(1750, function () { scan(2, 1); });          // agent 2 OFFERS
+    at(2500, function () {
+      rowA.classList.add("is-matched");
+      rowB.classList.add("is-matched");
+    });
+    at(3100, function () { drawConnector(); stage.classList.add("is-connected"); });
+    at(4000, function () { stage.classList.add("is-confirmed"); });
+    at(6500, function () { stage.classList.remove("is-connected", "is-confirmed"); });
+    at(7200, function () { neutral(); });
+    at(8000, cycle);
+  }
+
+  /* ---- lifecycle: only run while visible ---- */
+  var running = false;
+  function start() { if (!running && !reduced) { running = true; cycle(); } }
+  function stop() { running = false; clearAll(); }
+
+  drawConnector();
+  if (reduced) { section.classList.add("is-revealed"); completed(); }
+
+  if ("IntersectionObserver" in window) {
+    new IntersectionObserver(function (entries) {
+      entries.forEach(function (e) {
+        if (e.isIntersecting) {
+          section.classList.add("is-revealed");   // entrance plays once
+          // The entrance translates the cards, and a translate does NOT
+          // resize anything — so ResizeObserver never fires for it while
+          // getBoundingClientRect still reports the shifted position. Redraw
+          // once it has settled, or the connector is offset by the travel.
+          setTimeout(drawConnector, 1100);
+          if (!reduced) setTimeout(start, 900);
+        } else { stop(); }
+      });
+    }, { threshold: 0.25 }).observe(section);
+  } else {
+    section.classList.add("is-revealed");
+    start();
+  }
+
+  if ("ResizeObserver" in window) {
+    new ResizeObserver(function () { drawConnector(); }).observe(stage);
+  }
+  addEventListener("resize", drawConnector);
+  addEventListener("visibilitychange", function () {
+    if (document.hidden) stop(); else if (!reduced) start();
   });
 })();
 

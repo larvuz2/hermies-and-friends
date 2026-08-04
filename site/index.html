@@ -41,7 +41,13 @@
   .wrap { max-width: 1180px; margin: 0 auto; padding: 0 28px; }
   h1, h2, h3 { font-family: var(--font-display); font-weight: 300;
     text-transform: uppercase; letter-spacing: 0.03em; margin: 0; }
-  .eyebrow { font-size: 11px; letter-spacing: 0.22em; text-transform: uppercase; opacity: 0.85; }
+  /* Small letter-spaced type on a saturated blue reads thin. Rather than
+     lighten the field behind it (which would break the flat-colour system),
+     each glyph carries its own soft shadow — contrast goes up, the
+     background stays exactly #0000F2. */
+  .eyebrow { font-size: 11px; letter-spacing: 0.22em; text-transform: uppercase;
+    opacity: 1; text-shadow: 0 1px 2px rgba(0, 0, 70, 0.55),
+                             0 0 12px rgba(0, 0, 90, 0.35); }
 
   /* ---- nav ---- */
   nav { border-bottom: 1px solid rgba(245,245,245,0.28); position: relative; z-index: 3; }
@@ -69,10 +75,36 @@
   .hero-grid { display: grid; grid-template-columns: 0.86fr 1.14fr; gap: 34px;
     align-items: center; position: relative; z-index: 2; }
   .hero h1 { font-size: clamp(42px, 6.2vw, 88px); line-height: 0.9; margin: 16px 0 0; }
-  .hero .sub { max-width: 50ch; margin: 20px 0 0; font-size: 15px; opacity: 0.92; }
+  /* A slow sheen travelling across the headline. Painted into the GLYPHS via
+     background-clip, so nothing behind the text changes colour. Guarded by
+     @supports: where background-clip:text is unavailable the heading simply
+     stays solid white rather than turning invisible. */
+  @supports ((-webkit-background-clip: text) or (background-clip: text)) {
+    .hero h1 {
+      background-image: linear-gradient(100deg,
+        var(--hermes-white) 0%, var(--hermes-white) 34%,
+        var(--hermes-accent) 46%, #ffffff 54%,
+        var(--hermes-white) 66%, var(--hermes-white) 100%);
+      background-size: 260% 100%;
+      background-position: 120% 0;
+      -webkit-background-clip: text; background-clip: text;
+      color: transparent; -webkit-text-fill-color: transparent;
+    }
+    @media (prefers-reduced-motion: no-preference) {
+      .hero h1 { animation: heroSheen 11s linear infinite; }
+    }
+  }
+  @keyframes heroSheen {
+    from { background-position: 120% 0; }
+    to   { background-position: -60% 0; }
+  }
+  .hero .sub { max-width: 50ch; margin: 20px 0 0; font-size: 15px; opacity: 1;
+    text-shadow: 0 1px 2px rgba(0, 0, 70, 0.5); }
   .specs { display: flex; flex-wrap: wrap; gap: 8px; margin: 22px 0 0;
     font-size: 10px; letter-spacing: 0.16em; text-transform: uppercase; }
-  .specs span { border: 1px solid rgba(245,245,245,0.4); padding: 4px 9px; }
+  .specs span { border: 1px solid rgba(245,245,245,0.55); padding: 4px 9px;
+    text-shadow: 0 1px 2px rgba(0, 0, 70, 0.6);
+    box-shadow: inset 0 0 14px rgba(0, 0, 90, 0.35); }
 
   /* install, in the hero */
   .install { margin-top: 26px; }
@@ -90,7 +122,8 @@
   .copy:hover { background: var(--hermes-blue); color: var(--paper); }
   pre { margin: 0; padding: 12px; overflow-x: auto; font-family: var(--font-mono);
     font-size: 12.5px; line-height: 1.6; }
-  .note { font-size: 11.5px; opacity: 0.86; margin: 10px 0 0; }
+  .note { font-size: 11.5px; opacity: 1; margin: 10px 0 0;
+    text-shadow: 0 1px 2px rgba(0, 0, 70, 0.5); }
   .note b { font-weight: 400; background: var(--hermes-accent);
     color: var(--hermes-blue); padding: 1px 4px; }
 
@@ -164,24 +197,23 @@
    * long it runs. The strip is (viewport - content) / 2 + the container
    * padding; below 1280px there is not enough of it, so he is hidden —
    * which also covers tablet and mobile.
+   *
+   * There is only one frame: the walk cycle, always playing. He "stops"
+   * by holding his horizontal position while the cycle keeps running, so
+   * he reads as marking time rather than freezing.
    * ----------------------------------------------------------------- */
-  :root { --gutter: calc((100vw - 1180px) / 2 + 28px); --walker-w: 72px; }
+  :root { --gutter: calc((100vw - 1180px) / 2 + 28px); --walker-w: 76px; }
   #walker { position: fixed; left: 0; bottom: 46px; width: var(--walker-w);
     z-index: 5; pointer-events: none; display: none;
     transform: translateX(var(--wx, 6px));
     transition: transform 2600ms linear; }
-  #walker.face-left { transform: translateX(var(--wx, 6px)) scaleX(-1); }
+  /* no transition here — the turn must be instantaneous */
+  .walker-flip { transform: scaleX(1); }
+  #walker.face-left .walker-flip { transform: scaleX(-1); }
   #walker img { width: 100%; display: block; }
-  #walker .frame-walk { display: none; }
-  #walker.walking .frame-idle { display: none; }
-  #walker.walking .frame-walk { display: block; }
   @media (min-width: 1280px) { #walker { display: block; } }
   /* A character pacing on a loop is motion the reader did not ask for. */
-  @media (prefers-reduced-motion: reduce) {
-    #walker { transition: none; }
-    #walker .frame-walk { display: none !important; }
-    #walker .frame-idle { display: block !important; }
-  }
+  @media (prefers-reduced-motion: reduce) { #walker { display: none !important; } }
 
   /* ---- halo motion: subtle, slow, and off when the OS asks ---- */
   @media (prefers-reduced-motion: no-preference) {
@@ -347,8 +379,10 @@
      aria-hidden and pointer-events:none: it must never sit between a reader
      and the page. -->
 <div id="walker" aria-hidden="true">
-  <img class="frame-idle" src="mascot-section.png" alt="" />
-  <img class="frame-walk" data-src="walker.webp" alt="" />
+  <!-- The flip lives on an inner element so it can be instant while the
+       OUTER element keeps easing its travel. Both on one transform would
+       make the turn animate too, and he would visibly squash through zero. -->
+  <div class="walker-flip"><img data-src="walker.webp" alt="" /></div>
 </div>
 
 <footer>
@@ -566,43 +600,47 @@ function HermixRadialHalo(props) {
 /* ==================================================================== *
  * The gutter mascot.
  *
- * A four-beat loop — idle, walk, idle, turn — inside the empty strip to
- * the LEFT of the content column. He is bounded by that strip, so he can
- * never overlap a heading however long it wraps.
+ * One frame only — the walk cycle, always playing. He paces the empty
+ * strip LEFT of the content column, so he can never overlap a heading
+ * however long it wraps.
  *
- * Driven by timeouts and a CSS transition rather than a frame loop: the
- * motion is a slow A-to-B pace, which a transition expresses in one line
- * and animates on the compositor. It also keeps working in environments
- * that never run requestAnimationFrame.
+ * The loop is: walk across, hold position ~2s while the cycle keeps
+ * running (he marks time rather than freezing), flip instantly, walk
+ * back. The flip is instant because it lives on an inner element with no
+ * transition, while travel eases on the outer one.
+ *
+ * Driven by timeouts and a CSS transition rather than a frame loop: it is
+ * one line for an A-to-B pace, runs on the compositor, and keeps working
+ * in environments that never fire requestAnimationFrame.
  * ==================================================================== */
 (function () {
   var el = document.getElementById("walker");
   if (!el) return;
 
-  var IDLE_MS = 2200;      // pause at each end
+  var HOLD_MS = 2000;      // stand and mark time at each end
   var WALK_MS = 2600;      // must match the CSS transition duration
   var EDGE = 6;            // keep him off the very edge of the window
 
   var reduced = window.matchMedia &&
                 window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+  if (reduced) return;     // CSS already hides him; do not run timers either
 
-  // The walk cycle is a 1.1 MB animation in a hidden element, so it is warmed
-  // once the page is idle rather than fetched at the first step.
-  var walkImg = el.querySelector(".frame-walk");
+  // The walk cycle is 1.1 MB, so it is warmed once the page is idle rather
+  // than blocking first paint.
+  var img = el.querySelector("img");
   function warm() {
-    if (walkImg && !walkImg.getAttribute("src") && !reduced) {
-      walkImg.setAttribute("src", walkImg.getAttribute("data-src"));
+    if (img && !img.getAttribute("src")) {
+      img.setAttribute("src", img.getAttribute("data-src"));
     }
   }
-  if (document.readyState === "complete") setTimeout(warm, 400);
-  else addEventListener("load", function () { setTimeout(warm, 400); });
+  if (document.readyState === "complete") setTimeout(warm, 300);
+  else addEventListener("load", function () { setTimeout(warm, 300); });
 
-  /* How far he may travel: the gutter, minus his own width, minus the edge
-     inset. Returns 0 when there is not enough room, which parks him. */
+  /* How far he may travel: the gutter, less his own width and the inset.
+     Returns 0 when there is no room, which parks him. */
   function span() {
     var gutter = (window.innerWidth - 1180) / 2 + 28;
-    var room = gutter - el.offsetWidth - EDGE * 2;
-    return Math.max(0, Math.min(room, 120));   // never a marathon
+    return Math.max(0, Math.min(gutter - el.offsetWidth - EDGE * 2, 120));
   }
 
   var atFarEnd = false;
@@ -610,44 +648,34 @@ function HermixRadialHalo(props) {
 
   function place(x) { el.style.setProperty("--wx", Math.round(x) + "px"); }
 
-  function beat() {
+  function walk() {
     var d = span();
-    if (d <= 0) {                       // no gutter to walk in — just stand
-      place(EDGE);
-      el.classList.remove("walking");
-      timer = setTimeout(beat, IDLE_MS * 2);
-      return;
-    }
-    // walk to the other end
+    if (d <= 0) { place(EDGE); timer = setTimeout(walk, HOLD_MS * 2); return; }
+
     atFarEnd = !atFarEnd;
-    el.classList.add("walking");
-    el.classList.toggle("face-left", !atFarEnd);
-    place(atFarEnd ? EDGE + d : EDGE);
+    place(atFarEnd ? EDGE + d : EDGE);          // travel (eased by CSS)
 
     timer = setTimeout(function () {
-      el.classList.remove("walking");   // arrive, then stand and look around
-      timer = setTimeout(beat, IDLE_MS);
+      // Arrived. Hold still for a beat — the cycle keeps playing, so he
+      // reads as marking time — then turn on the spot and set off again.
+      timer = setTimeout(function () {
+        el.classList.toggle("face-left", atFarEnd);   // instant, no transition
+        timer = setTimeout(walk, 180);                // a beat after the turn
+      }, HOLD_MS);
     }, WALK_MS);
   }
 
   place(EDGE);
-  if (!reduced) timer = setTimeout(beat, IDLE_MS);
+  timer = setTimeout(walk, 900);
 
-  // A resize can shrink the gutter out from under him; snap him back inside.
   addEventListener("resize", function () {
-    var d = span();
-    var x = atFarEnd ? EDGE + d : EDGE;
-    place(x);
+    place(atFarEnd ? EDGE + span() : EDGE);
   });
 
   // Pacing off-screen burns battery for nobody.
   addEventListener("visibilitychange", function () {
-    if (document.hidden) {
-      clearTimeout(timer);
-      el.classList.remove("walking");
-    } else if (!reduced) {
-      timer = setTimeout(beat, IDLE_MS);
-    }
+    if (document.hidden) { clearTimeout(timer); }
+    else { timer = setTimeout(walk, HOLD_MS); }
   });
 })();
 

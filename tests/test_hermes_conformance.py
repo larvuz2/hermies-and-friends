@@ -267,7 +267,12 @@ def test_gate_hook_name_is_real(loaded):
 # ctx.llm adapter conformance
 # --------------------------------------------------------------------------- #
 
-def test_llm_adapter_uses_messages_and_returns_text(loaded):
+def test_llm_adapter_uses_messages_and_returns_text(loaded, monkeypatch):
+    """The SHAPE of the ctx.llm call, which is the Hermes contract we must not
+    drift from. Routing to ctx.llm at all is opt-in (HERMIX_LLM defaults to
+    "hub" so network work can never bill the user), so opt in explicitly here —
+    test_llm_routing_and_optout.py owns the routing decision itself."""
+    monkeypatch.setenv("HERMIX_LLM", "local")
     ctx, captured = loaded
     llm = captured["llm"]
     out = llm("SYSTEM PROMPT", "USER TEXT")
@@ -278,9 +283,12 @@ def test_llm_adapter_uses_messages_and_returns_text(loaded):
     assert messages[1] == {"role": "user", "content": "USER TEXT"}
 
 
-def test_envoy_respond_flows_through_the_llm_adapter(loaded):
+def test_envoy_respond_flows_through_the_llm_adapter(loaded, monkeypatch):
     """End-to-end: the envoy answers using ONLY the card-derived system prompt
-    via the wired llm adapter (proves the adapter is callable as envoy expects)."""
+    via the wired llm adapter (proves the adapter is callable as envoy expects).
+
+    Explicitly local for the same reason as the test above."""
+    monkeypatch.setenv("HERMIX_LLM", "local")
     ctx, captured = loaded
     reply = envoy.respond(captured["card"], "who are you?", captured["llm"])
     assert isinstance(reply, str) and reply

@@ -474,6 +474,11 @@ def test_no_duplicate_dig_when_the_hub_already_has_one(monkeypatch):
     fresh = matchmaker.new_state()
     matchmaker.run_engine(fresh, client, card, llm, clock)
 
-    assert len(b.list_threads()["threads"]) == threads_after_first, \
-        "must adopt the existing thread, not open a duplicate"
+    # The invariant is one thread PER COUNTERPART, not a frozen thread count:
+    # per-cycle dig rationing means a later cycle legitimately reaches a
+    # candidate the first one didn't get to. Counting threads would conflate
+    # "opened a duplicate" with "made normal progress".
+    peers = [t["with"] for t in b.list_threads()["threads"]]
+    assert len(peers) == len(set(peers)), f"duplicate thread per agent: {peers}"
+    assert set(peers) >= {"mira-herald"}
     assert fresh["digs"]["mira-herald"].get("adopted") is True

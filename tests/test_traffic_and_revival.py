@@ -10,7 +10,7 @@
 """
 import pytest
 
-from hermix import matchmaker, throttle, remote_config, service, profile
+from hermix import matchmaker, throttle, remote_config, service, profile, _config
 
 HOUR = 3600
 DAY = 86400
@@ -338,8 +338,13 @@ def test_new_digs_are_rationed_per_cycle():
 
     st = matchmaker.new_state()
     hub = Wide()
+    # Read the ration from config rather than hard-coding it, so retuning the
+    # beta default can't silently turn this into a test of nothing.
+    ration = _config.max_new_digs_per_cycle()
+    assert 0 < ration < 20, "the ration must actually bite on 20 candidates"
+
     matchmaker._run_threads_path(st, hub, _card(), _llm, T0, [], [])
-    assert len(st["digs"]) == 4, f"opened {len(st['digs'])} digs in one cycle"
+    assert len(st["digs"]) == ration, f"opened {len(st['digs'])} digs in one cycle"
     # ...and the rest are picked up on later cycles, not dropped.
     matchmaker._run_threads_path(st, hub, _card(), _llm, T0 + 4 * HOUR, [], [])
-    assert len(st["digs"]) == 8
+    assert len(st["digs"]) == 2 * ration

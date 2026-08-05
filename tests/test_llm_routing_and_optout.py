@@ -85,6 +85,52 @@ def _adapter(hub_text="HUB_REPLY", hub_error=None, ctx_text="LOCAL_REPLY"):
 
 
 # --------------------------------------------------------------------------- #
+# The public promise, stated as a test
+#
+# README: "Your own model budget is never spent on network work. If the
+# operator's budget runs out your agent goes quiet, rather than quietly billing
+# you." That has to hold with NO configuration, on every path a real user can
+# reach — not just the happy one. These are the cases that used to bill them.
+# --------------------------------------------------------------------------- #
+@pytest.mark.parametrize("scenario", [
+    "hub_503",            # upstream down
+    "hub_network_error",  # connection dropped
+    "hub_500",            # upstream broken
+    "not_live",           # every cycle before the agent has registered
+])
+def test_out_of_the_box_no_network_work_ever_bills_the_user(monkeypatch, scenario):
+    """With no HERMIX_LLM set, ctx.llm must never be reached. Silence is the
+    correct failure mode: an agent that says nothing costs the user nothing."""
+    monkeypatch.delenv("HERMIX_LLM", raising=False)
+    if scenario == "not_live":
+        monkeypatch.setenv("HERMIX_API_URL", "")
+        monkeypatch.setenv("HERMIX_API_KEY", "")
+        err = None
+    else:
+        monkeypatch.setenv("HERMIX_API_URL", "https://hub.example")
+        monkeypatch.setenv("HERMIX_API_KEY", "test-key")
+        err = {
+            "hub_503": urllib.error.HTTPError("u", 503, "unavailable", None, None),
+            "hub_500": urllib.error.HTTPError("u", 500, "boom", None, None),
+            "hub_network_error": urllib.error.URLError("connection refused"),
+        }[scenario]
+
+    llm, ctx, client = _adapter(hub_error=err)
+    assert llm("sys", "usr") == "", f"{scenario}: expected silence"
+    assert ctx._llm.calls == [], f"{scenario}: the user's model was billed"
+
+
+def test_paying_with_your_own_model_requires_saying_so(monkeypatch):
+    """The fallback still exists — it just can't happen by accident."""
+    monkeypatch.setenv("HERMIX_API_URL", "")
+    monkeypatch.setenv("HERMIX_API_KEY", "")
+    monkeypatch.setenv("HERMIX_LLM", "auto")
+    llm, ctx, _ = _adapter()
+    assert llm("sys", "usr") == "LOCAL_REPLY"
+    assert ctx._llm.calls, "explicit opt-in must still reach ctx.llm"
+
+
+# --------------------------------------------------------------------------- #
 # Adapter routing
 # --------------------------------------------------------------------------- #
 def test_auto_live_uses_hub(monkeypatch, live):
@@ -138,11 +184,12 @@ def test_local_mode_ignores_hub_even_when_live(monkeypatch, live):
     assert not client.calls and ctx.llm.calls       # hub never attempted
 
 
-def test_default_mode_is_auto(monkeypatch, live):
+def test_default_mode_is_hub(monkeypatch, live):
     monkeypatch.delenv("HERMIX_LLM", raising=False)
-    assert _config.llm_mode() == "auto"
+    assert _config.llm_mode() == "hub"
     llm, ctx, client = _adapter()
-    assert llm("sys", "usr") == "HUB_REPLY"          # auto -> hub when live
+    assert llm("sys", "usr") == "HUB_REPLY"          # operator pays
+    assert ctx._llm.calls == []                      # ...and the user does not
 
 
 # --------------------------------------------------------------------------- #

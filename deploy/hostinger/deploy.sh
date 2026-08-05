@@ -134,6 +134,26 @@ echo "==> Health check:"
 sleep 1
 curl -fsS "http://127.0.0.1:$PORT/healthz" && echo
 echo
+
+# Liveness is not quality. The hub stays up on fallback embeddings, which is a
+# much weaker product than the one we advertise — and a 200 looks identical
+# either way. Assert the real model loaded AND that a live query connects two
+# cards sharing no vocabulary, before anyone is told the deploy succeeded.
+echo "==> Product check:"
+SMOKE_STATUS=0
+"$APP_DIR/venv/bin/python" "$APP_DIR/deploy/hostinger/smoke.py" \
+  "http://127.0.0.1:$PORT" || SMOKE_STATUS=$?
+if [ "$SMOKE_STATUS" -ne 0 ]; then
+  echo
+  echo "!!! DEPLOY INCOMPLETE — the hub is running but is NOT serving the"
+  echo "!!! advertised matching quality. It is reachable, so existing agents"
+  echo "!!! keep working; do not invite new users until the check above passes."
+  echo "!!! Re-run this script after fixing, or run the check alone with:"
+  echo "!!!   $APP_DIR/venv/bin/python $APP_DIR/deploy/hostinger/smoke.py"
+  exit "$SMOKE_STATUS"
+fi
+echo
+
 BASE="${DOMAIN:+https://$DOMAIN}"
 BASE="${BASE:-http://$(curl -fsS -4 ifconfig.me 2>/dev/null || hostname -I | awk '{print $1}')}"
 echo "==============================================================="

@@ -179,18 +179,26 @@ def persist_api_key(key: str) -> None:
 def llm_mode() -> str:
     """Where the network's "thinking" runs, from HERMIX_LLM:
 
-      - "auto"  (default): use operator-paid hub inference when the plugin is
-                 live; on any hub failure (or when not live) fall back to the
-                 user's own ctx.llm so the plugin never goes mute.
-      - "hub":   hub inference ONLY. The user's model budget is never spent; on
-                 any hub failure the caller receives the safe silence sentinel.
+      - "hub" (default): hub inference ONLY. The user's model budget is never
+                 spent; on any hub failure the caller receives the safe silence
+                 sentinel and the agent simply goes quiet.
+      - "auto":  hub inference when live, falling back to the user's own
+                 ctx.llm on hub failure or before registration. Costs the user
+                 money, so it must be chosen explicitly.
       - "local": the user's own ctx.llm ONLY — never touch the hub.
+
+    The default is "hub" because README and onboarding both promise, without
+    qualification, that network work never spends the user's own budget. Under
+    "auto" that promise held only for OUR budget 429 — a hub 503, a dropped
+    connection, or any cycle before registration would quietly bill the user
+    for work they never asked to pay for. A promise that holds only on the
+    happy path is not a promise, so the paying mode is now opt-in.
     """
     raw = _env("HERMIX_LLM", "")
     raw = raw.strip().lower() if isinstance(raw, str) else ""
     if raw in ("auto", "hub", "local"):
         return raw
-    return "auto"
+    return "hub"
 
 
 # --------------------------------------------------------------------------- #
@@ -247,8 +255,12 @@ def min_score() -> float:
 
 
 def match_every_hours() -> int:
-    """How often the matchmaker cron/daemon looks for opportunities."""
-    return _int_env("HERMIX_MATCH_EVERY_HOURS", 4)
+    """How often the matchmaker cron/daemon looks for opportunities.
+
+    6h for the beta rather than 4h: with a small cohort the network changes
+    slowly, so a shorter cycle mostly re-scores the same cards at the operator's
+    expense. Nothing is lost by looking less often — findings queue and wait."""
+    return _int_env("HERMIX_MATCH_EVERY_HOURS", 6)
 
 
 # --------------------------------------------------------------------------- #
@@ -313,9 +325,18 @@ def quiet_hours() -> tuple:
 
 
 def max_notify_per_day() -> int:
-    """OPTIONAL hard safety cap. 0 (default) = no cap; judgement decides.
-    Left in place for anyone who explicitly wants a ceiling."""
-    return _int_env("HERMIX_MAX_NOTIFY_PER_DAY", 0)
+    """Hard ceiling on UNSOLICITED interruptions per rolling 24h. 0 = no cap.
+
+    Defaults to 1 for the beta. The adaptive bar above is still the mechanism
+    that decides what is worth saying; this only bounds how wrong that bar can
+    be while its constants are untested against real humans. A first cohort
+    that gets talked at too much leaves and does not come back, and no amount
+    of later tuning recovers them — whereas a cohort that hears from its agent
+    once a day can be relaxed the moment the feedback says to.
+
+    Answers the human asked for are exempt (see matchmaker._emit), so this
+    rations noise, never responsiveness. Set 0 to restore judgement-only."""
+    return _int_env("HERMIX_MAX_NOTIFY_PER_DAY", 1)
 
 
 def handshake_timeout_days() -> int:
@@ -349,8 +370,12 @@ def max_new_digs_per_cycle() -> int:
     thundering herd: a burst of thread-opens per agent, the hub's per-agent
     60/min limit tripped, and a day's inference budget spent in one wave.
     Starting a few and continuing next cycle costs nothing — the agent has all
-    day, and a human is never waiting on it."""
-    return _int_env("HERMIX_MAX_NEW_DIGS_PER_CYCLE", 4)
+    day, and a human is never waiting on it.
+
+    2 for the beta: in a cohort of 10-25 everyone is plausibly relevant to
+    everyone, so a higher number burns inference re-litigating a small network
+    rather than finding more in it."""
+    return _int_env("HERMIX_MAX_NEW_DIGS_PER_CYCLE", 2)
 
 
 def thread_budget() -> int:

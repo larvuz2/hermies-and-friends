@@ -471,10 +471,14 @@ def record_engagement(state, kind="interest", weight=1.0, now=None) -> dict:
 def _emit(state, pending, t):
     """Decide what (if anything) is worth interrupting the human with RIGHT NOW.
 
-    No daily quota. Each item is scored, then judged against a bar that rises
-    with recent interruptions and falls with the human's demonstrated interest.
-    Whatever doesn't clear the bar is NOT dropped — it stays queued and rides
-    along with the next natural conversation (hermix_pending)."""
+    Each item is scored, then judged against a bar that rises with recent
+    interruptions and falls with the human's demonstrated interest. Whatever
+    doesn't clear the bar is NOT dropped — it stays queued and rides along with
+    the next natural conversation (hermix_pending).
+
+    Judgement is the mechanism; the daily ceiling is only a backstop while that
+    judgement's constants are uncalibrated. Both govern UNSOLICITED findings —
+    an answer the human asked for is never rationed."""
     # de-dupe by handle (keep newest) so a re-judge can't double-queue a handle
     dedup = {}
     for item in pending:
@@ -492,23 +496,37 @@ def _emit(state, pending, t):
     urgent = _config.urgent_threshold()
     quiet = _in_quiet_hours(t)
 
-    # Optional hard ceiling (off by default) for operators who want one.
+    # Hard ceiling on UNSOLICITED interruptions per rolling day. The adaptive
+    # bar above is the real mechanism; this is a backstop for the beta, while
+    # that bar's constants are hypotheses rather than calibrated on real users.
+    #
+    # The ceiling counts INTERRUPTIONS, not findings. Capping findings instead
+    # would deliver one and hold the rest, which costs the human the same
+    # interruption and gives them less for it — the exact opposite of the
+    # batching rule below.
     cap = _config.max_notify_per_day()
-    if cap > 0:
-        used = len([ts for ts in state.get("notify_log") or [] if (t - ts) < _DAY])
-        room = max(0, cap - used)
-    else:
-        room = len(pending)
+    used = len([ts for ts in state.get("notify_log") or [] if (t - ts) < _DAY])
+    may_interrupt = cap <= 0 or used < cap
 
     send, hold = [], []
+    unsolicited = 0
     for it in pending:
         v = it["value"]
         # The human ASKED for this. It is an answer, not an interruption — the
-        # social battery and quiet hours govern unsolicited findings only.
-        passes = True if it.get("requested") else (
-            v >= bar if not quiet else v >= urgent)
-        if passes and len(send) < room:
+        # social battery, quiet hours AND the daily ceiling govern unsolicited
+        # findings only. Rationing a reply the human is waiting on would punish
+        # them for asking.
+        if it.get("requested"):
             send.append(it)
+            continue
+        passes = v >= bar if not quiet else v >= urgent
+        if not passes:
+            hold.append(it)
+        elif it.get("redelivery"):
+            send.append(it)          # already paid for on the first attempt
+        elif may_interrupt:
+            send.append(it)
+            unsolicited += 1
         else:
             hold.append(it)
 
@@ -517,10 +535,14 @@ def _emit(state, pending, t):
         return SILENT
 
     # One interruption delivers the whole batch — cost is the interruption, not
-    # the item count, so the battery is charged once.
-    log = state.setdefault("notify_log", [])
-    log.append(int(t))
-    state["notify_log"] = [ts for ts in log if (t - ts) < 7 * _DAY]
+    # the item count, so the battery is charged once. A batch of nothing but
+    # answers the human asked for is not an interruption at all, so it charges
+    # nothing: notify_log drives both the pressure curve and the daily ceiling,
+    # and letting a reply consume either would punish the human for asking.
+    if unsolicited:
+        log = state.setdefault("notify_log", [])
+        log.append(int(t))
+        state["notify_log"] = [ts for ts in log if (t - ts) < 7 * _DAY]
     return _format_notification(send)
 
 
@@ -1928,6 +1950,12 @@ def deliver_pending(state, now) -> str:
     if stale:
         outbox["inflight"] = [i for i in inflight
                               if i not in stale]
+        for i in stale:
+            # This interruption was already spent when we first sent it, and
+            # the human never saw the result. Charging it again would let the
+            # daily ceiling swallow the retry entirely — turning "a duplicate
+            # is recoverable, a swallowed finding is not" into its opposite.
+            i["redelivery"] = True
         ready = stale + ready
         outbox["ready"] = ready
 

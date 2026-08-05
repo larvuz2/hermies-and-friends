@@ -555,3 +555,107 @@ def test_end_to_end_against_mock_backend(monkeypatch):
     out = matchmaker.run_cycle(matchmaker.new_state(), client, card, llm, clock)
     # First cycle just opens handshakes with matched agents -> silence.
     assert out == matchmaker.SILENT
+
+
+# --------------------------------------------------------------------------- #
+# The beta interruption ceiling (HERMIX_MAX_NOTIFY_PER_DAY, default 1)
+#
+# The adaptive bar is the real mechanism; this is a backstop while that bar's
+# constants are uncalibrated. It must ration NOISE without ever rationing
+# responsiveness — the failure modes below are all ways a naive daily cap
+# quietly turns into a worse product than having no cap at all.
+# --------------------------------------------------------------------------- #
+def test_the_ceiling_counts_interruptions_not_findings(monkeypatch):
+    """A cap of 1 means one INTERRUPTION a day, not one finding a day. Sending
+    one and holding three costs the human the same interruption and gives them
+    less for it."""
+    monkeypatch.setenv("HERMIX_QUIET_HOURS", "")
+    monkeypatch.setenv("HERMIX_MAX_NOTIFY_PER_DAY", "1")
+    st = matchmaker.new_state()
+    out = matchmaker._emit(st, [_item(f"h{i}", 9) for i in range(4)], 1_000_000.0)
+    assert out.count("• @") == 4
+    assert st["queue"] == []
+    assert len(st["notify_log"]) == 1
+
+
+def test_the_ceiling_holds_the_second_interruption_of_the_day(monkeypatch):
+    """...and the next batch waits rather than being dropped."""
+    monkeypatch.setenv("HERMIX_QUIET_HOURS", "")
+    monkeypatch.setenv("HERMIX_MAX_NOTIFY_PER_DAY", "1")
+    monkeypatch.setenv("HERMIX_PRESSURE_WEIGHT", "0")   # isolate the ceiling
+    t = 1_000_000.0
+    st = matchmaker.new_state()
+    assert matchmaker._emit(st, [_item("first", 9)], t) != matchmaker.SILENT
+
+    later = matchmaker._emit(st, [_item("second", 9)], t + 3600)
+    assert later == matchmaker.SILENT
+    assert [i["handle"] for i in st["queue"]] == ["second"], "held, not dropped"
+
+    # Once the day rolls over it goes out on its own.
+    after = matchmaker._emit(st, [_item("second", 9)], t + DAY + 60)
+    assert after != matchmaker.SILENT and "second" in after
+
+
+def test_an_answer_the_human_asked_for_is_never_rationed(monkeypatch):
+    """The failure this guards: an unsolicited finding eats the day's only slot,
+    and the reply the human is actively waiting on is swallowed behind it."""
+    monkeypatch.setenv("HERMIX_QUIET_HOURS", "")
+    monkeypatch.setenv("HERMIX_MAX_NOTIFY_PER_DAY", "1")
+    t = 1_000_000.0
+    st = matchmaker.new_state()
+    assert matchmaker._emit(st, [_item("unsolicited", 9)], t) != matchmaker.SILENT
+
+    answer = matchmaker._emit(
+        st, [_item("mira-herald", 10, requested=True, kind="ask_result")], t + 60)
+    assert answer != matchmaker.SILENT and "mira-herald" in answer
+    assert st["queue"] == []
+
+
+def test_a_batch_of_only_answers_charges_no_interruption(monkeypatch):
+    """notify_log drives both the pressure curve and the ceiling. An answer is
+    not an interruption, so it must charge neither — otherwise asking a question
+    costs the human the day's finding."""
+    monkeypatch.setenv("HERMIX_QUIET_HOURS", "")
+    monkeypatch.setenv("HERMIX_MAX_NOTIFY_PER_DAY", "1")
+    t = 1_000_000.0
+    st = matchmaker.new_state()
+    out = matchmaker._emit(st, [_item("asked", 10, requested=True)], t)
+    assert out != matchmaker.SILENT
+    assert st["notify_log"] == [], "an answer charged the social battery"
+
+    # ...so a genuine finding can still arrive the same day.
+    finding = matchmaker._emit(st, [_item("found", 9)], t + 60)
+    assert finding != matchmaker.SILENT and "found" in finding
+
+
+def test_an_undelivered_finding_still_comes_back_under_the_ceiling(monkeypatch):
+    """A retry is the SAME interruption re-attempted, not a new one. If the
+    ceiling re-gated it, "a duplicate is recoverable, a swallowed finding is
+    not" would become exactly backwards."""
+    monkeypatch.setenv("HERMIX_QUIET_HOURS", "")
+    monkeypatch.setenv("HERMIX_MAX_NOTIFY_PER_DAY", "1")
+    st = matchmaker.new_state()
+    st["outbox"]["ready"] = [_item("mira-herald", 9, id="f1")]
+    t = 1_000_000.0
+
+    assert matchmaker.deliver_pending(st, t) != matchmaker.SILENT
+    assert [i["id"] for i in st["outbox"]["inflight"]] == ["f1"]
+
+    # Never acknowledged, and still inside the same 24h ceiling window.
+    later = t + matchmaker.INFLIGHT_EXPIRY_SECONDS + 60
+    assert later - t < DAY, "this test is only meaningful inside the cap window"
+    again = matchmaker.deliver_pending(st, later)
+    assert again != matchmaker.SILENT and "mira-herald" in again
+    assert len(st["notify_log"]) == 1, "the retry charged a second interruption"
+
+
+def test_the_ceiling_can_be_turned_off(monkeypatch):
+    """0 restores judgement-only delivery, which is where this should land once
+    real feedback says the bar is calibrated."""
+    monkeypatch.setenv("HERMIX_QUIET_HOURS", "")
+    monkeypatch.setenv("HERMIX_MAX_NOTIFY_PER_DAY", "0")
+    monkeypatch.setenv("HERMIX_PRESSURE_WEIGHT", "0")
+    t = 1_000_000.0
+    st = matchmaker.new_state()
+    assert matchmaker._emit(st, [_item("a", 9)], t) != matchmaker.SILENT
+    assert matchmaker._emit(st, [_item("b", 9)], t + 3600) != matchmaker.SILENT

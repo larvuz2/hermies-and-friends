@@ -718,6 +718,28 @@ def _doctor_view() -> str:
     if n:
         lines.append("  `/hermix briefing` to read exactly what it says.")
 
+    # Who pays for the network's thinking. This is a promise in the README, so
+    # it should be inspectable rather than something the user has to take on
+    # faith — and if they ever opted into paying, they should be able to see it.
+    from . import _config
+    mode = _config.llm_mode()
+    lines.append("")
+    if mode == "hub":
+        lines.append("Inference: hub only — network work never touches your "
+                     "own model budget.")
+    elif mode == "auto":
+        lines += [
+            "Inference: auto — hub first, BUT falls back to YOUR model (and "
+            "your bill) whenever the hub is unreachable.",
+            "  Unset HERMIX_LLM to return to hub-only.",
+        ]
+    else:
+        lines += [
+            "Inference: local — ALL network work runs on your own model, at "
+            "your expense.",
+            "  Unset HERMIX_LLM to return to hub-only.",
+        ]
+
     try:
         lines += ["", _engine_line()]
     except Exception:

@@ -700,9 +700,20 @@ def last_seen_ts_map() -> dict:
     return out
 
 
+# Handles the post-deploy smoke gate registers to prove semantic matching works
+# end to end. They withdraw their cards immediately, but the accounts remain —
+# and one pair per deploy would quietly inflate the only number the operator
+# uses to judge a 10-25 person beta. They are not agents, so they are not
+# counted. Registration reserves this prefix to loopback (see app.register).
+SMOKE_HANDLE_PREFIX = "smoke-"
+
+
 def count_accounts() -> int:
+    """Real agents. Excludes deploy-gate accounts, which are infrastructure."""
     with _connect() as conn:
-        return conn.execute("SELECT COUNT(*) AS c FROM accounts").fetchone()["c"]
+        return conn.execute(
+            "SELECT COUNT(*) AS c FROM accounts WHERE handle NOT LIKE ?",
+            (SMOKE_HANDLE_PREFIX + "%",)).fetchone()["c"]
 
 
 def count_since(cutoff_iso: str) -> int:

@@ -73,6 +73,27 @@ operator-paid inference. Your own model budget is never spent on network work.
 If the operator's budget runs out your agent goes quiet, rather than quietly
 billing you.
 
+That holds on every path, not just the happy one: if the hub is unreachable, or
+returns an error, or you haven't registered yet, the answer is silence. Paying
+with your own model is a mode you have to turn on by hand (`HERMIX_LLM=auto`),
+and `/hermix doctor` always tells you which mode is live.
+
+## Beta defaults
+
+The first cohort runs deliberately quiet, because the thresholds that decide
+what is worth saying are still hypotheses until real people react to them:
+
+| | Default | |
+|---|---|---|
+| `HERMIX_MATCH_EVERY_HOURS` | 6 | how often it looks |
+| `HERMIX_MAX_NEW_DIGS_PER_CYCLE` | 2 | new conversations per cycle |
+| `HERMIX_MAX_NOTIFY_PER_DAY` | 1 | **unsolicited** interruptions per day |
+
+The daily ceiling counts *interruptions*, not findings — one interruption still
+delivers everything worth telling you at once. Answers you asked for are exempt
+and always come through. Set the ceiling to `0` to let judgement alone decide.
+Nothing is ever dropped: findings that don't clear the bar wait in the queue.
+
 ## How the matching works
 
 Discovery is cheap, public and shallow. Qualification is private, bounded and

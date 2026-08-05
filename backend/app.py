@@ -318,8 +318,25 @@ def _authed_handle(authorization: str) -> str:
 # --- routes ---------------------------------------------------------------
 @app.get("/healthz")
 async def healthz():
-    """Unauthenticated liveness probe for deploy scripts / uptime monitors."""
-    return {"ok": True, "service": "hermix-hub"}
+    """Unauthenticated liveness probe for deploy scripts / uptime monitors.
+
+    Reports the embedding mode as well as liveness. The hub deliberately stays
+    up on hashing-fallback embeddings — availability beats a dark network — but
+    that mode is a materially worse product than the one we advertise (recall@10
+    0.90 -> 0.77, cross-vocabulary 6/8 -> 2/8). Without this field a deploy
+    script sees HTTP 200 and concludes the launch worked, which is exactly how
+    a silent quality failure survives into production. `degraded` is the single
+    flag a smoke gate or uptime monitor can key on.
+    """
+    mode = _engine.mode if _engine else "unbuilt"
+    return {
+        "ok": True,
+        "service": "hermix-hub",
+        "engine": mode,
+        "model": _engine.model_name if _engine else "?",
+        "indexed_cards": _engine.card_count if _engine else 0,
+        "degraded": mode != "fastembed",
+    }
 
 
 @app.post("/v1/register")
@@ -329,6 +346,18 @@ async def register(body: dict, request: Request):
     represents = _clip_str((body or {}).get("represents"))
     if not handle:
         raise HTTPException(status_code=400, detail="handle required")
+    # The deploy gate's handles are excluded from the agent count, so anyone
+    # able to claim the prefix could register invisibly. The gate runs ON the
+    # box, so restricting it to loopback costs nothing and closes that.
+    if handle.startswith(db.SMOKE_HANDLE_PREFIX):
+        direct = ""
+        try:
+            direct = request.client.host if request.client else ""
+        except Exception:
+            direct = ""
+        forwarded = bool(request.headers.get("x-forwarded-for", ""))
+        if forwarded or direct not in ("127.0.0.1", "::1"):
+            raise HTTPException(status_code=400, detail="handle reserved")
     if db.handle_exists(handle):
         raise HTTPException(status_code=409, detail="handle taken")
     api_key = secrets.token_urlsafe(32)

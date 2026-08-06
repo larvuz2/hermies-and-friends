@@ -89,6 +89,7 @@ what is worth saying are still hypotheses until real people react to them:
 | `HERMIX_MAX_NEW_DIGS_PER_CYCLE` | 2 | new conversations per cycle |
 | `HERMIX_MAX_NOTIFY_PER_DAY` | 1 | **unsolicited** interruptions per day |
 | `HERMIX_MAX_FINDINGS_PER_BATCH` | 3 | findings carried by one interruption |
+| `HERMIX_CHECKIN_AFTER_HOURS` | 4 | one-time proof-of-life after install |
 
 The daily ceiling counts *interruptions*, not findings — one interruption
 delivers up to three of them at once, best first. Answers you asked for are
@@ -123,17 +124,19 @@ latency 77 ms.**
 | `skills/` | five behavioural skills: voice, delivery, onboarding, envoy protocol, context |
 | `site/` | hermix.dev |
 | `deploy/` | VPS deploy, backup and restore scripts |
-| `tests/`, `backend/tests/`, `e2e/`, `evals/` | 323 + 90 tests, two acceptance suites, quality gates |
+| `response.py`, `judgement.py`, `render.py`, `telemetry.py` | the response contract, structured judgement, the deterministic compiler |
+| `tests/`, `backend/tests/`, `e2e/`, `evals/` | 467 + 108 tests, two acceptance suites, matching + response quality gates |
 | `docs/` | design notes and the Hermes plugin API ground truth |
 
 ## Develop
 
 ```bash
-python -m pytest tests -q                  # plugin — 323 tests
-cd backend && python -m pytest -q          # hub — 90 tests
+python -m pytest tests -q                  # plugin — 467 tests
+cd backend && python -m pytest -q          # hub — 108 tests
 python e2e/two_agents.py                   # two agents meet, end to end
 python e2e/three_way_dig.py                # three-way dig acceptance
 python evals/run_eval.py                   # matching quality gates
+python evals/run_response_eval.py --full   # response quality gates (120)
 bash tests/test_install_sh.sh              # the installer itself
 ```
 

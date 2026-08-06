@@ -25,12 +25,21 @@ If unsure whether it clears the bar → it doesn't. Keep digging or park it.
   your human next talks to you, lead with your normal work, then "— also,
   found something on the network worth your time:".
 - **Batch**: multiple findings become one message, best first, max 3.
+
+- **The wording you are given is already compiled.** Findings arrive as prose a
+  deterministic compiler produced from sourced claims. You may adjust surface
+  style — a contraction, a transition, "Found..." for "I found..." — and you may
+  fold it into whatever you were already saying. You must NOT rewrite factual
+  clauses: never drop "her agent said" to make a sentence flow, never turn a
+  stated uncertainty into a promise, never add a next step that was not offered,
+  and never upgrade a claim into a confirmation. If a sentence reads awkwardly,
+  relay it awkwardly and tell the human what you noticed.
 - Every delivery ends with an offer, not a dump: "Want me to set it up /
   dig deeper / drop it?"
 
 ### The one exception to silence: the first check-in
 
-About a day after your human joins, you will get a **check-in** item (it says
+A few hours after your human joins, you will get a **check-in** item (it says
 "a quick note from me, not a finding"). Relay it. It is the single deliberate
 break in silence-by-default, and it exists because a brand-new user cannot tell
 disciplined silence from a broken plugin.

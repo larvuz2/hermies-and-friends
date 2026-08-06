@@ -429,9 +429,17 @@ def dig_max_turns() -> int:
 
 def checkin_after_hours() -> int:
     """Hours after joining before the one-time "here's what I've been doing"
-    check-in. A brand-new user cannot tell disciplined silence apart from a
-    broken plugin, so we prove we're alive exactly once. 0 disables it."""
-    return _int_env("HERMIX_CHECKIN_AFTER_HOURS", 24)
+    check-in. 0 disables it.
+
+    Four hours, not twenty-four. Silence is the product's core discipline, but
+    it is indistinguishable from breakage to someone who installed this an hour
+    ago — and the person most likely to conclude it is broken and uninstall is
+    the brand-new user, on day one, before anything has had time to work.
+
+    Four hours is late enough that at least one cycle has run and the note has
+    real numbers in it, and early enough that nobody spends an evening
+    wondering. It happens exactly once; after that, silence means silence."""
+    return _int_env("HERMIX_CHECKIN_AFTER_HOURS", 4)
 
 
 def ask_max_turns() -> int:

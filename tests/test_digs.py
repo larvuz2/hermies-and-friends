@@ -30,11 +30,18 @@ class Clock:
         self.t += seconds
 
 
+# The judge no longer authors prose. It returns claims that cite numbered
+# transcript turns, and anything citing a turn that does not exist is dropped —
+# which downgrades notify to watch. A fake emitting the old {verdict, pitch}
+# shape is therefore correctly refused, so the fake speaks the real contract.
+STRUCTURED_NOTIFY = """{"verdict": "notify", "user_relevance": {"text": "their unity tooling covers the gap in your pipeline", "source_ids": ["card:ours"]}, "claims": [{"text": "they are open to collaborating", "evidence_state": "counterpart_claim", "source_ids": ["turn:2"]}], "uncertainties": ["budget was not discussed"], "next_action_ids": ["ask_budget"], "reason": "offers meet needs"}"""
+
+
 class DigLlm:
     """Routes on the system prompt across every dig call site: card refresh,
     envoy opener/turn, findings-note writer, and the findings judge."""
     def __init__(self,
-                 verdict='{"verdict": "notify", "pitch": "Strong AI-film fit.", "reason": "offers match needs"}',
+                 verdict=STRUCTURED_NOTIFY,
                  note=("mira-herald represents an AI music-video artist.\n"
                        "Offers: visualizers (verified in chat).\n"
                        "Needs: AI-film collaborators (claimed).\n"
@@ -162,11 +169,14 @@ def test_dig_opens_thread_converses_concludes_with_findings_and_notifies(monkeyp
     assert state["findings"]["mira-herald"]["verdict"] == "notify"
     assert state["seen"]["mira-herald"]["verdict"] == "notify"
 
-    # The notification carries the handle, the pitch, and a real quote from chat.
+    # The compiler writes this now, so assert the PROPERTIES rather than the
+    # sentence: grounded relevance, attributed claim, stated uncertainty, and
+    # one real next step. The exact evidence quote lives in the receipt.
     assert out != matchmaker.SILENT
-    assert "mira-herald" in out
-    assert "Strong AI-film fit." in out
-    assert "co-produce the pilot" in out                      # evidence = their words
+    assert "unity tooling covers the gap in your pipeline" in out
+    assert "agent said they are open to collaborating" in out,         "a counterpart claim was stated as fact"
+    assert "budget" in out                                    # uncertainty kept
+    assert out.rstrip().endswith("?")                         # one real next step
 
     # The judge ran on the FINDINGS NOTE, not the raw reply.
     judged = [u for (s, u) in llm.calls
@@ -189,11 +199,17 @@ def test_dig_concludes_on_card_timeout_with_no_reply(monkeypatch):
     out = matchmaker.run_cycle(state, client, card, llm, clock)
     assert state["digs"]["mira-herald"]["concluded"] is True  # concluded on cards
     assert "mira-herald" in state["findings"]
-    assert state["seen"]["mira-herald"]["verdict"] == "notify"   # judged
+    # Nobody replied, so a verdict resting on a conversation turn cites a turn
+    # that does not exist. That claim is refused and notify degrades to watch —
+    # which is the whole point: we no longer interrupt on evidence we just threw
+    # away. A cards-only finding must earn its way out on card sources alone.
+    assert state["seen"]["mira-herald"]["verdict"] == "watch"
     # ...but nobody ever replied, so it is held for the next conversation
     # rather than interrupting the human (see _value_of: cards_only).
     assert out == matchmaker.SILENT
-    assert any(i["handle"] == "mira-herald" for i in state["queue"])
+    # "watch" holds it for re-judging rather than queueing it for delivery —
+    # nothing was established, so there is nothing to deliver yet.
+    assert not any(i["handle"] == "mira-herald" for i in state["queue"])
 
 
 # --------------------------------------------------------------------------- #
@@ -275,7 +291,7 @@ def test_standing_intent_discovers_and_labels_notification(monkeypatch):
     monkeypatch.setenv("HERMIX_DIG_MAX_TURNS", "1")   # conclude fast
     b, client = _fresh_client()
     card, llm = _card(), DigLlm(
-        verdict='{"verdict": "notify", "pitch": "Found your unity tooling.", "reason": "match"}')
+        verdict=STRUCTURED_NOTIFY)
     client.publish_profile(card.public_dict())
     state = matchmaker.new_state()
     clock = Clock()
@@ -293,8 +309,13 @@ def test_standing_intent_discovers_and_labels_notification(monkeypatch):
 
     assert state["findings"]["kip-herald"]["verdict"] == "notify"
     assert out != matchmaker.SILENT
-    assert 'You asked me to find "unity tooling"' in out       # intent-led
-    assert "kip-herald" in out
+    assert 'You asked me to look for "unity tooling"' in out       # intent-led
+    # The handle deliberately stays OUT of the prose — it is machinery, and the
+    # review flagged handles as agent-centric rather than human-centric. It is
+    # still carried on the item so /hermix why and /hermix intro keep working.
+    assert "kip-herald" not in out
+    assert "kip-herald" in state["findings"]
+    assert state["digs"]["kip-herald"]["intent"] == "unity tooling"
 
 
 # --------------------------------------------------------------------------- #

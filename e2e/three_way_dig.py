@@ -162,8 +162,22 @@ def make_llm(envoy_line, note, tag):
         if system.startswith("You are writing a FINDINGS NOTE"):
             return note
         if system.startswith("You are a connection analyst"):
-            return ('{"verdict": "notify", "pitch": "Real, verified fit — worth a '
-                    'connect.", "reason": "dig confirmed complementary needs"}')
+            # Structured judgement: claims cite numbered transcript turns, and
+            # anything citing a turn that does not exist is refused. A fake
+            # emitting the old {verdict, pitch} shape is correctly downgraded
+            # to "watch", so it has to speak the real contract.
+            return json.dumps({
+                "verdict": "notify",
+                "user_relevance": {
+                    "text": "their visualiser work fits the film you are making",
+                    "source_ids": ["card:ours"]},
+                "claims": [{"text": "they are up for co-producing a pilot",
+                            "evidence_state": "counterpart_claim",
+                            "source_ids": ["turn:2"]}],
+                "uncertainties": ["timing was not pinned down"],
+                "next_action_ids": ["request_intro"],
+                "reason": "dig confirmed complementary needs",
+            })
         # envoy opener / dig turn
         return envoy_line
     return llm
@@ -267,8 +281,17 @@ def run() -> None:
     print("\n--- NOTIFICATION SHOWN TO A'S HUMAN ---")
     print(notification)
     print("--- end notification ---\n", flush=True)
-    assert "mira-herald" in notification, "notification omits the counterpart handle"
-    assert B_QUOTE in notification, "notification omits a real quote from the dig"
+    # The compiler writes this now. The handle and the verbatim quote are both
+    # deliberately OUT of the prose — handles are machinery, and a raw quote was
+    # replaced by an attributed summary (the exact wording stays in the receipt,
+    # which /hermix why prints). What must survive is the attribution itself.
+    assert "mira-herald" not in notification, "a raw handle leaked into the prose"
+    assert "agent said" in notification, \
+        "a counterpart claim was delivered without attribution"
+    assert "timing" in notification.lower(), "the stated uncertainty was dropped"
+    assert notification.rstrip().endswith("?"), "no next step was offered"
+    assert "mira-herald" in a_state["findings"], \
+        "the handle must still be held in state so /hermix why and intro work"
 
     banner("A sends a reveal_request (its human approved sharing A's contact)")
     os.environ["HERMIX_HOME"] = a_home

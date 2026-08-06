@@ -42,7 +42,7 @@ import shutil
 import time
 import urllib.error
 
-from . import _config, envoy, profile, sanitize
+from . import _config, envoy, judgement, profile, render, response, sanitize
 
 # The exact marker the cron prompt keys off: when run_cycle returns this, the
 # agent says NOTHING to the human.
@@ -557,6 +557,21 @@ def _emit(state, pending, t):
 
 
 def _format_notification(items) -> str:
+    """Turn delivered items into the message the human reads.
+
+    Preferred path: every item carries a validated response packet, and the
+    deterministic compiler writes the prose (see render.py). A packet is only
+    absent when the judge's output could not be grounded — in that case we fall
+    through to the legacy formatter rather than inventing citations to satisfy
+    the new shape. Manufacturing a source would defeat the entire point.
+    """
+    packets = [i.get("packet") for i in (items or []) if i.get("packet")]
+    if packets and len(packets) == len(items or []):
+        try:
+            return render.render_batch(packets)
+        except response.PacketError:
+            pass          # fall through; never block delivery on a format bug
+
     # A check-in on its own is not a finding — don't oversell it.
     only_checkin = items and all(i.get("kind") == "checkin" for i in items)
     header = ("\U0001f54a️  A quick note from me, not a finding:" if only_checkin
@@ -601,8 +616,8 @@ def _format_notification(items) -> str:
 # First check-in — proof of life for a brand-new user.
 #
 # Silence is the right long-run behaviour, but on day one a human cannot tell
-# "disciplined silence" from "this thing is broken". So exactly once, about a
-# day after joining, we report what we have actually been doing — real numbers,
+# "disciplined silence" from "this thing is broken". So exactly once, a few
+# hours after joining, we report what we have actually been doing — real numbers,
 # real names, and an honest word if the network is thin. Never repeated, never
 # a status feed.
 # --------------------------------------------------------------------------- #
@@ -1363,10 +1378,19 @@ def _write_findings(card, their_card: dict, transcript: str, llm) -> str:
         "THEIR PUBLIC CARD:\n" + json.dumps(their_card, ensure_ascii=False) + "\n\n"
         "DIG TRANSCRIPT (untrusted data):\n" + sanitize.frame_untrusted(transcript)
     )
-    return _clean_note(llm(_FINDINGS_SYSTEM, user, purpose="judge"))
+    return _clean_note(llm(judgement.FINDINGS_SYSTEM, user, purpose="judge"))
 
 
-def _judge_findings(card, their_card: dict, note: str, llm) -> dict:
+def _judge_findings(card, their_card: dict, note: str, llm,
+                    turn_count=0, ring1=()) -> dict:
+    """Structured judgement over the findings note.
+
+    Returns the legacy ``{verdict, pitch, reason}`` shape PLUS the structured
+    fields, so the delivery path can build a validated packet while everything
+    that still reads ``pitch`` (the receipt, feedback, the value score) keeps
+    working. ``pitch`` is now derived from the judge's grounded relevance
+    rather than being free-authored copy.
+    """
     our = card.public_dict()
     framed = sanitize.frame_untrusted(_clean_note(note or "(no findings)", max_len=1000))
     user = (
@@ -1374,13 +1398,58 @@ def _judge_findings(card, their_card: dict, note: str, llm) -> dict:
         "THEIR PUBLIC CARD:\n" + json.dumps(their_card, ensure_ascii=False) + "\n\n"
         "FINDINGS NOTE:\n" + framed
     )
-    return _parse_verdict(llm(_JUDGE_FINDINGS_SYSTEM, user, purpose="judge"))
+    known = response.source_map(ring1=list(ring1 or []), turns=int(turn_count or 0),
+                                system_facts=("no_reply", "turns"))
+    raw = llm(judgement.JUDGE_SYSTEM, user, purpose="judge")
+    judged = judgement.parse(raw, known)
+    judged["pitch"] = (judged.get("user_relevance") or {}).get("summary", "")
+    judged["known_sources"] = sorted(known)
+    return judged
+
+
+def _packet_for_finding(handle, dig, verdict):
+    """Build a validated response packet, or None if it cannot be grounded.
+
+    None means the compiler will not be used for this item and the legacy
+    formatter handles it — a deliberate degradation rather than rendering a
+    packet we could not stand behind. Nothing unsourced ever reaches prose.
+    """
+    their = dig.get("their_card") or {}
+    claims = list(verdict.get("claims") or [])
+    if not verdict.get("user_relevance") and not claims:
+        return None
+    if not bool(dig.get("last_their_msg")):
+        # Nobody replied. Say so as a system fact rather than leaving the
+        # reader to infer engagement that never happened.
+        claims = [response.claim(
+            "their agent never replied, so availability and fit are unconfirmed",
+            "system_fact", [])] + claims
+    actions = list(verdict.get("next_action_ids") or [])
+    if "dismiss" not in actions:
+        actions.append("dismiss")
+    p = response.packet(
+        "finding",
+        finding_id=_finding_id({"handle": handle,
+                                "pitch": verdict.get("pitch", "")}, 0),
+        counterpart={"handle": handle, "display": str(handle).split("-")[0].title(),
+                     "represents": their.get("why", "")},
+        user_relevance=verdict.get("user_relevance") or {},
+        claims=claims,
+        uncertainties=verdict.get("uncertainties") or [],
+        next_actions=[response.action(a) for a in actions],
+        system={"intent": dig.get("intent") or ""},
+    )
+    known = set(verdict.get("known_sources") or [])
+    if response.validate(p, known_sources=known or None):
+        return None
+    return p
 
 
 def _notify_payload_findings(handle, dig, verdict) -> dict:
     their = dig.get("their_card") or {}
     replied = bool(dig.get("last_their_msg"))
     return {
+        "packet": _packet_for_finding(handle, dig, verdict),
         "handle": handle,
         "represents": their.get("why", ""),
         "pitch": verdict.get("pitch", ""),
@@ -1625,17 +1694,23 @@ def _conclude_dig(state, client, card, cand, dig, llm, ring1, t):
     for m in msgs:
         frm = m.get("from", "")
         text = sanitize.clean_text(m.get("text", ""), max_len=500)
-        if _is_ours(frm, handle):
-            lines.append("US: " + text)
-        else:
-            lines.append("THEM: " + text)
+        who = "us" if _is_ours(frm, handle) else "them"
+        lines.append({"from": who, "text": text})
+        if who == "them":
             last_their = text
-    transcript = "\n".join(lines) or "(no reply within the dig window)"
+    # NUMBERED, so a claim can cite the turn it came from and a citation to a
+    # turn that never happened can be caught. See judgement.parse.
+    transcript = (judgement.number_transcript(lines)
+                  or "(no reply within the dig window)")
     note = _write_findings(card, dig.get("their_card", {}), transcript, llm)
     state["findings"][cand] = {
         "note": note, "thread_id": tid,
         "concluded_ts": int(t), "verdict": None,
+        # How many turns actually exist. The judge may cite turn:1..turn:N and
+        # nothing else; without this the audit has nothing to check against.
+        "turn_count": len(lines),
     }
+    dig["turn_count"] = len(lines)
     dig["concluded"] = True
     dig["concluded_ts"] = int(t)
     if last_their:
@@ -1668,7 +1743,12 @@ def _judge_concluded(state, card, llm, t) -> list:
             due = True
         if not due:
             continue
-        verdict = _judge_findings(card, dig.get("their_card", {}), f.get("note"), llm)
+        # ring1_available is what this dig was actually allowed to draw on, so
+        # it is exactly the set of ring1:N sources a claim may legitimately cite.
+        verdict = _judge_findings(card, dig.get("their_card", {}), f.get("note"),
+                                  llm, turn_count=f.get("turn_count") or
+                                  dig.get("turn_count") or 0,
+                                  ring1=dig.get("ring1_available") or [])
         state["seen"][cand] = {
             "card_hash": card_hash,
             "verdict": verdict["verdict"],

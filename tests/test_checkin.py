@@ -1,12 +1,17 @@
 """The one-time first check-in.
 
-A brand-new user cannot tell disciplined silence from a broken plugin. So about
-a day after joining we prove we're alive — once, with REAL numbers, and honest
+A brand-new user cannot tell disciplined silence from a broken plugin. So a few
+hours after joining we prove we're alive — once, with REAL numbers, and honest
 when the network is thin. It must never become a status feed.
+
+The window is read from config rather than hard-coded here: it was tuned from
+24h down to 4h precisely because a day of silence loses the people most likely
+to give up, and a test that pins the old number would have to be edited every
+time we learn something about that.
 """
 import pytest
 
-from hermix import matchmaker, profile
+from hermix import _config, matchmaker, profile
 
 HOUR = 3600
 DAY = 86400
@@ -37,12 +42,19 @@ def test_nothing_on_the_first_cycle():
 
 def test_silent_before_the_window():
     st = _started()
-    assert matchmaker._maybe_checkin(st, _card(), T0 + 23 * HOUR) is None
+    just_early = T0 + (_config.checkin_after_hours() * HOUR) - 60
+    assert matchmaker._maybe_checkin(st, _card(), just_early) is None
 
 
-def test_fires_once_after_24h_then_never_again():
+def test_the_window_is_short_enough_that_nobody_thinks_it_broke():
+    """The whole point of the check-in. A day is long enough to uninstall."""
+    assert 0 < _config.checkin_after_hours() <= 6
+
+
+def test_fires_once_after_the_window_then_never_again():
     st = _started()
-    first = matchmaker._maybe_checkin(st, _card(), T0 + 25 * HOUR)
+    due = T0 + (_config.checkin_after_hours() * HOUR) + 60
+    first = matchmaker._maybe_checkin(st, _card(), due)
     assert first is not None and first["kind"] == "checkin"
     # never again, no matter how much later
     assert matchmaker._maybe_checkin(st, _card(), T0 + 30 * DAY) is None

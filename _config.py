@@ -324,6 +324,20 @@ def quiet_hours() -> tuple:
         return (22, 8)
 
 
+def max_findings_per_batch() -> int:
+    """How many UNSOLICITED findings may ride along in one interruption.
+
+    skills/hermix-delivery says "multiple findings become one message, best
+    first, max 3" — that is a promise about what the human reads, so it is
+    enforced here rather than left to the model to remember. Findings beyond
+    the limit are not dropped; they stay queued for the next interruption, by
+    which time the newer ones may well outrank them.
+
+    Answers the human asked for are exempt: a batch is a digest, and holding
+    back a reply to keep a digest tidy would be absurd. 0 = no limit."""
+    return _int_env("HERMIX_MAX_FINDINGS_PER_BATCH", 3)
+
+
 def max_notify_per_day() -> int:
     """Hard ceiling on UNSOLICITED interruptions per rolling 24h. 0 = no cap.
 

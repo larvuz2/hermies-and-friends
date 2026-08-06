@@ -201,11 +201,11 @@ def test_value_scoring_reflects_what_matters(monkeypatch):
 
 def test_no_quota_many_strong_findings_go_in_one_interruption(monkeypatch):
     """The old hard 2/day cap is gone: several genuinely strong findings are
-    delivered together, and that costs ONE interruption, not four."""
+    delivered together, and that costs ONE interruption, not three."""
     monkeypatch.setenv("HERMIX_QUIET_HOURS", "")
     st = matchmaker.new_state()
-    out = matchmaker._emit(st, [_item(f"h{i}", 9) for i in range(4)], 1_000_000.0)
-    assert out.count("• @") == 4
+    out = matchmaker._emit(st, [_item(f"h{i}", 9) for i in range(3)], 1_000_000.0)
+    assert out.count("• @") == 3
     assert st["queue"] == []
     assert len(st["notify_log"]) == 1          # one interruption for the batch
 
@@ -567,15 +567,72 @@ def test_end_to_end_against_mock_backend(monkeypatch):
 # --------------------------------------------------------------------------- #
 def test_the_ceiling_counts_interruptions_not_findings(monkeypatch):
     """A cap of 1 means one INTERRUPTION a day, not one finding a day. Sending
-    one and holding three costs the human the same interruption and gives them
-    less for it."""
+    one and holding the rest costs the human the same interruption and gives
+    them less for it."""
     monkeypatch.setenv("HERMIX_QUIET_HOURS", "")
     monkeypatch.setenv("HERMIX_MAX_NOTIFY_PER_DAY", "1")
     st = matchmaker.new_state()
-    out = matchmaker._emit(st, [_item(f"h{i}", 9) for i in range(4)], 1_000_000.0)
-    assert out.count("• @") == 4
+    out = matchmaker._emit(st, [_item(f"h{i}", 9) for i in range(3)], 1_000_000.0)
+    assert out.count("• @") == 3
     assert st["queue"] == []
     assert len(st["notify_log"]) == 1
+
+
+# --------------------------------------------------------------------------- #
+# The batch limit (HERMIX_MAX_FINDINGS_PER_BATCH, default 3)
+#
+# skills/hermix-delivery promises "one message, best first, max 3". That is a
+# promise about what the human reads, so the engine enforces it rather than
+# trusting the model to remember.
+# --------------------------------------------------------------------------- #
+def test_one_interruption_carries_at_most_three_findings(monkeypatch):
+    monkeypatch.setenv("HERMIX_QUIET_HOURS", "")
+    st = matchmaker.new_state()
+    out = matchmaker._emit(st, [_item(f"h{i}", 9) for i in range(7)], 1_000_000.0)
+    assert out.count("• @") == 3
+
+
+def test_the_overflow_is_queued_not_dropped(monkeypatch):
+    """Same rule as the interrupt bar: nothing is ever thrown away."""
+    monkeypatch.setenv("HERMIX_QUIET_HOURS", "")
+    st = matchmaker.new_state()
+    matchmaker._emit(st, [_item(f"h{i}", 9) for i in range(7)], 1_000_000.0)
+    assert len(st["queue"]) == 4
+    assert len(st["notify_log"]) == 1, "the overflow cost a second interruption"
+
+
+def test_the_batch_keeps_the_best_findings(monkeypatch):
+    """'Best first' — the three that go must be the three highest-value ones."""
+    monkeypatch.setenv("HERMIX_QUIET_HOURS", "")
+    st = matchmaker.new_state()
+    items = [_item("weak", 6), _item("best", 10),
+             _item("strong", 9), _item("middling", 7)]
+    out = matchmaker._emit(st, items, 1_000_000.0)
+    for keep in ("best", "strong", "middling"):
+        assert f"@{keep}" in out, keep
+    assert "@weak" not in out
+    assert [i["handle"] for i in st["queue"]] == ["weak"]
+
+
+def test_answers_are_never_held_back_to_keep_a_batch_tidy(monkeypatch):
+    """A digest limit must not swallow replies the human is waiting on."""
+    monkeypatch.setenv("HERMIX_QUIET_HOURS", "")
+    st = matchmaker.new_state()
+    items = ([_item(f"found{i}", 9) for i in range(5)]
+             + [_item(f"asked{i}", 10, requested=True) for i in range(3)])
+    out = matchmaker._emit(st, items, 1_000_000.0)
+    for i in range(3):
+        assert f"@asked{i}" in out, f"answer asked{i} was held back"
+    assert out.count("• @") == 6          # 3 capped findings + 3 answers
+    assert all(i["handle"].startswith("found") for i in st["queue"])
+
+
+def test_the_batch_limit_can_be_turned_off(monkeypatch):
+    monkeypatch.setenv("HERMIX_QUIET_HOURS", "")
+    monkeypatch.setenv("HERMIX_MAX_FINDINGS_PER_BATCH", "0")
+    st = matchmaker.new_state()
+    out = matchmaker._emit(st, [_item(f"h{i}", 9) for i in range(7)], 1_000_000.0)
+    assert out.count("• @") == 7
 
 
 def test_the_ceiling_holds_the_second_interruption_of_the_day(monkeypatch):

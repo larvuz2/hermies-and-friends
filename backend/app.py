@@ -40,6 +40,43 @@ log = logging.getLogger("hermix.app")
 # Process start, used for the admin "uptime" tile.
 _START = time.time()
 
+
+def _resolve_revision() -> dict:
+    """Which commit this process is actually running.
+
+    "Did the fix ship?" is otherwise unanswerable from outside the box: the
+    service keeps running the code it started with, so a pull that never got a
+    restart, or a restart that silently failed, both look exactly like success.
+    Resolved once at import — a subprocess per request would be absurd, and the
+    answer cannot change without a restart anyway.
+
+    HERMIX_REVISION wins so container builds (deploy/Dockerfile copies backend/
+    without .git) can stamp it at build time.
+    """
+    pinned = (compat_env.env("HERMIX_REVISION", "") or "").strip()
+    if pinned:
+        return {"revision": pinned[:40], "revision_source": "env"}
+    try:
+        import subprocess
+        root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        out = subprocess.run(
+            ["git", "-C", root, "rev-parse", "HEAD"],
+            capture_output=True, text=True, timeout=5)
+        sha = (out.stdout or "").strip()
+        if out.returncode == 0 and sha:
+            dirty = subprocess.run(
+                ["git", "-C", root, "status", "--porcelain"],
+                capture_output=True, text=True, timeout=5)
+            modified = bool((dirty.stdout or "").strip())
+            return {"revision": sha[:40] + ("-dirty" if modified else ""),
+                    "revision_source": "git"}
+    except Exception:                                           # noqa: BLE001
+        pass
+    return {"revision": "unknown", "revision_source": "none"}
+
+
+_REVISION = _resolve_revision()
+
 # --- semantic matching engine v2 -----------------------------------------
 MATCH_TOP_K = 20               # hard cap on signals returned
 DEFAULT_MATCH_FLOOR = 2.0      # drop matches scoring below this (0..10 scale)
@@ -336,6 +373,9 @@ async def healthz():
         "model": _engine.model_name if _engine else "?",
         "indexed_cards": _engine.card_count if _engine else 0,
         "degraded": mode != "fastembed",
+        # Which commit is SERVING, not which one is checked out. A pull without
+        # a restart leaves these different and nothing else would show it.
+        **_REVISION,
     }
 
 
@@ -362,8 +402,40 @@ async def register(body: dict, request: Request):
         raise HTTPException(status_code=409, detail="handle taken")
     api_key = secrets.token_urlsafe(32)
     db.create_account(db.hash_key(api_key), handle, represents)
-    db.bump_stat("registrations")
+    if not db.is_smoke_handle(handle):
+        db.bump_stat("registrations")     # the deploy gate is not a signup
     return {"api_key": api_key, "handle": handle}
+
+
+@app.post("/v1/smoke/purge")
+async def smoke_purge(request: Request):
+    """Delete every deploy-gate account and its residue. Loopback only.
+
+    The canary has to register real accounts to prove matching works end to end,
+    and /v1/profile/remove deliberately keeps the account so a user can
+    re-publish later. That is right for users and wrong for infrastructure, so
+    the gate erases itself here instead — including handles left behind by any
+    earlier deploy that died mid-run.
+
+    No auth beyond loopback: it is only reachable from the box, and the prefix
+    it operates on is itself reserved to loopback, so it can never touch a real
+    agent's data.
+    """
+    direct = ""
+    try:
+        direct = request.client.host if request.client else ""
+    except Exception:
+        direct = ""
+    if request.headers.get("x-forwarded-for", "") or direct not in ("127.0.0.1", "::1"):
+        raise HTTPException(status_code=404, detail="not found")
+    purged = db.purge_smoke_accounts()
+    if _engine is not None:
+        for handle in purged:
+            try:
+                _engine.remove(handle)
+            except Exception:                                   # noqa: BLE001
+                log.warning("smoke purge: could not unindex %s", handle)
+    return {"ok": True, "purged": len(purged)}
 
 
 @app.post("/v1/profile")
@@ -885,6 +957,8 @@ def _gather_stats() -> dict:
         "registrations_today": today_row["registrations"],
         "db_size_bytes": db.db_size_bytes(),
         "uptime_seconds": time.time() - _START,
+        "revision": _REVISION["revision"],
+        "revision_source": _REVISION["revision_source"],
         "accounts": db.all_accounts_with_cards(),
         "daily": daily,
         "conversations": {
@@ -1028,6 +1102,7 @@ def _render_admin(stats: dict) -> str:
         ("Requests today", str(stats["requests_today"])),
         ("DB size", _fmt_bytes(stats["db_size_bytes"])),
         ("Uptime", _fmt_uptime(stats["uptime_seconds"])),
+        ("Revision", stats["revision"][:7]),
     ]
     tile_html = "".join(
         f'<div class="tile"><div class="num">{_e(v)}</div>'

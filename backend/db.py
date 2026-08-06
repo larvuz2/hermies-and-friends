@@ -638,7 +638,8 @@ def version_rollup() -> list:
     with _connect() as conn:
         rows = conn.execute(
             "SELECT COALESCE(version_active, 'unknown') AS version_active, "
-            "COUNT(*) AS agents FROM accounts GROUP BY 1 ORDER BY 2 DESC"
+            f"COUNT(*) AS agents FROM accounts WHERE {_NOT_SMOKE} "
+            "GROUP BY 1 ORDER BY 2 DESC"
         ).fetchall()
         return [dict(r) for r in rows]
 
@@ -684,7 +685,8 @@ def last_seen_ts_map() -> dict:
     out = {}
     with _connect() as conn:
         rows = conn.execute(
-            "SELECT handle, last_seen FROM accounts WHERE last_seen IS NOT NULL"
+            "SELECT handle, last_seen FROM accounts "
+            f"WHERE last_seen IS NOT NULL AND {_NOT_SMOKE}"
         ).fetchall()
     for r in rows:
         iso = r["last_seen"]
@@ -701,39 +703,82 @@ def last_seen_ts_map() -> dict:
 
 
 # Handles the post-deploy smoke gate registers to prove semantic matching works
-# end to end. They withdraw their cards immediately, but the accounts remain —
-# and one pair per deploy would quietly inflate the only number the operator
-# uses to judge a 10-25 person beta. They are not agents, so they are not
-# counted. Registration reserves this prefix to loopback (see app.register).
+# end to end. They are infrastructure, not agents, and must not appear in any
+# number an operator reads to judge the beta.
+#
+# purge_smoke_accounts() below is the real cleanup and runs at the end of every
+# deploy, so in steady state none of these rows exist. The filters are a safety
+# net for the window between registering the canary and purging it, and for a
+# deploy that dies in between. Registration reserves this prefix to loopback
+# (see app.register) so it cannot be used to hide a real agent from the count.
 SMOKE_HANDLE_PREFIX = "smoke-"
+_SMOKE_LIKE = SMOKE_HANDLE_PREFIX + "%"
+# Applied to every aggregate over `accounts`. Kept as one constant so a new
+# metric is a compile-time-visible decision rather than a silent omission.
+_NOT_SMOKE = "handle NOT LIKE '" + _SMOKE_LIKE + "'"
+
+
+def is_smoke_handle(handle: str) -> bool:
+    return bool(handle) and str(handle).startswith(SMOKE_HANDLE_PREFIX)
+
+
+def purge_smoke_accounts() -> list:
+    """Delete every deploy-gate account and all its residue.
+
+    Returns the handles removed, so the caller can drop them from the live
+    semantic index too (a deploy that died before withdrawing its cards would
+    otherwise leave them searchable until the next restart).
+
+    Idempotent, and deliberately purges handles from EARLIER deploys too, so an
+    interrupted run cannot leave rows behind forever. Safe because the prefix is
+    reserved to loopback: nothing here can ever be a real user's data.
+    """
+    with _LOCK, _connect() as conn:
+        handles = [r["handle"] for r in conn.execute(
+            "SELECT handle FROM accounts WHERE handle LIKE ?", (_SMOKE_LIKE,))]
+        if not handles:
+            return []
+        marks = ",".join("?" * len(handles))
+        for table, col in (("cards", "handle"), ("card_vectors", "handle"),
+                           ("messages", "to_handle"), ("messages", "from_handle"),
+                           ("match_feedback", "handle"), ("blocks", "handle"),
+                           ("blocks", "blocked"), ("reports", "handle"),
+                           ("reports", "reported"), ("accounts", "handle")):
+            try:
+                conn.execute(
+                    f"DELETE FROM {table} WHERE {col} IN ({marks})", handles)
+            except sqlite3.OperationalError:
+                pass          # column/table absent in this schema version
+        return handles
 
 
 def count_accounts() -> int:
     """Real agents. Excludes deploy-gate accounts, which are infrastructure."""
     with _connect() as conn:
         return conn.execute(
-            "SELECT COUNT(*) AS c FROM accounts WHERE handle NOT LIKE ?",
-            (SMOKE_HANDLE_PREFIX + "%",)).fetchone()["c"]
+            f"SELECT COUNT(*) AS c FROM accounts WHERE {_NOT_SMOKE}"
+        ).fetchone()["c"]
 
 
 def count_since(cutoff_iso: str) -> int:
-    """Number of accounts whose last_seen is at or after cutoff_iso."""
+    """Number of REAL accounts whose last_seen is at or after cutoff_iso."""
     with _connect() as conn:
         row = conn.execute(
             "SELECT COUNT(*) AS c FROM accounts "
-            "WHERE last_seen IS NOT NULL AND last_seen >= ?",
+            f"WHERE last_seen IS NOT NULL AND last_seen >= ? AND {_NOT_SMOKE}",
             (cutoff_iso,),
         ).fetchone()
         return row["c"]
 
 
 def all_accounts_with_cards() -> list:
-    """Every account joined to its public card, for the admin table."""
+    """Every real account joined to its public card, for the admin table."""
     with _connect() as conn:
         rows = conn.execute(
             "SELECT a.handle, a.represents, a.last_seen, a.request_count, "
             "a.version_active, a.version_disk, c.card "
             "FROM accounts a LEFT JOIN cards c ON c.handle = a.handle "
+            f"WHERE a.{_NOT_SMOKE} "
             "ORDER BY a.handle"
         ).fetchall()
     out = []

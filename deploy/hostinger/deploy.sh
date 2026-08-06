@@ -9,6 +9,33 @@
 #     bash <(curl -fsSL https://raw.githubusercontent.com/larvuz2/hermix/main/deploy/hostinger/deploy.sh)
 #
 # Idempotent: safe to re-run to update (git pull + restart).
+#
+# ---------------------------------------------------------------------------
+# Deploy semantics: AVAILABILITY-FIRST, and deliberately so.
+#
+# Order is: pull -> install -> restart -> product check. The restart happens
+# BEFORE the check, so if the check fails the new revision is already serving.
+# Nothing is rolled back automatically. That is a choice, not an oversight:
+#
+#   * The hub degrades rather than dies. Its one genuine failure mode here is
+#     falling back to hashing embeddings, which still answers every request —
+#     just with materially worse matching. Taking it offline to protect quality
+#     would trade a degraded network for no network.
+#   * The usual cause is environmental, not the code. The model download failed
+#     on this box. Reverting the commit does not bring the model back; it just
+#     silently undoes everything else the deploy carried, which could include a
+#     security fix.
+#   * An automatic revert is a destructive, surprising action to take on
+#     someone's running service on the strength of one failing check.
+#
+# So on failure the script tells you exactly what is live, refuses to call the
+# deploy a success (non-zero exit), and prints the precise rollback command with
+# the pre-deploy revision filled in. Rolling back is a decision you make, not
+# one the script makes for you. See rollback.sh.
+#
+# The check is also safe to re-run on its own at any time:
+#   /opt/hermix/venv/bin/python /opt/hermix/deploy/hostinger/smoke.py
+# ---------------------------------------------------------------------------
 set -euo pipefail
 
 DOMAIN="${1:-}"
@@ -33,7 +60,11 @@ if [ -z "$PORT80_OWNER" ]; then
 fi
 
 echo "==> [2/6] Cloning/updating repo into $APP_DIR"
+# Remember what was serving BEFORE the pull, so a failed product check can name
+# the exact revision to go back to. See "Deploy semantics" in the header.
+PREV_REV=""
 if [ -d "$APP_DIR/.git" ]; then
+  PREV_REV="$(git -C "$APP_DIR" rev-parse HEAD 2>/dev/null || true)"
   git -C "$APP_DIR" pull --ff-only
 else
   git clone "$REPO" "$APP_DIR"
@@ -145,11 +176,24 @@ SMOKE_STATUS=0
   "http://127.0.0.1:$PORT" || SMOKE_STATUS=$?
 if [ "$SMOKE_STATUS" -ne 0 ]; then
   echo
-  echo "!!! DEPLOY INCOMPLETE — the hub is running but is NOT serving the"
-  echo "!!! advertised matching quality. It is reachable, so existing agents"
-  echo "!!! keep working; do not invite new users until the check above passes."
-  echo "!!! Re-run this script after fixing, or run the check alone with:"
+  echo "!!! DEPLOY INCOMPLETE — read this, the new code IS live."
+  echo "!!!"
+  echo "!!! This deploy is AVAILABILITY-FIRST: the restart already happened, so"
+  echo "!!! the new revision is serving right now and existing agents keep"
+  echo "!!! working. It is NOT rolled back automatically, because the usual"
+  echo "!!! cause of this failure is environmental (the embedding model could"
+  echo "!!! not be downloaded on this box) and reverting the code would not fix"
+  echo "!!! it — it would only silently undo whatever else this deploy carried."
+  echo "!!!"
+  echo "!!! DO NOT invite new users until the check above passes."
+  echo "!!!"
+  echo "!!! Re-run the check alone once you have fixed the cause:"
   echo "!!!   $APP_DIR/venv/bin/python $APP_DIR/deploy/hostinger/smoke.py"
+  if [ -n "$PREV_REV" ]; then
+    echo "!!!"
+    echo "!!! If you decide the NEW CODE is at fault, roll back explicitly:"
+    echo "!!!   bash $APP_DIR/deploy/hostinger/rollback.sh $PREV_REV"
+  fi
   exit "$SMOKE_STATUS"
 fi
 echo

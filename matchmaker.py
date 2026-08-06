@@ -508,25 +508,35 @@ def _emit(state, pending, t):
     used = len([ts for ts in state.get("notify_log") or [] if (t - ts) < _DAY])
     may_interrupt = cap <= 0 or used < cap
 
+    # ...and how much one interruption may carry. pending is sorted by value,
+    # so this keeps the best and queues the rest — "best first, max 3".
+    batch_max = _config.max_findings_per_batch()
+
     send, hold = [], []
-    unsolicited = 0
+    shown = 0        # unsolicited findings in this batch — bounded by batch_max
+    fresh = 0        # ...of which are NEW interruptions, not retries
     for it in pending:
         v = it["value"]
         # The human ASKED for this. It is an answer, not an interruption — the
-        # social battery, quiet hours AND the daily ceiling govern unsolicited
-        # findings only. Rationing a reply the human is waiting on would punish
-        # them for asking.
+        # social battery, quiet hours, the daily ceiling and the batch limit all
+        # govern unsolicited findings only. Rationing a reply the human is
+        # waiting on would punish them for asking.
         if it.get("requested"):
             send.append(it)
             continue
         passes = v >= bar if not quiet else v >= urgent
-        if not passes:
+        room_in_batch = batch_max <= 0 or shown < batch_max
+        if not passes or not room_in_batch:
             hold.append(it)
         elif it.get("redelivery"):
-            send.append(it)          # already paid for on the first attempt
+            # Already paid for on the first attempt, so it does not need a
+            # fresh interruption — but it still occupies space in the digest.
+            send.append(it)
+            shown += 1
         elif may_interrupt:
             send.append(it)
-            unsolicited += 1
+            shown += 1
+            fresh += 1
         else:
             hold.append(it)
 
@@ -539,7 +549,7 @@ def _emit(state, pending, t):
     # answers the human asked for is not an interruption at all, so it charges
     # nothing: notify_log drives both the pressure curve and the daily ceiling,
     # and letting a reply consume either would punish the human for asking.
-    if unsolicited:
+    if fresh:
         log = state.setdefault("notify_log", [])
         log.append(int(t))
         state["notify_log"] = [ts for ts in log if (t - ts) < 7 * _DAY]

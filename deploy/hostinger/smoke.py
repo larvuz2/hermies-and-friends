@@ -72,11 +72,41 @@ def _say(ok, msg):
 
 
 def _withdraw():
+    """Leave nothing behind — cards, vectors AND accounts.
+
+    /v1/profile/remove keeps the account so a real user can re-publish later,
+    which is right for users and wrong for infrastructure: those rows would
+    otherwise show up in agent counts, presence, and the admin table. The purge
+    is loopback-only and also clears handles from any earlier deploy that died
+    mid-run, so it is the thing that actually guarantees zero trace.
+    """
     for handle, key in _cleanup:
         try:
             _req("/v1/profile/remove", {}, key)
         except Exception as e:                                  # noqa: BLE001
             print(f"  warn: could not withdraw {handle}: {e}", file=sys.stderr)
+    try:
+        n = _req("/v1/smoke/purge", {}).get("purged", 0)
+        if n:
+            print(f"  cleaned up {n} deploy-gate account(s)")
+    except Exception as e:                                      # noqa: BLE001
+        print(f"  warn: could not purge deploy-gate accounts: {e}",
+              file=sys.stderr)
+
+
+def _checked_out_revision():
+    """HEAD of the repo this script lives in, or None if that is unknowable."""
+    try:
+        import os
+        import subprocess
+        root = os.path.dirname(os.path.dirname(os.path.dirname(
+            os.path.abspath(__file__))))
+        out = subprocess.run(["git", "-C", root, "rev-parse", "HEAD"],
+                             capture_output=True, text=True, timeout=5)
+        sha = (out.stdout or "").strip()
+        return sha if out.returncode == 0 and sha else None
+    except Exception:                                           # noqa: BLE001
+        return None
 
 
 def wait_for_hub(attempts=30, delay=2):
@@ -99,6 +129,23 @@ def main():
         print(f"  ERROR  hub never became reachable at {BASE}", file=sys.stderr)
         return ERROR
 
+    # Is the RUNNING process the code we just deployed? A `git pull` that
+    # succeeded followed by a restart that silently failed looks identical to a
+    # clean deploy from everywhere except here.
+    serving = health.get("revision", "unknown")
+    checked_out = _checked_out_revision()
+    if checked_out and serving not in ("unknown", ""):
+        if serving.replace("-dirty", "") != checked_out:
+            _say(False, f"serving {serving[:7]}, but {checked_out[:7]} is checked out")
+            print("\n  The service is still running OLD code. The restart did not\n"
+                  "  take effect. Fix:  systemctl restart hermix\n"
+                  "  Then re-run this check.", file=sys.stderr)
+            return FAIL
+        _say(True, f"serving revision {serving[:7]} (matches checkout)")
+    else:
+        print(f"  note: revision {serving} (source={health.get('revision_source')})"
+              " — cannot compare against a checkout")
+
     mode = health.get("engine", "?")
     ok_mode = _say(mode == "fastembed",
                    f"embedding engine = {mode} (model={health.get('model', '?')})")
@@ -110,6 +157,7 @@ def main():
               "       \"from fastembed import TextEmbedding; TextEmbedding()\"\n"
               "     systemctl restart hermix\n"
               "  Then re-run this check.", file=sys.stderr)
+        _withdraw()      # nothing registered yet, but clears earlier deploys
         return FAIL
 
     # --- live semantic canary ---------------------------------------------

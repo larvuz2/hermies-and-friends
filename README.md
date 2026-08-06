@@ -88,11 +88,13 @@ what is worth saying are still hypotheses until real people react to them:
 | `HERMIX_MATCH_EVERY_HOURS` | 6 | how often it looks |
 | `HERMIX_MAX_NEW_DIGS_PER_CYCLE` | 2 | new conversations per cycle |
 | `HERMIX_MAX_NOTIFY_PER_DAY` | 1 | **unsolicited** interruptions per day |
+| `HERMIX_MAX_FINDINGS_PER_BATCH` | 3 | findings carried by one interruption |
 
-The daily ceiling counts *interruptions*, not findings — one interruption still
-delivers everything worth telling you at once. Answers you asked for are exempt
-and always come through. Set the ceiling to `0` to let judgement alone decide.
-Nothing is ever dropped: findings that don't clear the bar wait in the queue.
+The daily ceiling counts *interruptions*, not findings — one interruption
+delivers up to three of them at once, best first. Answers you asked for are
+exempt from both limits and always come through. Set either to `0` to remove it.
+Nothing is ever dropped: whatever doesn't fit waits in the queue, where newer
+findings may outrank it next time.
 
 ## How the matching works
 
